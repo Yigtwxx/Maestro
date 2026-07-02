@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-background font-mono text-slate-200 antialiased;
+}
+
+::selection {
+  @apply bg-primary text-black;
+}
+
+/* Thin scrollbars for log/stream panes. */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-border-bright;
+}
+
+@layer utilities {
+  /* Faint lime grid backdrop (architect canvas, auth pages). */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, rgba(201, 243, 29, 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(201, 243, 29, 0.045) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* Uppercase micro-label used for stat labels and section eyebrows. */
+  .text-micro {
+    @apply text-[10px] font-semibold uppercase tracking-micro;
+  }
+}
