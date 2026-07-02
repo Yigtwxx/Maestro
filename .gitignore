@@ -39,5 +39,6 @@ Thumbs.db
 # --- Docker volumes (local data) ---
 .data/
 
+#Share Files 
 CLAUDE.md
 project-docs.md
