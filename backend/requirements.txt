@@ -1,0 +1,30 @@
+# --- Web framework ---
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.32,<1.0
+python-multipart>=0.0.12
+
+# --- Validation / settings ---
+pydantic>=2.9,<3.0
+pydantic-settings>=2.6,<3.0
+email-validator>=2.2
+
+# --- Relational DB (async) ---
+sqlalchemy[asyncio]>=2.0.36,<2.1
+asyncpg>=0.30
+alembic>=1.14
+
+# --- NoSQL / Vector DB ---
+motor>=3.6
+qdrant-client>=1.12
+
+# --- LLM / HTTP ---
+httpx>=0.27
+tenacity>=9.0
+
+# --- Web search (DuckDuckGo, free, no API key) ---
+ddgs>=9.0,<10
+
+# --- Security ---
+argon2-cffi>=23.1
+pyjwt>=2.10
+cryptography>=44.0
