@@ -50,8 +50,11 @@ Subagents execute their tasks
 Result is streamed to the user live over WebSocket
 ```
 
-Users can connect their own OpenAI / Anthropic API keys; without one, they can still try
-the platform at zero cost using **Qwen3 (via Ollama — fully free and local)**.
+Users can connect their own OpenAI / Anthropic / Google Gemini API keys. Gemini has a
+free tier (get a key at https://aistudio.google.com/apikey — no credit card), and tasks
+run on Gemini automatically fall back to the local model when the quota runs out.
+Without any key, the platform still works at zero cost using
+**Qwen3.5 (via Ollama — fully free and local)**.
 
 ## Features
 
@@ -137,8 +140,8 @@ feedback format are defined in `CLAUDE.md` §5.4.
                                                          ▼
                                           ┌───────────────────────────┐
                                           │  LLM Provider Adapters     │
-                                          │  Ollama (Qwen3) / OpenAI / │
-                                          │  Anthropic                │
+                                          │  Ollama (Qwen3.5) / Gemini │
+                                          │  / OpenAI / Anthropic     │
                                           └───────────────────────────┘
 ```
 
@@ -154,7 +157,7 @@ feedback format are defined in `CLAUDE.md` §5.4.
 | **Real-time** | WebSocket (FastAPI) | Live agent status, human-in-the-loop Q&A |
 | **Authentication** | Backend JWT (in-house auth) | User session management |
 | **Encryption** | AES-256-GCM | BYOK API key security |
-| **Free Model** | Qwen3 via Ollama (OpenAI-compatible endpoint) | Free tier / local development |
+| **Free Model** | Gemini Flash (BYOK free tier) + Qwen3.5 via Ollama (local fallback) | Free tier / local development |
 | **Embedding** | nomic-embed-text via Ollama | Free/local embeddings for RAG |
 | **Containerization** | Docker Compose | Postgres, Mongo, Qdrant infrastructure |
 
@@ -223,7 +226,7 @@ docker compose up -d          # postgres, mongo, qdrant
 
 ```bash
 ollama serve                  # run in a separate terminal
-ollama pull qwen3
+ollama pull qwen3.5:9b
 ollama pull nomic-embed-text
 ```
 
@@ -274,11 +277,14 @@ Description of every variable in `.env.example`:
 | `QDRANT_URL` | Qdrant vector DB address | `http://localhost:6333` |
 | `QDRANT_API_KEY` | Qdrant API key (optional, empty for local setup) | — |
 | `FREE_MODEL_ENDPOINT` | Ollama OpenAI-compatible endpoint | `http://localhost:11434/v1` |
-| `FREE_MODEL_NAME` | Free-tier model name | `qwen3` |
+| `FREE_MODEL_NAME` | Free-tier model name | `qwen3.5:9b` |
 | `EMBEDDING_MODEL_NAME` | RAG embedding model | `nomic-embed-text` |
+| `GEMINI_MODEL_NAME` | Gemini model (BYOK free tier) | `gemini-3.5-flash` |
 | `MAX_ITERATIONS` | Max step limit per Subagent | `10` |
 | `MAX_REVIEW_ITERATIONS` | Reviewer ↔ Subagent loop limit | `3` |
-| `TASK_TIMEOUT_SECONDS` | Total timeout per task | `300` |
+| `TASK_TIMEOUT_SECONDS` | Total timeout per task (whole pipeline) | `1800` |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | Per-LLM-call read timeout | `180` |
+| `LLM_CONNECT_TIMEOUT_SECONDS` | Per-LLM-call connect timeout | `10` |
 
 > ⚠️ The `.env` file is never committed — it is gitignored. Secrets are read only from
 > environment variables, never hardcoded into the codebase.
@@ -354,7 +360,8 @@ See `CLAUDE.md` §6 for full column-level detail.
 - If a required API key is missing when a task starts, the system **halts** the task
   and warns the user.
 - **Infinite loop protection:** `MAX_ITERATIONS` per Subagent, `MAX_REVIEW_ITERATIONS`
-  for the Reviewer ↔ Subagent loop, and `TASK_TIMEOUT_SECONDS` per task.
+  for the Reviewer ↔ Subagent loop, and `TASK_TIMEOUT_SECONDS` per task (raise this and
+  `LLM_REQUEST_TIMEOUT_SECONDS` if you're running slow local/CPU models).
 - **Prompt injection protection:** agent teams uploaded to the Marketplace and custom
   system prompts go through automatic security scanning (`utils/prompt_guard.py`).
 - Agents installed from the Marketplace cannot access the installing user's API keys
