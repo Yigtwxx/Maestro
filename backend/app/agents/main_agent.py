@@ -21,6 +21,7 @@ from app.agents.base import (
     SubagentResult,
     extract_json,
     format_memory_block,
+    format_optional_block,
     with_current_date,
 )
 from app.agents.prompts import (
@@ -29,7 +30,15 @@ from app.agents.prompts import (
     SYNTHESIS_SYSTEM,
 )
 from app.agents.registry import SubagentSpec, get_domain_info
-from app.core.constants import MAX_SUBTASKS, AgentRole, EventType, SubagentStatus
+from app.agents.schemas import PlanAssignment, PlanResult
+from app.core.constants import (
+    MAX_SUBTASKS,
+    PLAN_MAX_TOKENS,
+    SYNTHESIS_MAX_TOKENS,
+    AgentRole,
+    EventType,
+    SubagentStatus,
+)
 from app.services.llm_service import ChatMessage, LLMError
 
 # One team member with its task-specific brief.
@@ -44,7 +53,7 @@ def _fallback_assignments(
 
 
 def _parse_assignments(
-    parsed: dict[str, Any], team: tuple[SubagentSpec, ...], prompt: str
+    proposed: list[PlanAssignment], team: tuple[SubagentSpec, ...], prompt: str
 ) -> list[Assignment]:
     """Map LLM assignments onto the fixed team, in deterministic team order.
 
@@ -52,11 +61,9 @@ def _parse_assignments(
     brief. An empty result falls back to the whole team with the raw prompt.
     """
     briefs: dict[str, str] = {}
-    for item in parsed.get("assignments", []):
-        if not isinstance(item, dict):
-            continue
-        member_id = str(item.get("member", "")).strip()
-        brief = str(item.get("brief", "")).strip()
+    for item in proposed:
+        member_id = item.member.strip()
+        brief = item.brief.strip()
         if member_id and brief and member_id not in briefs:
             briefs[member_id] = brief
     assignments = [
@@ -77,6 +84,8 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
         domain=domain,
         expertise=info.expertise,
         team=team_lines,
+        methodology=format_optional_block("How this domain works:", info.methodology),
+        planning_example=format_optional_block("Example:", info.planning_example),
         clarify_rule=clarify_rule,
         memory_context=format_memory_block(ctx.memory_context),
     )
@@ -85,15 +94,17 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
         ChatMessage("user", prompt),
     ]
     try:
-        response = await ctx.adapter.chat(messages, temperature=0.2)
-        parsed = extract_json(response.content)
+        response = await ctx.adapter.chat(
+            messages, temperature=0.2, max_tokens=PLAN_MAX_TOKENS
+        )
+        plan = PlanResult.model_validate(extract_json(response.content))
     except (LLMError, ValueError):
         return "assignments", _fallback_assignments(info.team, prompt)
 
-    question = str(parsed.get("question", "")).strip()
+    question = plan.question.strip()
     if allow_clarify and question:
         return "question", question
-    return "assignments", _parse_assignments(parsed, info.team, prompt)
+    return "assignments", _parse_assignments(plan.assignments, info.team, prompt)
 
 
 async def _assign(ctx: AgentContext, domain: str, prompt: str) -> list[Assignment]:
@@ -159,17 +170,27 @@ async def _run_with_review(
     return result
 
 
-async def _synthesize(ctx: AgentContext, prompt: str, outputs: list[str]) -> str:
-    """Combine subtask outputs into a single final answer."""
+async def _synthesize(
+    ctx: AgentContext, domain: str, prompt: str, outputs: list[str]
+) -> str:
+    """Combine subtask outputs into a single, domain-shaped final answer."""
     if len(outputs) == 1:
         return outputs[0]
     joined = "\n\n".join(f"- {o}" for o in outputs)
+    system = SYNTHESIS_SYSTEM.format(
+        domain=domain,
+        output_format=format_optional_block(
+            "Structure the final answer as:", get_domain_info(domain).output_format
+        ),
+    )
     messages = [
-        ChatMessage("system", with_current_date(SYNTHESIS_SYSTEM)),
+        ChatMessage("system", with_current_date(system)),
         ChatMessage("user", f"Original task:\n{prompt}\n\nSubtask results:\n{joined}"),
     ]
     try:
-        response = await ctx.adapter.chat(messages, temperature=0.3)
+        response = await ctx.adapter.chat(
+            messages, temperature=0.3, max_tokens=SYNTHESIS_MAX_TOKENS
+        )
         return response.content
     except LLMError:
         return joined
@@ -219,7 +240,7 @@ async def run(
         if r.status != SubagentStatus.ERROR
     ] or ["No successful subtask output."]
 
-    final_answer = await _synthesize(ctx, prompt, outputs)
+    final_answer = await _synthesize(ctx, domain, prompt, outputs)
     total_tokens = sum(int(r.metadata.get("tokens_used", 0)) for r in results)
 
     await ctx.emit(
