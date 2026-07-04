@@ -10,7 +10,8 @@ from app.agents.base import (
     with_current_date,
 )
 from app.agents.prompts import REVIEWER_SYSTEM
-from app.core.constants import AgentRole, EventType
+from app.agents.schemas import ReviewVerdict
+from app.core.constants import REVIEW_MAX_TOKENS, AgentRole, EventType
 from app.services.llm_service import ChatMessage, LLMError
 
 
@@ -27,16 +28,20 @@ async def review(
     )
     output = str(result.data.get("output", ""))
     messages = [
-        ChatMessage("system", with_current_date(REVIEWER_SYSTEM)),
+        # REVIEWER_SYSTEM escapes literal JSON braces as {{...}}, so it must be
+        # rendered via .format() like every other template.
+        ChatMessage("system", with_current_date(REVIEWER_SYSTEM.format())),
         ChatMessage("user", f"Subtask:\n{subtask}\n\nSubagent output:\n{output}"),
     ]
     try:
-        response = await ctx.adapter.chat(messages, temperature=0.0)
-        parsed = extract_json(response.content)
+        response = await ctx.adapter.chat(
+            messages, temperature=0.0, max_tokens=REVIEW_MAX_TOKENS
+        )
+        verdict = ReviewVerdict.model_validate(extract_json(response.content))
         review_result = ReviewResult(
-            approved=bool(parsed.get("approved", False)),
-            issues=[str(i) for i in parsed.get("issues", [])],
-            retry_hints=[str(h) for h in parsed.get("retry_hints", [])],
+            approved=verdict.approved,
+            issues=verdict.issues,
+            retry_hints=verdict.retry_hints,
         )
     except (LLMError, ValueError):
         # If the reviewer itself fails, approve to avoid blocking the pipeline.
