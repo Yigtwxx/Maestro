@@ -56,6 +56,13 @@ def format_memory_block(items: list[str]) -> str:
     )
 
 
+def format_optional_block(header: str, text: str) -> str:
+    """Render an optional prompt section: empty text leaves no dangling header."""
+    if not text.strip():
+        return ""
+    return f"\n{header}\n{text.strip()}\n"
+
+
 def with_current_date(system_prompt: str) -> str:
     """Prefix a system prompt with today's UTC date (grounds time-sensitive answers)."""
     date = datetime.now(UTC).date().isoformat()
@@ -94,24 +101,73 @@ class ReviewResult:
         }
 
 
-_JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
+# Reasoning models (e.g. Qwen3) prefix answers with a <think>...</think> block.
+_THINK_BLOCK = re.compile(r"^\s*<think>.*?</think>", re.DOTALL)
+_FENCED_BLOCK = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+
+
+def _loads_dict(candidate: str) -> dict[str, Any] | None:
+    """Parse ``candidate`` as JSON, returning it only if it is an object."""
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _balanced_objects(text: str) -> list[str]:
+    """Yield balanced ``{...}`` substrings in order of appearance.
+
+    String-aware: braces inside JSON string literals (including escaped
+    quotes) do not affect the balance count.
+    """
+    candidates: list[str] = []
+    depth = 0
+    start = -1
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            if depth > 0:
+                in_string = True
+        elif char == "{":
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == "}" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                candidates.append(text[start : index + 1])
+    return candidates
 
 
 def extract_json(text: str) -> dict[str, Any]:
     """Best-effort parse of a JSON object from an LLM response.
 
-    Small models sometimes wrap JSON in prose or code fences; we extract the
-    first balanced-looking object. Raises ValueError if none is found.
+    Small models sometimes wrap JSON in prose, code fences, or a leading
+    ``<think>`` block. Tries, in order: the whole text, fenced code blocks,
+    then each balanced ``{...}`` substring in order of appearance (the first
+    parseable object wins, matching the search-directive semantics in
+    ``subagent._parse_search_directive``). Raises ValueError if none parses.
     """
-    text = text.strip()
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-    match = _JSON_BLOCK.search(text)
-    if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError as exc:
-            raise ValueError("Could not parse JSON from LLM output") from exc
+    text = _THINK_BLOCK.sub("", text).strip()
+    result = _loads_dict(text)
+    if result is not None:
+        return result
+    for match in _FENCED_BLOCK.finditer(text):
+        result = _loads_dict(match.group(1).strip())
+        if result is not None:
+            return result
+    for candidate in _balanced_objects(text):
+        result = _loads_dict(candidate)
+        if result is not None:
+            return result
     raise ValueError("No JSON object found in LLM output")
