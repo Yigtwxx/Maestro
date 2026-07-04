@@ -16,6 +16,7 @@ from app.agents.base import (
     SubagentResult,
     extract_json,
     format_memory_block,
+    format_optional_block,
     with_current_date,
 )
 from app.agents.prompts import SUBAGENT_SYSTEM, SUBAGENT_WEB_SEARCH_RULE
@@ -67,6 +68,10 @@ async def run_subtask(
         name=member.name,
         domain=domain,
         role=member.role,
+        instructions=format_optional_block("How you work:", member.instructions),
+        output_format=format_optional_block(
+            "Format your output as:", member.output_format
+        ),
         review_hints=hints_block,
         memory_context=format_memory_block(ctx.memory_context),
     )
