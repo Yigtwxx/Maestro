@@ -1,62 +1,52 @@
-# Maestro Platform
+<div align="center">
 
-**A public, general-purpose AI agent orchestration platform.** Users connect their own
-LLM API keys (**BYOK — Bring Your Own Key**) and run complex tasks end-to-end through a
-multi-layer agent hierarchy (**Orchestrator → Main Agent → Subagent → Reviewer**). The
-community can share their own agent teams via the **Marketplace**, and others can install
-them with a single click.
+# 🎼 Maestro
+
+**Orchestrate AI agent teams with your own keys.**
+
+A public, general-purpose AI agent orchestration platform. Connect your own LLM API keys
+(**BYOK — Bring Your Own Key**) and run complex tasks end-to-end through a multi-layer
+agent hierarchy — or share your agent teams with the community via the **Marketplace**.
+
+[![CI](https://github.com/Yigtwxx/maestro/actions/workflows/ci.yml/badge.svg)](https://github.com/Yigtwxx/maestro/actions/workflows/ci.yml)
+[![Next.js](https://img.shields.io/badge/Next.js-App_Router-black?logo=nextdotjs)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-relational-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![MongoDB](https://img.shields.io/badge/MongoDB-logs_&_sessions-47A248?logo=mongodb&logoColor=white)](https://www.mongodb.com)
+[![Qdrant](https://img.shields.io/badge/Qdrant-vector_DB-DC244C)](https://qdrant.tech)
+[![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
+[![Ollama](https://img.shields.io/badge/Ollama-free_local_tier-white?logo=ollama&logoColor=black)](https://ollama.com)
+
+[Features](#-features) · [Architecture](#-architecture) · [Screenshots](#-screenshots) · [Getting Started](#-getting-started) · [API](#-api-overview) · [Security](#-security) · [Roadmap](#-roadmap)
+
+</div>
+
+---
+
+## 💡 How It Works
+
+One prompt in — an orchestrated agent team out:
+
+1. **You enter a single prompt.**
+2. The **Orchestrator** analyzes the task and routes it to the right domain expert.
+3. The **Main Agent** breaks the task into sub-steps and dispatches Subagents.
+4. **Subagents** execute their atomic tasks in parallel.
+5. An optional **Reviewer** audits the output and bounces errors back for retry.
+6. The result is **streamed to you live over WebSocket** — including the ability for
+   agents to ask *you* a clarifying question mid-task (human-in-the-loop).
+
+**Zero-cost by default.** Connect your own OpenAI / Anthropic / Google Gemini keys, or
+use none at all: Gemini has a free tier (get a key at
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey) — no credit card), and
+tasks automatically fall back to **Qwen3.5 via Ollama — fully free and local** when the
+quota runs out or no key is connected.
 
 > 📐 Single source of truth for architecture, conventions, and code standards: [`CLAUDE.md`](./CLAUDE.md)
 > 📋 Original product requirements (spec): [`project-docs.md`](./project-docs.md)
 
----
-
-## Table of Contents
-
-- [Core Value Proposition](#core-value-proposition)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-- [Environment Variables](#environment-variables)
-- [API Overview](#api-overview)
-- [Database Schemas](#database-schemas)
-- [Security](#security)
-- [Development & Verification](#development--verification)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-
----
-
-## Core Value Proposition
-
-```
-User enters a single prompt
-        │
-        ▼
-Orchestrator analyzes the task → routes it to the right Main Agent
-        │
-        ▼
-Main Agent breaks the task into sub-steps → dispatches Subagents
-        │
-        ▼
-Subagents execute their tasks
-        │
-        ▼
-(optional) Reviewer Agent checks quality, bounces errors back
-        │
-        ▼
-Result is streamed to the user live over WebSocket
-```
-
-Users can connect their own OpenAI / Anthropic / Google Gemini API keys. Gemini has a
-free tier (get a key at https://aistudio.google.com/apikey — no credit card), and tasks
-run on Gemini automatically fall back to the local model when the quota runs out.
-Without any key, the platform still works at zero cost using
-**Qwen3.5 (via Ollama — fully free and local)**.
-
-## Features
+## ✨ Features
 
 | Module | Description | Status |
 |---|---|---|
@@ -71,81 +61,111 @@ Without any key, the platform still works at zero cost using
 | **Marketplace** | Publish agent teams (mandatory security scan), one-click install, install counter | ✅ Live |
 | **Human-in-the-loop** | Main Agent can ask the user one clarifying question when uncertain | ✅ Live |
 | **Infinite Loop Protection** | `max_iterations`, `max_review_iterations`, `task_timeout_seconds` limits | ✅ Live |
-| **Multi-LLM Provider** | Ollama (free/default), OpenAI, Anthropic — extensible via adapter pattern | ✅ Live |
-| User profile & billing (Stripe) | | 🔜 Planned |
-| Marketplace ratings/reviews | | 🔜 Planned |
-| Redis-based rate limiting, refresh token rotation | | 🔜 Planned |
+| **Multi-LLM Provider** | Ollama (free/default), Gemini, OpenAI, Anthropic — extensible via adapter pattern | ✅ Live |
+| **User profile & billing (Stripe)** | Subscription management | 🔜 Planned |
+| **Marketplace ratings/reviews** | Community feedback on agent teams | 🔜 Planned |
+| **Redis rate limiting & token rotation** | Hardened production limits | 🔜 Planned |
 
-See [Roadmap](#roadmap) and `CLAUDE.md` §16 for full detail.
-
-## Architecture
+## 🏗 Architecture
 
 ### Agent Hierarchy
 
-```
-User Prompt
-       │
-       ▼
-┌─────────────────┐
-│  ORCHESTRATOR    │  ← runs on the user's connected LLM API
-│  (Router)        │     determines which domain the task belongs to
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   MAIN AGENT    │  ← domain expert (finance, software, marketing, ...)
-│    (Expert)     │     splits the task into sub-steps, dispatches Subagents
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    ▼         ▼
-┌────────┐ ┌────────┐
-│SUBAGENT│ │SUBAGENT│  ← one specific task each (data fetch, analysis, ...)
-│(Worker)│ │(Worker)│
-└────┬───┘ └────┬───┘
-     │          │
-     ▼          ▼
-┌─────────────────┐
-│    REVIEWER     │  ← optional (reviewer_enabled: boolean)
-│   (Auditor)     │     bounces errors back to the Subagent (max_review_iterations)
-└─────────────────┘
+The **Orchestrator** only routes — it never produces work product. The **Main Agent**
+plans and coordinates. Each **Subagent** performs exactly one atomic task. The
+**Reviewer** (toggle: `reviewer_enabled`) validates outputs and bounces errors back,
+bounded by `max_review_iterations`.
+
+```mermaid
+flowchart TD
+    U(["👤 User Prompt"]) --> O["🎯 Orchestrator<br/><i>routes the task to the right domain</i>"]
+    O --> M["🧠 Main Agent<br/><i>domain expert — plans sub-tasks</i>"]
+    M --> S1["⚙️ Subagent<br/><i>data fetching</i>"]
+    M --> S2["⚙️ Subagent<br/><i>analysis</i>"]
+    M --> S3["⚙️ Subagent<br/><i>reporting</i>"]
+    S1 --> R{"🔍 Reviewer<br/><i>optional</i>"}
+    S2 --> R
+    S3 --> R
+    R -- "❌ issues + retry hints<br/>(max_review_iterations)" --> M
+    R -- "✅ approved" --> OUT(["📦 Result → WebSocket stream"])
 ```
 
-- The **Orchestrator** only routes; it never produces work product directly.
-- The **Main Agent** builds the sub-task plan and coordinates its Subagents.
-- Each **Subagent** performs exactly one atomic task.
-- The **Reviewer**, when enabled, validates a Subagent's output and — if it finds an
-  error — sends the task back with the specific issue (bounded by `max_review_iterations`).
+### Task Lifecycle
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant API as FastAPI
+    participant ORC as Orchestrator
+    participant MAIN as Main Agent
+    participant SUB as Subagent
+    participant REV as Reviewer
+
+    User->>API: POST /api/v1/tasks
+    API-->>User: task_id + live WebSocket stream
+    API->>ORC: dispatch task
+    ORC->>MAIN: route to domain expert
+    opt Human-in-the-loop
+        MAIN-->>User: clarifying question (WS)
+        User->>API: POST /tasks/{id}/answer
+    end
+    MAIN->>SUB: atomic sub-task
+    SUB-->>REV: structured output (JSON)
+    loop until approved (max_review_iterations)
+        REV-->>SUB: issues + retry hints
+        SUB-->>REV: revised output
+    end
+    REV-->>MAIN: approved
+    MAIN-->>User: final result (WS)
+```
+
+### System Overview
+
+```mermaid
+flowchart LR
+    subgraph Client
+        FE["🖥 Frontend<br/>Next.js + React + TS"]
+    end
+    subgraph Server
+        BE["⚡ Backend<br/>FastAPI (async)"]
+    end
+    subgraph Data
+        PG[("🐘 PostgreSQL<br/>users, keys,<br/>subscriptions")]
+        MG[("🍃 MongoDB<br/>agent logs, marketplace,<br/>task sessions")]
+        QD[("🧭 Qdrant<br/>conversation & document<br/>embeddings")]
+    end
+    subgraph Providers["LLM Provider Adapters"]
+        OL["Ollama (Qwen3.5)"]
+        GM["Gemini"]
+        OA["OpenAI"]
+        AN["Anthropic"]
+    end
+
+    FE <-- "REST / WebSocket" --> BE
+    BE --> PG
+    BE --> MG
+    BE --> QD
+    BE --> OL
+    BE --> GM
+    BE --> OA
+    BE --> AN
+```
 
 Agents communicate via structured JSON messages; the Subagent output format and Reviewer
-feedback format are defined in `CLAUDE.md` §5.4.
+feedback format are defined in [`CLAUDE.md`](./CLAUDE.md) §5.4.
 
-### System Architecture
+## 📸 Screenshots
 
-```
-┌────────────┐        REST / WebSocket        ┌──────────────┐
-│  Frontend   │ ◄─────────────────────────────► │   Backend    │
-│  (Next.js)  │                                  │  (FastAPI)   │
-└────────────┘                                  └──────┬───────┘
-                                                         │
-                       ┌─────────────────────────────────┼───────────────────────────┐
-                       ▼                                 ▼                           ▼
-               ┌───────────────┐                ┌────────────────┐          ┌───────────────┐
-               │ PostgreSQL    │                │ MongoDB         │          │ Qdrant         │
-               │ users, keys,  │                │ agent_logs,     │          │ conversation & │
-               │ subscriptions │                │ marketplace,    │          │ document       │
-               │               │                │ task_sessions   │          │ embeddings     │
-               └───────────────┘                └────────────────┘          └───────────────┘
-                                                         │
-                                                         ▼
-                                          ┌───────────────────────────┐
-                                          │  LLM Provider Adapters     │
-                                          │  Ollama (Qwen3.5) / Gemini │
-                                          │  / OpenAI / Anthropic     │
-                                          └───────────────────────────┘
-```
+<!-- TODO: add screenshots — drop the images into docs/screenshots/ and they will render automatically -->
 
-## Tech Stack
+| Dashboard | Architect (Live View) |
+|---|---|
+| <!-- TODO: add screenshot --> ![Dashboard](docs/screenshots/dashboard.png) | <!-- TODO: add screenshot --> ![Architect](docs/screenshots/architect.png) |
+
+| Marketplace | Agent Profile |
+|---|---|
+| <!-- TODO: add screenshot --> ![Marketplace](docs/screenshots/marketplace.png) | <!-- TODO: add screenshot --> ![Agent Profile](docs/screenshots/agent-profile.png) |
+
+## 🧰 Tech Stack
 
 | Layer | Technology | Purpose |
 |---|---|---|
@@ -161,7 +181,73 @@ feedback format are defined in `CLAUDE.md` §5.4.
 | **Embedding** | nomic-embed-text via Ollama | Free/local embeddings for RAG |
 | **Containerization** | Docker Compose | Postgres, Mongo, Qdrant infrastructure |
 
-## Project Structure
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Docker** (for Postgres / Mongo / Qdrant)
+- **Python 3.11+**
+- **Node.js 20+**
+- **[Ollama](https://ollama.com)** (for the free local model)
+
+### Quick Start (Single Command)
+
+Brings up every layer at once — infra + backend + frontend:
+
+```powershell
+# Windows
+./scripts/dev.ps1
+```
+
+```bash
+# macOS / Linux
+./scripts/dev.sh
+```
+
+### Manual Setup (Step by Step)
+
+**1. Environment variables**
+
+```bash
+cp .env.example .env
+# fill in values such as JWT_SECRET, API_KEY_MASTER_KEY
+```
+
+**2. Infrastructure (Docker)**
+
+```bash
+docker compose up -d          # postgres, mongo, qdrant
+```
+
+**3. Ollama models (free tier)**
+
+```bash
+ollama serve                  # run in a separate terminal
+ollama pull qwen3.5:9b
+ollama pull nomic-embed-text
+```
+
+**4. Backend**
+
+```bash
+cd backend
+python -m venv .venv
+# Windows: .venv\Scripts\activate     |  macOS/Linux: source .venv/bin/activate
+pip install -r requirements.txt
+alembic upgrade head           # apply DB migrations
+uvicorn app.main:app --reload  # http://localhost:8000  (Swagger: /docs)
+```
+
+**5. Frontend**
+
+```bash
+cd frontend
+npm install
+npm run dev                    # http://localhost:3000
+```
+
+<details>
+<summary><b>📂 Project Structure</b></summary>
 
 ```
 maestro/
@@ -194,76 +280,16 @@ maestro/
 │   └── tests/
 │
 ├── scripts/                         # dev.ps1 (Windows) / dev.sh (macOS/Linux)
-├── docker-compose.yml                # Postgres, Mongo, Qdrant
+├── docker-compose.yml               # Postgres, Mongo, Qdrant
 ├── .env.example
 ├── CLAUDE.md                        # Architecture & standards (single source of truth)
 └── project-docs.md                  # Original product requirements
 ```
 
-## Getting Started
+</details>
 
-### Prerequisites
-
-- **Docker** (for Postgres / Mongo / Qdrant)
-- **Python 3.11+**
-- **Node.js 20+**
-- **[Ollama](https://ollama.com)** (for the free local model)
-
-### 1. Set Environment Variables
-
-```bash
-cp .env.example .env
-# fill in values such as JWT_SECRET, API_KEY_MASTER_KEY
-```
-
-### 2. Infrastructure (Docker)
-
-```bash
-docker compose up -d          # postgres, mongo, qdrant
-```
-
-### 3. Ollama Models (Free Tier)
-
-```bash
-ollama serve                  # run in a separate terminal
-ollama pull qwen3.5:9b
-ollama pull nomic-embed-text
-```
-
-### 4. Backend
-
-```bash
-cd backend
-python -m venv .venv
-# Windows: .venv\Scripts\activate     |  macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-alembic upgrade head           # apply DB migrations
-uvicorn app.main:app --reload  # http://localhost:8000  (Swagger: /docs)
-```
-
-### 5. Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev                    # http://localhost:3000
-```
-
-### Quick Start (Single Command)
-
-To bring up every layer (infra + backend + frontend) at once:
-
-```powershell
-# Windows
-./scripts/dev.ps1
-```
-
-```bash
-# macOS / Linux
-./scripts/dev.sh
-```
-
-## Environment Variables
+<details>
+<summary><b>🔧 Environment Variables</b></summary>
 
 Description of every variable in `.env.example`:
 
@@ -289,10 +315,16 @@ Description of every variable in `.env.example`:
 > ⚠️ The `.env` file is never committed — it is gitignored. Secrets are read only from
 > environment variables, never hardcoded into the codebase.
 
-## API Overview
+</details>
+
+## 🔌 API Overview
 
 For the full OpenAPI schema, visit `http://localhost:8000/docs` while the backend is
-running. Main endpoint groups:
+running. All endpoints (except public ones) require JWT authentication and rate
+limiting; request/response bodies are validated with Pydantic v2.
+
+<details>
+<summary><b>Endpoint groups</b></summary>
 
 ```
 # Authentication
@@ -339,24 +371,25 @@ GET    /api/v1/marketplace/{id}/reviews
 WS     /api/v1/architect/live
 ```
 
-All endpoints (except public ones) require JWT authentication and rate limiting;
-request/response bodies are validated with Pydantic v2.
+</details>
 
-## Database Schemas
+<details>
+<summary><b>🗄 Database Schemas</b></summary>
 
-**PostgreSQL** — relational data: `users`, `api_keys` (encrypted), `subscriptions`.
-**MongoDB** — dynamic/flexible data: `agent_logs`, `marketplace_items`,
-`task_sessions`, `agent_configurations`.
-**Qdrant** — vector data: `conversation_memories`, `document_chunks`.
+- **PostgreSQL** — relational data: `users`, `api_keys` (encrypted), `subscriptions`.
+- **MongoDB** — dynamic/flexible data: `agent_logs`, `marketplace_items`,
+  `task_sessions`, `agent_configurations`.
+- **Qdrant** — vector data: `conversation_memories`, `document_chunks`.
 
-See `CLAUDE.md` §6 for full column-level detail.
+See [`CLAUDE.md`](./CLAUDE.md) §6 for full column-level detail.
 
-## Security
+</details>
+
+## 🔐 Security
 
 - **BYOK API keys** are encrypted with AES-256-GCM; never stored, logged, or returned
-  to the frontend in plaintext.
-- The master encryption key is read only from the `API_KEY_MASTER_KEY` environment
-  variable; it is never embedded in code.
+  to the frontend in plaintext. The master key lives only in the `API_KEY_MASTER_KEY`
+  environment variable.
 - If a required API key is missing when a task starts, the system **halts** the task
   and warns the user.
 - **Infinite loop protection:** `MAX_ITERATIONS` per Subagent, `MAX_REVIEW_ITERATIONS`
@@ -364,15 +397,18 @@ See `CLAUDE.md` §6 for full column-level detail.
   `LLM_REQUEST_TIMEOUT_SECONDS` if you're running slow local/CPU models).
 - **Prompt injection protection:** agent teams uploaded to the Marketplace and custom
   system prompts go through automatic security scanning (`utils/prompt_guard.py`).
-- Agents installed from the Marketplace cannot access the installing user's API keys
-  directly; all calls go through a sandboxed service layer.
-- User memory (RAG) and data are isolated per user.
-- All WebSocket connections require authentication.
-- Database schema changes are made only via Alembic migrations.
+- Marketplace agents cannot access the installing user's API keys directly; all calls
+  go through a sandboxed service layer.
+- User memory (RAG) and data are isolated per user; all WebSocket connections require
+  authentication; schema changes happen only via Alembic migrations.
 
-See `CLAUDE.md` §9 for the full policy.
+See [`CLAUDE.md`](./CLAUDE.md) §9 for the full policy.
 
-## Development & Verification
+## 🧪 Development & Verification
+
+CI runs on every push and PR to `main` — backend (ruff lint + format + pytest) and
+frontend (ESLint + type-check + build). See
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
 
 ```bash
 # Backend
@@ -385,35 +421,35 @@ ruff format --check .             # format check
 cd frontend
 npm run lint                      # ESLint
 npm run type-check                # tsc --noEmit
-npm test                          # vitest/jest (if present)
+npm run build                     # production build
 ```
 
 When adding a new provider, existing code is never modified — a new **adapter class**
-is added under `services/llm_service.py` (adapter pattern — see `CLAUDE.md` §11 and §15).
+is added under `services/llm_service.py` (adapter pattern — see [`CLAUDE.md`](./CLAUDE.md) §11 and §15).
 
-## Roadmap
+## 🗺 Roadmap
 
 Development follows a **vertical-slice-first** approach.
 
-- **Round 1 — Done:** Auth, BYOK API key management, end-to-end task flow
+- [x] **Round 1** — Auth, BYOK API key management, end-to-end task flow
   (Orchestrator → Main → Subagent → optional Reviewer, via Ollama/Qwen3),
   live WebSocket task/architect streaming, `(auth)` pages, `settings/api-keys`,
   task launch screen, live `architect` view.
-- **Round 2 — Done:** RAG (per-user memory + document retrieval at task start),
+- [x] **Round 2** — RAG (per-user memory + document retrieval at task start),
   document upload, `OllamaAdapter` + `OpenAIAdapter` + `AnthropicAdapter`,
   Dashboard with real metrics, agent profile CRUD + tool assignment editor,
   Marketplace (security-scanned publishing + one-click install), human-in-the-loop
   clarifying questions, `scripts/dev.ps1` / `scripts/dev.sh`.
-- **Next rounds:** User profile & subscription billing (Stripe), Marketplace
+- [ ] **Next rounds** — User profile & subscription billing (Stripe), Marketplace
   ratings/reviews, dynamic agents in the task flow, GraphQL (if needed),
   long-polling fallback, i18n infrastructure, Redis-based rate limiting +
   refresh token rotation, WS/task_service test coverage.
 
-See `CLAUDE.md` §16 for full detail.
+See [`CLAUDE.md`](./CLAUDE.md) §16 for full detail.
 
-## Contributing
+## 🤝 Contributing
 
-This project is developed according to the standards defined in `CLAUDE.md`:
+This project is developed according to the standards defined in [`CLAUDE.md`](./CLAUDE.md):
 
 - Code, identifiers, and comments are in **English**; user-facing UI text may be in
   Turkish (via i18n infrastructure).
@@ -424,9 +460,13 @@ This project is developed according to the standards defined in `CLAUDE.md`:
 - Every new LLM provider is added via the adapter pattern; existing code is never
   modified.
 - Before opening a PR, make sure the relevant layer's lint/test/type-check commands
-  pass cleanly (see [Development & Verification](#development--verification)).
+  pass cleanly (see [Development & Verification](#-development--verification)).
 
 ---
 
-For questions and detailed architecture decisions, see `CLAUDE.md`; for the product's
-original requirements, see `project-docs.md`.
+<div align="center">
+
+For questions and detailed architecture decisions, see [`CLAUDE.md`](./CLAUDE.md) ·
+for the product's original requirements, see [`project-docs.md`](./project-docs.md)
+
+</div>
