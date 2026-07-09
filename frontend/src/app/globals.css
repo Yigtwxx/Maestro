@@ -25,16 +25,297 @@ body {
 }
 
 @layer utilities {
-  /* Faint lime grid backdrop (architect canvas, auth pages). */
+  /* Faint grid backdrop, tintable per module via `--grid-rgb` (inline style).
+     Defaults to neutral slate; auth/landing set lime, architect sets violet. */
   .bg-grid {
     background-image:
-      linear-gradient(to right, rgba(201, 243, 29, 0.045) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(201, 243, 29, 0.045) 1px, transparent 1px);
+      linear-gradient(to right, rgb(var(--grid-rgb, 148 163 184) / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(var(--grid-rgb, 148 163 184) / 0.05) 1px, transparent 1px);
     background-size: 32px 32px;
   }
 
   /* Uppercase micro-label used for stat labels and section eyebrows. */
   .text-micro {
     @apply text-[10px] font-semibold uppercase tracking-micro;
+  }
+
+  /* Soft neon mesh behind section headers — tint via `--aurora-rgb` (inline
+     style). Opacity stays low so text on `muted` remains readable. */
+  .aurora {
+    pointer-events: none;
+    background-image:
+      radial-gradient(38% 90% at 18% 20%, rgb(var(--aurora-rgb, 163 230 53) / 0.14), transparent 70%),
+      radial-gradient(30% 80% at 78% 60%, rgb(var(--aurora-rgb, 163 230 53) / 0.07), transparent 70%);
+    background-size:
+      160% 160%,
+      160% 160%;
+    animation: aurora-drift 18s ease-in-out infinite alternate;
+  }
+
+  /* Animated neon gradient border for featured cards — double-background
+     technique, hue via `--gb-rgb` (inline style). Degrades to a static
+     gradient border without animation support. */
+  .gradient-border {
+    border: 1px solid transparent;
+    background:
+      linear-gradient(#12121c, #12121c) padding-box,
+      linear-gradient(
+          90deg,
+          rgb(var(--gb-rgb, 163 230 53) / 0.7),
+          rgb(var(--gb-rgb, 163 230 53) / 0.1) 40%,
+          rgb(var(--gb-rgb, 163 230 53) / 0.7)
+        )
+        border-box;
+    background-size:
+      100% 100%,
+      200% 100%;
+    animation: border-pan 6s linear infinite;
+  }
+
+  /* Diagonal light sweep on hover — for solid CTAs and featured cards. */
+  .shimmer-hover {
+    position: relative;
+    overflow: hidden;
+  }
+  .shimmer-hover::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    transform: translateX(-150%) skewX(-12deg);
+    background: linear-gradient(110deg, transparent, rgb(255 255 255 / 0.14), transparent);
+    pointer-events: none;
+  }
+  .shimmer-hover:hover::after {
+    animation: shimmer 0.9s ease-out;
+  }
+
+  /* 1px neon line sweeping down once on route entry — tint via `--pt-rgb`.
+     Fixed so it crosses the whole viewport regardless of scroll position. */
+  .page-scanline {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    z-index: 60;
+    pointer-events: none;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--pt-rgb, 163 230 53) / 0.9) 30%,
+      rgb(var(--pt-rgb, 163 230 53) / 0.9) 70%,
+      transparent
+    );
+    box-shadow: 0 0 12px 1px rgb(var(--pt-rgb, 163 230 53) / 0.55);
+    animation: scanline 0.35s ease-in both;
+  }
+
+  /* Sparkline entrance — bars grow from the baseline, staggered per bar via
+     inline animation-delay. */
+  .spark-grow rect {
+    transform-box: fill-box;
+    transform-origin: bottom;
+    animation: spark-grow 0.5s ease-out both;
+  }
+
+  /* Staggered blur-in for a container's direct children (forms, card innards).
+     Caps at 10 children; later ones share the last beat. */
+  .stagger-children > * {
+    animation: stagger-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .stagger-children > *:nth-child(2) {
+    animation-delay: 0.06s;
+  }
+  .stagger-children > *:nth-child(3) {
+    animation-delay: 0.12s;
+  }
+  .stagger-children > *:nth-child(4) {
+    animation-delay: 0.18s;
+  }
+  .stagger-children > *:nth-child(5) {
+    animation-delay: 0.24s;
+  }
+  .stagger-children > *:nth-child(6) {
+    animation-delay: 0.3s;
+  }
+  .stagger-children > *:nth-child(7) {
+    animation-delay: 0.36s;
+  }
+  .stagger-children > *:nth-child(n + 8) {
+    animation-delay: 0.42s;
+  }
+
+  /* One-shot light pan along the TopBar bottom edge — tint via `--tb-rgb`. */
+  .topbar-pan {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--tb-rgb, 163 230 53) / 0.8),
+      transparent
+    );
+    background-size: 40% 100%;
+    background-repeat: no-repeat;
+    animation: topbar-pan 0.7s ease-out both;
+  }
+
+  /* Horizontal bar entrance (BarList) — pair with inline animation-delay. */
+  .bar-grow {
+    transform-origin: left;
+    animation: bar-grow 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  /* Rotating radar cone over the architect canvas while a task runs — tint
+     via `--rd-rgb`. Oversized so the cone reaches every panel corner. */
+  .radar-layer {
+    position: absolute;
+    inset: -60%;
+    pointer-events: none;
+    background: conic-gradient(
+      from 0deg,
+      rgb(var(--rd-rgb, 167 139 250) / 0.08),
+      transparent 70deg
+    );
+    animation: radar-sweep 6s linear infinite;
+  }
+
+  /* Power-on line sweeping down a panel once per task start — `--ps-rgb`. */
+  .panel-scan {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      rgb(var(--ps-rgb, 167 139 250) / 0.8),
+      transparent
+    );
+    background-size: 100% 2px;
+    background-repeat: no-repeat;
+    animation: panel-scan 0.6s ease-in both;
+  }
+
+  /* Fresh EventLog row: tinted highlight decaying to transparent — `--lg-rgb`. */
+  .log-flash {
+    animation: log-flash 1.2s ease-out both;
+  }
+
+  /* Loading placeholder sheen — module tint via `--sk-rgb`. */
+  .skeleton {
+    @apply rounded-md bg-surface-2;
+    background-image: linear-gradient(
+      100deg,
+      transparent 30%,
+      rgb(var(--sk-rgb, 148 163 184) / 0.08) 50%,
+      transparent 70%
+    );
+    background-size: 200% 100%;
+    background-repeat: no-repeat;
+    animation: skeleton-sheen 1.6s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .aurora,
+    .gradient-border,
+    .shimmer-hover:hover::after,
+    .skeleton,
+    .spark-grow rect,
+    .stagger-children > *,
+    .topbar-pan,
+    .bar-grow,
+    .log-flash {
+      animation: none;
+    }
+    .page-scanline,
+    .radar-layer,
+    .panel-scan {
+      display: none;
+    }
+  }
+}
+
+@keyframes spark-grow {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+    filter: blur(4px);
+  }
+}
+
+@keyframes topbar-pan {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+
+@keyframes bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@keyframes skeleton-sheen {
+  from {
+    background-position: -150% 0;
+  }
+  to {
+    background-position: 250% 0;
+  }
+}
+
+@keyframes scanline {
+  from {
+    transform: translateY(0);
+    opacity: 0.9;
+  }
+  to {
+    transform: translateY(100vh);
+    opacity: 0;
+  }
+}
+
+@keyframes radar-sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes panel-scan {
+  from {
+    background-position: 0 0;
+    opacity: 1;
+  }
+  to {
+    background-position: 0 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes log-flash {
+  0% {
+    background-color: rgb(var(--lg-rgb, 167 139 250) / 0.14);
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    background-color: transparent;
+    opacity: 1;
+    transform: translateY(0);
   }
 }
