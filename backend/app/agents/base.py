@@ -40,8 +40,17 @@ class AgentContext:
     # Optional human-in-the-loop callback: (question) -> answer text.
     ask_user: AskFn | None = None
     allow_questions: bool = False
-    # Web-search budget per subtask run (directive loop in subagent.py).
-    max_web_searches: int = 2
+    # Per-tool budgets per subtask run (directive loop in subagent.py), plus
+    # a total tool-call cap across all tools.
+    max_web_searches: int = 3
+    max_data_fetches: int = 3
+    max_code_executions: int = 3
+    max_tool_calls: int = 6
+    # Budget for the built-in view_original_request directive; exempt from
+    # max_tool_calls so it never crowds out real tools.
+    max_original_request_views: int = 1
+    # Concurrent subagents per task (wave execution in main_agent.py).
+    max_parallel_subagents: int = 3
 
 
 def format_memory_block(items: list[str]) -> str:
@@ -61,6 +70,16 @@ def format_optional_block(header: str, text: str) -> str:
     if not text.strip():
         return ""
     return f"\n{header}\n{text.strip()}\n"
+
+
+_TRUNCATION_MARK = "\n...[truncated]"
+
+
+def truncate_text(text: str, limit: int) -> str:
+    """Cap ``text`` at ``limit`` characters, marking any cut."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + _TRUNCATION_MARK
 
 
 def with_current_date(system_prompt: str) -> str:
