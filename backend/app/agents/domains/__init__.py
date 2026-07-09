@@ -8,9 +8,12 @@ meaningful: ``GET /agents`` serializes agents in this order.
 from __future__ import annotations
 
 from app.agents.domains import (
+    content,
     data,
+    education,
     finance,
     general,
+    legal,
     marketing,
     research,
     searching,
@@ -27,6 +30,9 @@ DOMAIN_CATALOG: tuple[DomainInfo, ...] = (
     searching.DOMAIN,
     research.DOMAIN,
     data.DOMAIN,
+    content.DOMAIN,
+    legal.DOMAIN,
+    education.DOMAIN,
     general.DOMAIN,
 )
 
