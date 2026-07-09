@@ -3,8 +3,9 @@ reviewer, then synthesizes the final answer (CLAUDE.md §2).
 
 The team roster is fixed per domain (``registry.DOMAIN_CATALOG``): the LLM
 only decides which members are relevant to the task and what brief each one
-gets — it can never invent members. If briefing fails, every member runs with
-the raw prompt so the pipeline never stalls.
+gets — it can never invent members. If briefing fails (after one retry),
+every member runs with a role-scoped fallback brief and can fetch the
+original request on demand, so the pipeline never stalls.
 
 Loop protection: assignment count is capped by ``max_iterations`` and each
 reviewer↔subagent retry loop by ``max_review_iterations`` (CLAUDE.md §9.2).
@@ -12,6 +13,8 @@ reviewer↔subagent retry loop by ``max_review_iterations`` (CLAUDE.md §9.2).
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
 from typing import Any
 
 from app.agents import reviewer as reviewer_agent
@@ -25,6 +28,7 @@ from app.agents.base import (
     with_current_date,
 )
 from app.agents.prompts import (
+    FALLBACK_BRIEF_TEMPLATE,
     MAIN_AGENT_CLARIFY_RULE,
     MAIN_AGENT_SYSTEM,
     SYNTHESIS_SYSTEM,
@@ -41,35 +45,89 @@ from app.core.constants import (
 )
 from app.services.llm_service import ChatMessage, LLMError
 
-# One team member with its task-specific brief.
-Assignment = tuple[SubagentSpec, str]
+
+@dataclass(slots=True)
+class Assignment:
+    """One team member with its task-specific brief and dependencies.
+
+    ``depends_on`` names earlier members (in final assignment order) whose
+    outputs are injected into this member's prompt — the graph is acyclic by
+    construction because forward and self references are dropped.
+    """
+
+    member: SubagentSpec
+    brief: str
+    depends_on: tuple[str, ...] = ()
 
 
-def _fallback_assignments(
-    team: tuple[SubagentSpec, ...], prompt: str
-) -> list[Assignment]:
-    """Every team member gets the raw prompt — the pipeline never stalls."""
-    return [(member, prompt) for member in team]
+def _fallback_assignments(team: tuple[SubagentSpec, ...]) -> list[Assignment]:
+    """Every member gets a role-scoped brief — the pipeline never stalls.
+
+    The raw user message is never used as a member's own instruction; each
+    member is told to fetch it via the view_original_request directive and
+    execute only its role's share. Members chain in team order (each depends
+    on all previous ones) so teams laid out as a pipeline — e.g. software's
+    architect → coder → tester — still hand their work forward even without
+    an explicit plan.
+    """
+    return [
+        Assignment(
+            member=member,
+            brief=FALLBACK_BRIEF_TEMPLATE.format(role=member.role),
+            depends_on=tuple(previous.id for previous in team[:index]),
+        )
+        for index, member in enumerate(team)
+    ]
+
+
+def _sanitize_depends_on(assignments: list[Assignment]) -> list[Assignment]:
+    """Keep only dependencies on members that appear *earlier* in the list.
+
+    Unknown ids, self references, and forward references are dropped silently
+    (fail-open): the member still runs, just without that upstream context.
+    """
+    seen: set[str] = set()
+    sanitized: list[Assignment] = []
+    for assignment in assignments:
+        deps = tuple(dict.fromkeys(dep for dep in assignment.depends_on if dep in seen))
+        sanitized.append(
+            Assignment(
+                member=assignment.member, brief=assignment.brief, depends_on=deps
+            )
+        )
+        seen.add(assignment.member.id)
+    return sanitized
 
 
 def _parse_assignments(
-    proposed: list[PlanAssignment], team: tuple[SubagentSpec, ...], prompt: str
+    proposed: list[PlanAssignment], team: tuple[SubagentSpec, ...]
 ) -> list[Assignment]:
     """Map LLM assignments onto the fixed team, in deterministic team order.
 
     Unknown member ids are dropped; duplicate assignments keep the first
-    brief. An empty result falls back to the whole team with the raw prompt.
+    brief. Dependencies are sanitized to earlier assigned members only. An
+    empty result falls back to the whole team with role-scoped briefs.
     """
     briefs: dict[str, str] = {}
+    depends: dict[str, tuple[str, ...]] = {}
     for item in proposed:
         member_id = item.member.strip()
         brief = item.brief.strip()
         if member_id and brief and member_id not in briefs:
             briefs[member_id] = brief
+            depends[member_id] = tuple(
+                dep.strip() for dep in item.depends_on if dep.strip()
+            )
     assignments = [
-        (member, briefs[member.id]) for member in team if member.id in briefs
+        Assignment(
+            member=member, brief=briefs[member.id], depends_on=depends[member.id]
+        )
+        for member in team
+        if member.id in briefs
     ]
-    return assignments or _fallback_assignments(team, prompt)
+    if not assignments:
+        return _fallback_assignments(team)
+    return _sanitize_depends_on(assignments)
 
 
 async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: bool):
@@ -93,18 +151,25 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
         ChatMessage("system", with_current_date(system)),
         ChatMessage("user", prompt),
     ]
-    try:
-        response = await ctx.adapter.chat(
-            messages, temperature=0.2, max_tokens=PLAN_MAX_TOKENS
-        )
-        plan = PlanResult.model_validate(extract_json(response.content))
-    except (LLMError, ValueError):
-        return "assignments", _fallback_assignments(info.team, prompt)
+    plan: PlanResult | None = None
+    # One retry: local models fail strict-JSON planning often enough that a
+    # second attempt is cheap insurance before the role-scoped fallback.
+    for _ in range(2):
+        try:
+            response = await ctx.adapter.chat(
+                messages, temperature=0.2, max_tokens=PLAN_MAX_TOKENS
+            )
+            plan = PlanResult.model_validate(extract_json(response.content))
+            break
+        except (LLMError, ValueError):
+            continue
+    if plan is None:
+        return "assignments", _fallback_assignments(info.team)
 
     question = plan.question.strip()
     if allow_clarify and question:
         return "question", question
-    return "assignments", _parse_assignments(plan.assignments, info.team, prompt)
+    return "assignments", _parse_assignments(plan.assignments, info.team)
 
 
 async def _assign(ctx: AgentContext, domain: str, prompt: str) -> list[Assignment]:
@@ -125,11 +190,12 @@ async def _assign(ctx: AgentContext, domain: str, prompt: str) -> list[Assignmen
     assignments = (
         value
         if isinstance(value, list)
-        else _fallback_assignments(get_domain_info(domain).team, prompt)
+        else _fallback_assignments(get_domain_info(domain).team)
     )
     # Loop protection: never exceed the configured iteration budget or the
-    # hard cap, whichever is lower (teams are defined within the cap).
-    return assignments[: min(ctx.max_iterations, MAX_SUBTASKS)]
+    # hard cap, whichever is lower (teams are defined within the cap). Deps
+    # are re-sanitized so nothing references a member the cap removed.
+    return _sanitize_depends_on(assignments[: min(ctx.max_iterations, MAX_SUBTASKS)])
 
 
 async def _run_with_review(
@@ -140,11 +206,19 @@ async def _run_with_review(
     brief: str,
     index: int,
     reviewer_enabled: bool,
+    objective: str = "",
+    upstream: list[tuple[str, str]] | None = None,
 ) -> SubagentResult:
     """Run a brief, optionally looping with the reviewer up to the limit."""
     review_hints: list[str] = []
     result = await subagent_worker.run_subtask(
-        ctx, domain=domain, member=member, brief=brief, index=index
+        ctx,
+        domain=domain,
+        member=member,
+        brief=brief,
+        index=index,
+        objective=objective,
+        upstream=upstream,
     )
     if not reviewer_enabled:
         return result
@@ -153,7 +227,9 @@ async def _run_with_review(
     while iterations < ctx.max_review_iterations:
         if result.status == SubagentStatus.ERROR:
             break
-        feedback = await reviewer_agent.review(ctx, subtask=brief, result=result)
+        feedback = await reviewer_agent.review(
+            ctx, domain=domain, subtask=brief, result=result, member=member, index=index
+        )
         if feedback.approved:
             break
         review_hints = feedback.retry_hints or feedback.issues
@@ -165,18 +241,101 @@ async def _run_with_review(
             brief=brief,
             index=index,
             review_hints=review_hints,
+            objective=objective,
+            upstream=upstream,
         )
     result.metadata["review_iterations"] = iterations
     return result
 
 
+def _teammate_note(assignment: Assignment, result: SubagentResult) -> str:
+    """Text a dependent member sees for this teammate's finished work."""
+    if result.status == SubagentStatus.ERROR:
+        return f"(teammate {assignment.member.name} failed; work without their input)"
+    return str(result.data.get("output", ""))
+
+
+async def _run_assignments(
+    ctx: AgentContext,
+    *,
+    domain: str,
+    prompt: str,
+    assignments: list[Assignment],
+    reviewer_enabled: bool,
+) -> list[SubagentResult]:
+    """Execute assignments in dependency waves, independents in parallel.
+
+    Members whose dependencies are all completed form a wave and run
+    concurrently (bounded by ``ctx.max_parallel_subagents``); dependents wait
+    for the next wave and receive their teammates' outputs. Results keep the
+    original assignment order regardless of completion order.
+    """
+    semaphore = asyncio.Semaphore(max(1, ctx.max_parallel_subagents))
+    names_by_id = {a.member.id: a.member.name for a in assignments}
+    completed: dict[str, str] = {}
+    results: dict[int, SubagentResult] = {}
+
+    async def run_one(index: int, assignment: Assignment) -> None:
+        # ``completed.get`` skips any dependency not yet finished (fail-open):
+        # the member still runs, just without that upstream context.
+        upstream = [
+            (names_by_id[dep], completed[dep])
+            for dep in assignment.depends_on
+            if dep in completed
+        ]
+        async with semaphore:
+            try:
+                result = await _run_with_review(
+                    ctx,
+                    domain=domain,
+                    member=assignment.member,
+                    brief=assignment.brief,
+                    index=index,
+                    reviewer_enabled=reviewer_enabled,
+                    objective=prompt,
+                    upstream=upstream,
+                )
+            except Exception as exc:  # noqa: BLE001 — sibling subtasks must survive
+                result = SubagentResult(
+                    status=SubagentStatus.ERROR,
+                    data={
+                        "error": str(exc),
+                        "subtask": assignment.brief,
+                        "member": assignment.member.id,
+                    },
+                )
+        results[index] = result
+        completed[assignment.member.id] = _teammate_note(assignment, result)
+
+    remaining = list(enumerate(assignments))
+    while remaining:
+        wave = [
+            (index, a)
+            for index, a in remaining
+            if all(dep in completed for dep in a.depends_on)
+        ]
+        if not wave:
+            # Deps only ever point at earlier members, so this cannot happen;
+            # if it somehow does, run the rest sequentially (fail-open).
+            wave = remaining[:1]
+        await asyncio.gather(*(run_one(index, a) for index, a in wave))
+        wave_indexes = {index for index, _ in wave}
+        remaining = [(i, a) for i, a in remaining if i not in wave_indexes]
+
+    return [results[index] for index in range(len(assignments))]
+
+
 async def _synthesize(
-    ctx: AgentContext, domain: str, prompt: str, outputs: list[str]
+    ctx: AgentContext, domain: str, prompt: str, outputs: list[tuple[str, str]]
 ) -> str:
-    """Combine subtask outputs into a single, domain-shaped final answer."""
+    """Combine labeled subtask outputs into a single, domain-shaped answer.
+
+    Each output is ``(member_name, text)`` — authorship labels measurably help
+    the synthesis model weigh and merge multi-member results.
+    """
     if len(outputs) == 1:
-        return outputs[0]
-    joined = "\n\n".join(f"- {o}" for o in outputs)
+        return outputs[0][1]
+    joined = "\n\n".join(f"### {name}\n{text}" for name, text in outputs)
     system = SYNTHESIS_SYSTEM.format(
         domain=domain,
         output_format=format_optional_block(
@@ -214,31 +373,32 @@ async def run(
         {
             "role": AgentRole.MAIN.value,
             # Kept for backward compatibility with older event consumers.
-            "subtasks": [brief for _, brief in assignments],
+            "subtasks": [a.brief for a in assignments],
             "assignments": [
-                {"member_id": member.id, "member_name": member.name, "brief": brief}
-                for member, brief in assignments
+                {
+                    "member_id": a.member.id,
+                    "member_name": a.member.name,
+                    "brief": a.brief,
+                    "depends_on": list(a.depends_on),
+                }
+                for a in assignments
             ],
         },
     )
 
-    results: list[SubagentResult] = []
-    for index, (member, brief) in enumerate(assignments):
-        result = await _run_with_review(
-            ctx,
-            domain=domain,
-            member=member,
-            brief=brief,
-            index=index,
-            reviewer_enabled=reviewer_enabled,
-        )
-        results.append(result)
+    results = await _run_assignments(
+        ctx,
+        domain=domain,
+        prompt=prompt,
+        assignments=assignments,
+        reviewer_enabled=reviewer_enabled,
+    )
 
     outputs = [
-        str(r.data.get("output", r.data.get("error", "")))
-        for r in results
+        (a.member.name, str(r.data.get("output", "")))
+        for a, r in zip(assignments, results, strict=True)
         if r.status != SubagentStatus.ERROR
-    ] or ["No successful subtask output."]
+    ] or [("team", "No successful subtask output.")]
 
     final_answer = await _synthesize(ctx, domain, prompt, outputs)
     total_tokens = sum(int(r.metadata.get("tokens_used", 0)) for r in results)
