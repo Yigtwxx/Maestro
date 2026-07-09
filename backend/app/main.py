@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from app.api.router import api_router
 from app.core.config import settings
 from app.core.database import close_connections
+from app.services.llm_service import aclose as close_llm_client
 
 logging.basicConfig(level=settings.log_level)
 logger = logging.getLogger("maestro")
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage startup/shutdown resources."""
     logger.info("Maestro backend starting (env=%s)", settings.environment)
     yield
+    await close_llm_client()
     await close_connections()
     logger.info("Maestro backend stopped")
 
