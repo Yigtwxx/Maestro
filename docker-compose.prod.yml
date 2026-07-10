@@ -1,0 +1,228 @@
+# =========================================================================
+# Maestro Platform — production stack (single host).
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Caddy is the only service that publishes ports; everything else talks over
+# the compose network. See docs/DEPLOYMENT.md.
+#
+# Requires Compose v2.17+ for `service_completed_successfully`.
+# =========================================================================
+name: maestro
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: maestro
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: maestro
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maestro -d maestro"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?set MONGO_USER in .env.prod}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?set MONGO_PASSWORD in .env.prod}
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - -u
+        - ${MONGO_USER}
+        - -p
+        - ${MONGO_PASSWORD}
+        - --authenticationDatabase
+        - admin
+        - --eval
+        - db.adminCommand('ping').ok
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY in .env.prod}
+    volumes:
+      - qdrantdata:/qdrant/storage
+    # No healthcheck: the image is distroless, so no in-container probe can run.
+    # Monitor /readyz from outside if you want readiness gating.
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  # Rate-limit buckets, shared by every backend worker/instance. Deliberately
+  # ephemeral: buckets expire within a minute, so persistence would only cost
+  # disk. Losing them on restart forgives a few requests, nothing more.
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env.prod}
+      - --maxmemory
+      - 128mb
+      # Buckets carry their own TTL; eviction is just a backstop against a flood
+      # of distinct client IPs filling memory faster than they expire.
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    environment:
+      # Read by the healthcheck below. `$$` keeps compose from interpolating it
+      # here, so the value is resolved inside the container instead.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 192m
+
+  # Embeddings only. RAG and document upload call this whatever chat provider
+  # the user picked; a chat model is NOT pulled here. See docs/DEPLOYMENT.md to
+  # opt into the free chat tier.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollamadata:/root/.ollama
+    healthcheck:
+      test: ["CMD", "/bin/ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  # Idempotent: exits immediately once the model is in the volume.
+  ollama-pull:
+    image: ollama/ollama:latest
+    restart: "no"
+    entrypoint: ["/bin/ollama"]
+    command: ["pull", "${EMBEDDING_MODEL_NAME:-nomic-embed-text}"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  # Runs `alembic upgrade head` and exits. The API waits for it to succeed, so a
+  # failed migration keeps the old backend serving rather than starting a new
+  # one against an unmigrated schema.
+  migrate:
+    image: ghcr.io/yigtwxx/maestro-backend:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    env_file: .env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    image: ghcr.io/yigtwxx/maestro-backend:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env.prod
+    # Lets FREE_MODEL_ENDPOINT reach an Ollama installed on the host itself.
+    # That Ollama must bind 0.0.0.0 (OLLAMA_HOST=0.0.0.0), not loopback.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      ollama-pull:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  frontend:
+    image: ghcr.io/yigtwxx/maestro-frontend:${IMAGE_TAG:-latest}
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    environment:
+      # /pricing and /templates are force-dynamic server components: they fetch
+      # from inside this container, where a same-origin relative URL has no base.
+      INTERNAL_API_ORIGIN: http://backend:8000
+      # The public origin used for canonical URLs, sitemap.xml and OG tags. Read
+      # at request time, so the image stays domain-agnostic (see DEPLOYMENT.md).
+      # Not derived from DOMAIN: DOMAIN may carry a scheme (e.g. http://localhost),
+      # which would produce https://http://localhost.
+      SITE_URL: ${SITE_URL:?set SITE_URL in .env.prod}
+    depends_on:
+      - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env.prod}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  pgdata:
+  mongodata:
+  qdrantdata:
+  ollamadata:
+  caddydata:
+  caddyconfig:
