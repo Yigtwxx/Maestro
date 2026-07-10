@@ -1,0 +1,164 @@
+# Contributing to Maestro
+
+Thanks for taking the time to contribute. This document covers everything from getting
+the stack running locally to what CI will check before your pull request can merge.
+
+## Before you start
+
+- **[`CLAUDE.md`](./CLAUDE.md) is the single source of truth** for architecture,
+  conventions, and code standards. When this file and `CLAUDE.md` disagree, `CLAUDE.md`
+  wins — please open an issue so we can fix the drift.
+- Participation is governed by our [Code of Conduct](./CODE_OF_CONDUCT.md).
+- Found a security vulnerability? **Do not open an issue.** Follow
+  [`SECURITY.md`](./SECURITY.md) instead.
+
+## Local setup
+
+Maestro runs three databases in Docker (PostgreSQL, MongoDB, Qdrant) while the backend,
+frontend, and Ollama run on the host.
+
+### The fast path
+
+```bash
+git clone https://github.com/Yigtwxx/maestro.git
+cd maestro
+
+./scripts/dev.sh          # macOS / Linux
+.\scripts\dev.ps1         # Windows
+```
+
+The script starts the Docker infra, creates the backend virtualenv, copies
+`.env.example` → `backend/.env` and `frontend/.env.local.example` → `frontend/.env.local`,
+runs Alembic migrations, seeds the marketplace, and launches both dev servers.
+Pass `--skip-infra` if your databases are already up, or `--skip-seed` to skip seeding.
+
+Backend lands on <http://localhost:8000> (API docs at `/docs`), frontend on
+<http://localhost:3000>.
+
+### The manual path
+
+```bash
+docker compose up -d                       # Postgres :5433, Mongo :27017, Qdrant :6333
+
+cd backend
+python -m venv .venv
+source .venv/bin/activate                  # Windows: .venv\Scripts\activate
+pip install -r requirements-dev.txt        # NOT requirements.txt — you need the test deps
+cp ../.env.example .env
+alembic upgrade head
+uvicorn app.main:app --reload
+
+cd ../frontend
+npm install
+cp .env.local.example .env.local
+npm run dev
+```
+
+> Note that `scripts/dev.sh` installs `requirements.txt`, which is enough to *run* the
+> backend but not to test or lint it. Install `requirements-dev.txt` before you start
+> writing code.
+
+### No API key required
+
+You do not need a paid provider key to develop. Maestro ships a free local tier — an
+open-weights model served through [Ollama](https://ollama.com):
+
+```bash
+ollama pull qwen3
+ollama pull nomic-embed-text
+```
+
+Google Gemini also has a free tier if you prefer a hosted model
+([get a key](https://aistudio.google.com/apikey), no credit card).
+
+## Verification before you open a pull request
+
+CI runs on every push and pull request to `main`. Run the same commands locally first —
+these are copied verbatim from [`.github/workflows/ci.yml`](./.github/workflows/ci.yml):
+
+```bash
+# Backend (Python 3.11)
+cd backend
+ruff check .
+ruff format --check .
+pytest
+
+# Frontend (Node 20)
+cd frontend
+npm run lint
+npm run type-check
+npm run build
+```
+
+**The frontend has no test runner yet.** There is no `npm test` script — do not add one
+to a feature PR without discussing it in an issue first.
+
+## Code standards
+
+Condensed from [`CLAUDE.md`](./CLAUDE.md) §5. Read that section before your first PR.
+
+- **English only** in code, identifiers, comments, and commit messages. User-facing UI
+  strings may be localized.
+- **Backend** — Python 3.11+, type annotations are mandatory, `ruff` for both lint and
+  format (88 columns). All endpoints are `async`. Request/response validation goes
+  through Pydantic v2.
+- **Frontend** — TypeScript `strict: true`, never `any` (use `unknown`), functional
+  components only, Zustand for state, Tailwind for styling.
+- **Business logic lives in `services/`.** Route handlers stay thin.
+- **No magic numbers or strings.** Constants belong in `constants.py` / `constants.ts`.
+- **New LLM providers are added as a new adapter class** in `services/llm_service.py`.
+  Existing adapters are never modified — that is the whole point of the pattern
+  (`CLAUDE.md` §11 and §15).
+
+## Tests
+
+Backend tests use `pytest` with `pytest-asyncio` in `asyncio_mode = "auto"`, so async
+tests need **no** `@pytest.mark.asyncio` decorator:
+
+```python
+async def test_something() -> None:
+    ...
+```
+
+Files live flat in `backend/tests/` and are named `test_*.py`. Tests run against SQLite
+via `aiosqlite`, so they need no Docker infra. New behavior needs a test; bug fixes need
+a regression test that fails before the fix.
+
+## Things that will block a merge
+
+These are hard rules, not style preferences (`CLAUDE.md` §9 and §15):
+
+- **Never commit secrets.** No API keys, tokens, or `.env` files. `.env.example` carries
+  placeholders only.
+- **Never log, store in plaintext, or return an API key** to the frontend. Keys are
+  AES-256-GCM encrypted at rest and decrypted only in server memory at call time.
+- **Never bypass Alembic.** Schema changes ship as a migration; no hand-run SQL.
+- **Always bound agent loops.** `max_iterations`, `max_review_iterations`, and
+  `task_timeout_seconds` exist because an unbounded agent drains a user's provider quota.
+- **Never let one user's data reach another.** Every query in Postgres, MongoDB, and
+  Qdrant is scoped by user id.
+
+## Commits and pull requests
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+<type>(<scope>): <short description>
+
+[optional body explaining WHY, not what]
+```
+
+Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`. Keep the subject under 72
+characters and use the imperative mood ("add", not "added").
+
+Branch off `main`, keep one logical change per pull request, and fill in the
+[pull request template](./.github/pull_request_template.md). Link the issue your PR
+closes.
+
+## Licensing of contributions
+
+Maestro is licensed under the [Apache License 2.0](./LICENSE). Under section 5 of that
+license, any contribution you intentionally submit for inclusion is automatically
+licensed under the same terms, unless you explicitly state otherwise.
+
+**There is no CLA and no DCO sign-off requirement.** Opening a pull request is enough.
