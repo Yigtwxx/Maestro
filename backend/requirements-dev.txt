@@ -5,5 +5,5 @@ pytest-asyncio>=0.24
 aiosqlite>=0.20
 # [lua] pulls lupa: the limiter's sliding window is a Lua script, so a Lua-less
 # fake would not exercise the code that actually runs in production.
-fakeredis[lua]>=2.26
+fakeredis[lua]>=2.36.2
 ruff>=0.8
