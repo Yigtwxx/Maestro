@@ -18,8 +18,9 @@ agent hierarchy — or share your agent teams with the community via the **Marke
 [![Qdrant](https://img.shields.io/badge/Qdrant-vector_DB-DC244C)](https://qdrant.tech)
 [![Docker](https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white)](https://www.docker.com)
 [![Ollama](https://img.shields.io/badge/Ollama-free_local_tier-white?logo=ollama&logoColor=black)](https://ollama.com)
+[![License](https://img.shields.io/badge/License-Apache_2.0-D22128?logo=apache&logoColor=white)](./LICENSE)
 
-[Features](#-features) · [Architecture](#-architecture) · [Screenshots](#-screenshots) · [Getting Started](#-getting-started) · [API](#-api-overview) · [Security](#-security) · [Roadmap](#-roadmap)
+[Features](#-features) · [Architecture](#-architecture) · [Getting Started](#-getting-started) · [API](#-api-overview) · [Security](#-security) · [Roadmap](#-roadmap) · [License](#-license)
 
 </div>
 
@@ -62,9 +63,10 @@ quota runs out or no key is connected.
 | **Human-in-the-loop** | Main Agent can ask the user one clarifying question when uncertain | ✅ Live |
 | **Infinite Loop Protection** | `max_iterations`, `max_review_iterations`, `task_timeout_seconds` limits | ✅ Live |
 | **Multi-LLM Provider** | Ollama (free/default), Gemini, OpenAI, Anthropic — extensible via adapter pattern | ✅ Live |
+| **Rate limiting** | Every endpoint throttled; Redis-backed sliding window shared across instances, in-memory fallback | ✅ Live |
 | **User profile & billing (Stripe)** | Subscription management | 🔜 Planned |
 | **Marketplace ratings/reviews** | Community feedback on agent teams | 🔜 Planned |
-| **Redis rate limiting & token rotation** | Hardened production limits | 🔜 Planned |
+| **Refresh token rotation** | Hardened production auth | 🔜 Planned |
 
 ## 🏗 Architecture
 
@@ -152,18 +154,6 @@ flowchart LR
 
 Agents communicate via structured JSON messages; the Subagent output format and Reviewer
 feedback format are defined in [`CLAUDE.md`](./CLAUDE.md) §5.4.
-
-## 📸 Screenshots
-
-<!-- TODO: add screenshots — drop the images into docs/screenshots/ and they will render automatically -->
-
-| Dashboard | Architect (Live View) |
-|---|---|
-| <!-- TODO: add screenshot --> ![Dashboard](docs/screenshots/dashboard.png) | <!-- TODO: add screenshot --> ![Architect](docs/screenshots/architect.png) |
-
-| Marketplace | Agent Profile |
-|---|---|
-| <!-- TODO: add screenshot --> ![Marketplace](docs/screenshots/marketplace.png) | <!-- TODO: add screenshot --> ![Agent Profile](docs/screenshots/agent-profile.png) |
 
 ## 🧰 Tech Stack
 
@@ -402,7 +392,8 @@ See [`CLAUDE.md`](./CLAUDE.md) §6 for full column-level detail.
 - User memory (RAG) and data are isolated per user; all WebSocket connections require
   authentication; schema changes happen only via Alembic migrations.
 
-See [`CLAUDE.md`](./CLAUDE.md) §9 for the full policy.
+See [`CLAUDE.md`](./CLAUDE.md) §9 for the full policy. Found a vulnerability? Please
+report it privately — see [`SECURITY.md`](./SECURITY.md). Do not open a public issue.
 
 ## 🧪 Development & Verification
 
@@ -427,6 +418,26 @@ npm run build                     # production build
 When adding a new provider, existing code is never modified — a new **adapter class**
 is added under `services/llm_service.py` (adapter pattern — see [`CLAUDE.md`](./CLAUDE.md) §11 and §15).
 
+## 🚢 Deployment
+
+Maestro ships as a single Docker Compose stack — Postgres, MongoDB, Qdrant, an
+embedding server, the API, the web app, and Caddy for automatic TLS. Caddy is the
+only service that opens a port, and it serves the app and the API from one origin,
+so there is no CORS and no domain baked into any image. Any 4 GB VM will run it.
+
+```bash
+# on the host: docker-compose.prod.yml, Caddyfile and .env.prod
+cp .env.prod.example .env.prod        # fill in DOMAIN and the generated secrets
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+```
+
+Pushing a `v*` tag builds multi-arch images to GHCR and rolls them out over SSH.
+Migrations run as a one-shot service the API waits on, so a failed migration never
+starts a new backend.
+
+Full guide, including rollback, backups, the account-purge cron and why the API
+cannot run on Vercel: [`docs/DEPLOYMENT.md`](./docs/DEPLOYMENT.md).
+
 ## 🗺 Roadmap
 
 Development follows a **vertical-slice-first** approach.
@@ -442,12 +453,16 @@ Development follows a **vertical-slice-first** approach.
   clarifying questions, `scripts/dev.ps1` / `scripts/dev.sh`.
 - [ ] **Next rounds** — User profile & subscription billing (Stripe), Marketplace
   ratings/reviews, dynamic agents in the task flow, GraphQL (if needed),
-  long-polling fallback, i18n infrastructure, Redis-based rate limiting +
-  refresh token rotation, WS/task_service test coverage.
+  long-polling fallback, i18n infrastructure, refresh token rotation,
+  WS/task_service test coverage.
 
 See [`CLAUDE.md`](./CLAUDE.md) §16 for full detail.
 
 ## 🤝 Contributing
+
+Contributions are welcome. Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md) for local
+setup and the pull request workflow, and note that participation is governed by our
+[Code of Conduct](./CODE_OF_CONDUCT.md).
 
 This project is developed according to the standards defined in [`CLAUDE.md`](./CLAUDE.md):
 
@@ -461,6 +476,15 @@ This project is developed according to the standards defined in [`CLAUDE.md`](./
   modified.
 - Before opening a PR, make sure the relevant layer's lint/test/type-check commands
   pass cleanly (see [Development & Verification](#-development--verification)).
+
+## 📄 License
+
+Maestro is licensed under the **[Apache License 2.0](./LICENSE)** — free to use, modify,
+and distribute, commercially or otherwise, with an explicit patent grant. Contributions
+are covered by the same license under section 5; there is no CLA to sign.
+
+The **Maestro name and logo are trademarks** and are not licensed under Apache-2.0
+(section 6). Fork the code freely; ship it under your own name.
 
 ---
 
