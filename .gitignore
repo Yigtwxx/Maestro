@@ -1,9 +1,14 @@
 # --- Secrets & env ---
-.env
-.env.local
-.env.*.local
+# Allowlist: everything .env* is ignored except the committed templates.
+.env*
+!.env*.example
 *.pem
 *.key
+*.crt
+*.cer
+*.p12
+*.pfx
+id_rsa*
 secrets/
 config.local.*
 
@@ -17,6 +22,8 @@ venv/
 .ruff_cache/
 .mypy_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 
 # --- Node / Next.js ---
@@ -25,21 +32,40 @@ node_modules/
 out/
 dist/
 build/
+coverage/
 *.tsbuildinfo
 next-env.d.ts
+.eslintcache
+.turbo/
+.swc/
+.vercel
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
 
+# --- Logs & local databases ---
+*.log
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
 # --- Editors / OS ---
 .vscode/
 .idea/
+*.swp
+*~
 .DS_Store
+._*
 Thumbs.db
+desktop.ini
+
+# --- Local agent state ---
+.claude/
 
 # --- Docker volumes (local data) ---
 .data/
 
-#Share Files 
+#Share Files
 CLAUDE.md
 project-docs.md
