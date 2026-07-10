@@ -19,9 +19,19 @@ _OUTPUT_FORMAT = """\
 _PLANNING_EXAMPLE = """\
 Task: "What is the current status of the EU AI Act?"
 {"assignments": [
- {"member": "query_planner", "brief": "Plan angles: legal text, timeline, amendments"},
- {"member": "web_searcher", "brief": "Search official EU sources for current status"},
- {"member": "verifier", "brief": "Cross-check status and dates across sources"}]}"""
+ {"member": "query_planner", "brief": "Plan angles: legal text, timeline, \
+amendments", "depends_on": []},
+ {"member": "web_searcher", "brief": "Run the planner's queries against \
+official EU sources; fetch key pages with data_fetch", \
+"depends_on": ["query_planner"]},
+ {"member": "verifier", "brief": "Cross-check the searcher's status and \
+dates across independent sources", "depends_on": ["web_searcher"]}]}"""
+
+_REVIEW_RUBRIC = """\
+- Every claim must carry a source name and date, or be flagged unverified.
+- Key facts need corroboration from at least two independent sources.
+- "Not found" must never be presented as "does not exist".
+- The direct answer must come first and match the evidence below it."""
 
 _QUERY_PLANNER_INSTRUCTIONS = """\
 You are a search strategy expert.
@@ -195,4 +205,5 @@ DOMAIN: DomainInfo = DomainInfo(
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
+    review_rubric=_REVIEW_RUBRIC,
 )

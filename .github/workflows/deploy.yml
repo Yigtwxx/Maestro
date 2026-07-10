@@ -1,0 +1,41 @@
+name: Deploy
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to roll out (e.g. 1.2.3, or a commit sha tag)"
+        required: true
+
+# Never let two rollouts touch the host at once, and never cancel one midway.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Roll out to production
+    runs-on: ubuntu-latest
+    # Configure required reviewers on this environment to gate the rollout.
+    environment: production
+    steps:
+      - name: Pull images and restart the stack
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # The host holds docker-compose.prod.yml, Caddyfile and .env.prod;
+          # none of them are in the repo. Migrations run on their own: the
+          # `migrate` service must exit 0 before `backend` is allowed to start.
+          script: |
+            set -euo pipefail
+            cd /opt/maestro
+            export IMAGE_TAG="${{ github.event.inputs.image_tag || github.ref_name }}"
+            export IMAGE_TAG="${IMAGE_TAG#v}"
+            echo "Rolling out ${IMAGE_TAG}"
+            docker compose -f docker-compose.prod.yml --env-file .env.prod pull
+            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --remove-orphans
+            docker compose -f docker-compose.prod.yml --env-file .env.prod ps

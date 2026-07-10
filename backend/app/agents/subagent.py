@@ -1,37 +1,76 @@
 """Subagent: a fixed team member executing one briefed subtask via the LLM.
 
-Subagents in domains that declare the ``web_search`` tool can request real
-DuckDuckGo searches through a provider-agnostic JSON directive loop (no native
-function calling required): the model replies with a directive instead of an
-answer, we execute the search and feed the results back, bounded by
-``ctx.max_web_searches``.
+Subagents in domains that declare executable tools (web_search, data_fetch,
+code_execution) can request them through a provider-agnostic JSON directive
+loop (no native function calling required): the model replies with a directive
+instead of an answer, we execute the tool and feed the result back, bounded by
+per-tool budgets and a total tool-call cap.
+
+Subagents never receive the raw user message in their prompt: they work from
+the Main Agent's decomposed brief, plus (when dependencies were declared) the
+finished outputs of the teammates they build on. A subagent that needs more
+context can fetch the original user request on demand via the built-in
+``view_original_request`` directive.
 """
 
 from __future__ import annotations
 
 import time
 
+from app.agents import tools as tool_directives
 from app.agents.base import (
     AgentContext,
     SubagentResult,
-    extract_json,
     format_memory_block,
     format_optional_block,
+    truncate_text,
     with_current_date,
 )
-from app.agents.prompts import SUBAGENT_SYSTEM, SUBAGENT_WEB_SEARCH_RULE
-from app.agents.registry import SubagentSpec, get_domain_info
-from app.core.config import settings
+from app.agents.prompts import (
+    SUBAGENT_SYSTEM,
+    SUBAGENT_TOOLS_RULE,
+    SUBAGENT_UPSTREAM_HEADER,
+    TOOL_RULE_LINES,
+)
+from app.agents.registry import SubagentSpec
+from app.agents.tools import TOOL_SPECS, ToolDirective, ToolSpec
 from app.core.constants import (
-    WEB_SEARCH_ACTION,
-    WEB_SEARCH_CATEGORIES,
-    WEB_SEARCH_DEFAULT_CATEGORY,
+    UPSTREAM_OUTPUT_MAX_CHARS,
+    VIEW_ORIGINAL_REQUEST_ACTION,
     AgentRole,
     EventType,
     SubagentStatus,
 )
-from app.services import web_search_service
 from app.services.llm_service import ChatMessage, LLMError, LLMResponse
+
+
+def _format_upstream(upstream: list[tuple[str, str]]) -> str:
+    """Render teammates' outputs, each capped so small models keep headroom."""
+    sections = [
+        f"--- {name} ---\n{truncate_text(output.strip(), UPSTREAM_OUTPUT_MAX_CHARS)}"
+        for name, output in upstream
+        if output.strip()
+    ]
+    return "\n".join(sections)
+
+
+def _tool_budget(ctx: AgentContext, action: str, specs: dict[str, ToolSpec]) -> int:
+    spec = specs.get(action)
+    return getattr(ctx, spec.budget_attr) if spec else 0
+
+
+def _tools_rule(ctx: AgentContext, specs: dict[str, ToolSpec]) -> str:
+    """Compose the tools prompt rule from this run's available directives."""
+    lines = [
+        TOOL_RULE_LINES[action].format(budget=_tool_budget(ctx, action, specs))
+        for action in sorted(specs)
+        if action in TOOL_RULE_LINES
+    ]
+    if not lines:
+        return ""
+    return SUBAGENT_TOOLS_RULE.format(
+        tool_lines="\n".join(lines), max_tool_calls=ctx.max_tool_calls
+    )
 
 
 async def run_subtask(
@@ -42,6 +81,8 @@ async def run_subtask(
     brief: str,
     index: int,
     review_hints: list[str] | None = None,
+    objective: str = "",
+    upstream: list[tuple[str, str]] | None = None,
 ) -> SubagentResult:
     """Execute one brief as a team member; structured result (CLAUDE.md §5.4)."""
     hints_block = ""
@@ -60,9 +101,17 @@ async def run_subtask(
         },
     )
 
-    search_enabled = (
-        settings.web_search_enabled
-        and WEB_SEARCH_ACTION in get_domain_info(domain).tools
+    enabled = await tool_directives.resolve_enabled_tools(domain)
+    # Per-run directive registry: domain tools plus the built-in original-
+    # request viewer (available whenever this run carries an objective, even
+    # in domains with no executable tools).
+    specs = {action: TOOL_SPECS[action] for action in enabled}
+    if objective.strip():
+        specs[VIEW_ORIGINAL_REQUEST_ACTION] = (
+            tool_directives.make_view_original_request_spec(objective)
+        )
+    upstream_block = format_optional_block(
+        SUBAGENT_UPSTREAM_HEADER, _format_upstream(upstream or [])
     )
     system_prompt = SUBAGENT_SYSTEM.format(
         name=member.name,
@@ -72,21 +121,19 @@ async def run_subtask(
         output_format=format_optional_block(
             "Format your output as:", member.output_format
         ),
+        upstream=upstream_block,
         review_hints=hints_block,
         memory_context=format_memory_block(ctx.memory_context),
     )
-    if search_enabled:
-        system_prompt += SUBAGENT_WEB_SEARCH_RULE.format(
-            max_searches=ctx.max_web_searches
-        )
+    system_prompt += _tools_rule(ctx, specs)
     messages = [
         ChatMessage("system", with_current_date(system_prompt)),
         ChatMessage("user", brief),
     ]
     started = time.perf_counter()
     try:
-        response, tokens_used, searches_used = await _chat_with_search(
-            ctx, messages, member=member, index=index, search_enabled=search_enabled
+        response, tokens_used, usage = await _chat_with_tools(
+            ctx, messages, member=member, index=index, specs=specs
         )
     except LLMError as exc:
         return SubagentResult(
@@ -100,8 +147,12 @@ async def run_subtask(
         "execution_time_ms": _elapsed_ms(started),
         "model_used": response.model,
     }
-    if search_enabled:
-        metadata["searches_used"] = searches_used
+    if enabled:
+        # Only executable domain tools count; the built-in viewer is tracked
+        # under its own metadata key below.
+        metadata["tool_calls_used"] = sum(usage.get(action, 0) for action in enabled)
+    for action, spec in specs.items():
+        metadata[spec.metadata_key] = usage.get(action, 0)
     result = SubagentResult(
         status=SubagentStatus.SUCCESS,
         data={"subtask": brief, "output": response.content, "member": member.id},
@@ -120,96 +171,97 @@ async def run_subtask(
     return result
 
 
-async def _chat_with_search(
+async def _chat_with_tools(
     ctx: AgentContext,
     messages: list[ChatMessage],
     *,
     member: SubagentSpec,
     index: int,
-    search_enabled: bool,
-) -> tuple[LLMResponse, int, int]:
-    """Chat with the LLM, executing bounded web-search directives.
+    specs: dict[str, ToolSpec],
+) -> tuple[LLMResponse, int, dict[str, int]]:
+    """Chat with the LLM, executing bounded tool directives.
 
     Any reply that is not a valid directive is treated as the final answer, so
     models that answer directly are unaffected. Hard bound:
-    ``max_web_searches + 2`` LLM calls per run.
-    Returns ``(final_response, total_tokens, searches_used)``.
+    ``max_tool_calls + max_original_request_views + 2`` LLM calls per run.
+    Returns ``(final_response, total_tokens, usage_per_tool)``.
     """
+    enabled = frozenset(specs)
     total_tokens = 0
-    searches_used = 0
+    usage: dict[str, int] = {}
     while True:
         response = await ctx.adapter.chat(messages, temperature=0.3)
         total_tokens += response.tokens_used
         directive = (
-            _parse_search_directive(response.content) if search_enabled else None
+            tool_directives.parse_directive(response.content, enabled)
+            if specs
+            else None
         )
         if directive is None:
-            return response, total_tokens, searches_used
+            return response, total_tokens, usage
 
         messages.append(ChatMessage("assistant", response.content))
-        if searches_used >= ctx.max_web_searches:
+        over_tool_budget = usage.get(directive.action, 0) >= _tool_budget(
+            ctx, directive.action, specs
+        )
+        # The built-in viewer is exempt from the total cap so it never crowds
+        # out real tools (its own budget still applies).
+        executable_calls = sum(
+            count
+            for action, count in usage.items()
+            if action != VIEW_ORIGINAL_REQUEST_ACTION
+        )
+        over_total_budget = (
+            directive.action != VIEW_ORIGINAL_REQUEST_ACTION
+            and executable_calls >= ctx.max_tool_calls
+        )
+        if over_tool_budget or over_total_budget:
             messages.append(
                 ChatMessage(
-                    "user", "Search budget exhausted. Give your final answer now."
+                    "user", "Tool budget exhausted. Give your final answer now."
                 )
             )
             response = await ctx.adapter.chat(messages, temperature=0.3)
             total_tokens += response.tokens_used
-            return response, total_tokens, searches_used
+            return response, total_tokens, usage
 
-        query, category = directive
-        searches_used += 1
-        await _emit_search(ctx, member=member, index=index, query=query)
-        results = await web_search_service.search(query, category=category)
-        await _emit_search(
-            ctx, member=member, index=index, query=query, result_count=len(results)
+        usage[directive.action] = usage.get(directive.action, 0) + 1
+        await _emit_tool(
+            ctx, member=member, index=index, directive=directive, specs=specs
         )
-        messages.append(
-            ChatMessage("user", web_search_service.format_results_block(query, results))
+        feedback = await _execute(directive, specs)
+        await _emit_tool(
+            ctx, member=member, index=index, directive=directive, specs=specs, done=True
         )
+        messages.append(ChatMessage("user", feedback))
 
 
-def _parse_search_directive(content: str) -> tuple[str, str] | None:
-    """Return ``(query, category)`` if the reply is a web_search directive."""
-    try:
-        parsed = extract_json(content)
-    except ValueError:
-        return None
-    if parsed.get("action") != WEB_SEARCH_ACTION:
-        return None
-    query = str(parsed.get("query", "")).strip()
-    if not query:
-        return None
-    category = str(parsed.get("category", WEB_SEARCH_DEFAULT_CATEGORY)).strip().lower()
-    if category not in WEB_SEARCH_CATEGORIES:
-        category = WEB_SEARCH_DEFAULT_CATEGORY
-    return query, category
+async def _execute(directive: ToolDirective, specs: dict[str, ToolSpec]) -> str:
+    """Run one directive and return the prompt block to feed back."""
+    return await specs[directive.action].executor(directive)
 
 
-async def _emit_search(
+async def _emit_tool(
     ctx: AgentContext,
     *,
     member: SubagentSpec,
     index: int,
-    query: str,
-    result_count: int | None = None,
+    directive: ToolDirective,
+    specs: dict[str, ToolSpec],
+    done: bool = False,
 ) -> None:
-    """Surface search activity in the live Architect stream."""
-    if result_count is None:
-        content = f"Searching the web for: {query}"
-    else:
-        content = f"Web search returned {result_count} results."
+    """Surface tool activity in the live Architect stream."""
+    spec = specs[directive.action]
     payload = {
         "role": AgentRole.SUBAGENT.value,
         "index": index,
         "member": member.name,
         "member_id": member.id,
-        "action": WEB_SEARCH_ACTION,
-        "query": query,
-        "content": content,
+        "action": directive.action,
+        "content": spec.describe(directive, done),
     }
-    if result_count is not None:
-        payload["result_count"] = result_count
+    if spec.event_arg:
+        payload[spec.event_arg] = directive.args[spec.event_arg]
     await ctx.emit(EventType.AGENT_MESSAGE, payload)
 
 

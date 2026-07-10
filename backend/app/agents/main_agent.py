@@ -394,21 +394,30 @@ async def run(
         reviewer_enabled=reviewer_enabled,
     )
 
-    outputs = [
+    successful = [
         (a.member.name, str(r.data.get("output", "")))
         for a, r in zip(assignments, results, strict=True)
         if r.status != SubagentStatus.ERROR
-    ] or [("team", "No successful subtask output.")]
-
-    final_answer = await _synthesize(ctx, domain, prompt, outputs)
-    total_tokens = sum(int(r.metadata.get("tokens_used", 0)) for r in results)
+    ]
+    # Every subtask erroring (e.g. the chat model is unreachable) is a task
+    # failure, not a success with an empty answer -- the caller marks the task
+    # FAILED on this signal. Skip the synthesis call: with no output to merge it
+    # would only waste another (doomed) LLM round-trip.
+    all_failed = not successful
+    if all_failed:
+        final_answer = "No successful subtask output."
+    else:
+        final_answer = await _synthesize(ctx, domain, prompt, successful)
 
     await ctx.emit(
         EventType.NODE_UPDATE, {"role": AgentRole.MAIN.value, "state": "done"}
     )
+    # total_tokens is filled in by task_service from the TokenMeter: summing the
+    # subagents here would miss routing, planning, synthesis and review calls.
     return {
         "domain": domain,
         "answer": final_answer,
         "subtasks": [r.to_dict() for r in results],
-        "metadata": {"total_tokens": total_tokens, "subtask_count": len(results)},
+        "metadata": {"subtask_count": len(results)},
+        "all_subtasks_failed": all_failed,
     }

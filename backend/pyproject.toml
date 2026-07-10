@@ -3,6 +3,8 @@ name = "maestro-backend"
 version = "0.1.0"
 description = "Maestro Platform — AI agent orchestration backend (FastAPI)"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Yiğit Erdoğan", email = "yigiterdogan023@gmail.com" }]
 
 [tool.ruff]
 line-length = 88

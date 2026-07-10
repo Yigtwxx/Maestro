@@ -23,8 +23,16 @@ readability. Lead with the answer or deliverable itself."""
 _PLANNING_EXAMPLE = """\
 Task: "Write a polite email declining a meeting invitation"
 {"assignments": [
- {"member": "writer", "brief": "Draft a polite, brief decline email"},
- {"member": "checker", "brief": "Check tone and completeness of the draft"}]}"""
+ {"member": "writer", "brief": "Draft a polite, brief decline email", \
+"depends_on": []},
+ {"member": "checker", "brief": "Check tone and completeness of the \
+writer's draft", "depends_on": ["writer"]}]}"""
+
+_REVIEW_RUBRIC = """\
+- The output's form must mirror what was asked (a list stays a list, an
+  email stays an email).
+- The answer or deliverable must come first, not buried under preamble.
+- Nothing invented may be presented as fact; assumptions must be stated."""
 
 _RESEARCHER_INSTRUCTIONS = """\
 You are a general research assistant.
@@ -104,4 +112,5 @@ DOMAIN: DomainInfo = DomainInfo(
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
+    review_rubric=_REVIEW_RUBRIC,
 )

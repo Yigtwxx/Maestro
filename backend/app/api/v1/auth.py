@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.constants import RATE_LIMIT_AUTH
 from app.core.deps import DbSession
 from app.core.security import (
     create_token,
@@ -24,12 +25,14 @@ from app.schemas.auth import (
     TokenPair,
     UserPublic,
 )
+from app.services import billing_service
 from app.utils.rate_limiter import rate_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-# Tighter limit on auth endpoints to slow credential stuffing.
-_auth_rate_limit = rate_limit(max_requests=20, window_seconds=60.0)
+# Tighter limit on auth endpoints to slow credential stuffing. Every route here
+# is unauthenticated, so the bucket is keyed by client IP.
+_auth_rate_limit = rate_limit(RATE_LIMIT_AUTH, scope="auth")
 
 
 def _issue_tokens(user: User) -> TokenPair:
@@ -47,7 +50,11 @@ def _issue_tokens(user: User) -> TokenPair:
     dependencies=[_auth_rate_limit],
 )
 async def register(payload: RegisterRequest, db: DbSession) -> User:
-    """Create a new user account."""
+    """Create a new user account, on a Starter-quota trial.
+
+    There is no free plan: the trial is what makes a fresh account usable, and
+    once it lapses the user must subscribe before starting tasks.
+    """
     user = User(
         email=payload.email.lower(),
         hashed_password=hash_password(payload.password),
@@ -55,13 +62,18 @@ async def register(payload: RegisterRequest, db: DbSession) -> User:
     )
     db.add(user)
     try:
-        await db.commit()
+        # Flush to surface a duplicate email and to assign user.id before the
+        # subscription row references it.
+        await db.flush()
     except IntegrityError as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email already exists.",
         ) from exc
+
+    await billing_service.start_trial(db, user)
+    await db.commit()
     await db.refresh(user)
     return user
 
@@ -79,7 +91,7 @@ async def login(payload: LoginRequest, db: DbSession) -> TokenPair:
     return _issue_tokens(user)
 
 
-@router.post("/refresh", response_model=TokenPair)
+@router.post("/refresh", response_model=TokenPair, dependencies=[_auth_rate_limit])
 async def refresh(payload: RefreshRequest, db: DbSession) -> TokenPair:
     """Exchange a valid refresh token for a new token pair."""
     try:

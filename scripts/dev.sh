@@ -7,6 +7,7 @@
 # Usage:
 #   ./scripts/dev.sh
 #   ./scripts/dev.sh --skip-infra
+#   ./scripts/dev.sh --skip-seed
 #   BACKEND_PORT=8001 FRONTEND_PORT=3001 ./scripts/dev.sh
 #
 set -euo pipefail
@@ -17,7 +18,13 @@ BACKEND="$REPO_ROOT/backend"
 FRONTEND="$REPO_ROOT/frontend"
 
 SKIP_INFRA=0
-[ "${1:-}" = "--skip-infra" ] && SKIP_INFRA=1
+SKIP_SEED=0
+for arg in "$@"; do
+  case "$arg" in
+    --skip-infra) SKIP_INFRA=1 ;;
+    --skip-seed) SKIP_SEED=1 ;;
+  esac
+done
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
@@ -66,6 +73,13 @@ echo "Installing backend dependencies..."
 echo "Running database migrations (alembic upgrade head)..."
 ( cd "$BACKEND" && "$VENV_PY" -m alembic upgrade head ) \
   || echo "WARN: alembic migration failed (is Postgres up?)"
+
+if [ "$SKIP_SEED" -eq 0 ]; then
+  echo "Seeding featured marketplace teams (idempotent)..."
+  # Seeding is cosmetic: a missing Mongo must not stop the dev stack coming up.
+  ( cd "$BACKEND" && "$VENV_PY" -m app.scripts.seed_marketplace ) \
+    || echo "WARN: marketplace seed failed (is MongoDB up?)"
+fi
 
 # --- 3. Frontend ----------------------------------------------------------
 step "Preparing frontend"

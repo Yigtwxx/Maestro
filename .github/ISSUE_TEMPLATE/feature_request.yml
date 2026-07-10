@@ -1,0 +1,63 @@
+name: Feature request
+description: Suggest a capability or an improvement.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before opening a request, check the roadmap in
+        [`CLAUDE.md`](https://github.com/Yigtwxx/maestro/blob/main/CLAUDE.md) §16 — it may
+        already be planned.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you are in, not the solution you want. What is hard today?
+      placeholder: |
+        When a task fails halfway, I have no way to resume it from the last completed
+        subagent — I have to re-run the whole thing and pay for the tokens twice.
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What would you like to see happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else could solve the problem, and why is your proposal better?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Backend (FastAPI, API endpoints)
+        - Frontend (Next.js, UI)
+        - Agents (orchestrator, main agent, subagent, reviewer)
+        - LLM providers / adapters
+        - RAG / memory (Qdrant)
+        - Marketplace
+        - Billing / quota
+        - Infra (Docker, migrations, dev scripts)
+        - Docs
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to implement this myself.
+          required: false

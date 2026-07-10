@@ -22,9 +22,19 @@ _OUTPUT_FORMAT = """\
 _PLANNING_EXAMPLE = """\
 Task: "My bakery site gets no organic traffic"
 {"assignments": [
- {"member": "keywords", "brief": "Find local and recipe keyword clusters for a bakery"},
- {"member": "content_audit", "brief": "Audit on-page basics of the key pages"},
- {"member": "technical", "brief": "Check crawlability, indexing, and speed issues"}]}"""
+ {"member": "keywords", "brief": "Find local and recipe keyword clusters for \
+a bakery", "depends_on": []},
+ {"member": "content_audit", "brief": "Audit on-page basics of the key pages; \
+fetch them with data_fetch", "depends_on": []},
+ {"member": "technical", "brief": "Check crawlability, indexing, and speed \
+issues on the fetched pages", "depends_on": []}]}"""
+
+_REVIEW_RUBRIC = """\
+- Every recommendation must name the metric it should move.
+- Advice must be white-hat only; reject link schemes or keyword stuffing.
+- Page-level findings must reference actually inspected content, not guesses.
+- The action plan must be prioritized by impact vs effort.
+- Difficulty/value estimates must be labeled as estimates."""
 
 _KEYWORDS_INSTRUCTIONS = """\
 You are a keyword research expert.
@@ -155,4 +165,5 @@ DOMAIN: DomainInfo = DomainInfo(
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
+    review_rubric=_REVIEW_RUBRIC,
 )

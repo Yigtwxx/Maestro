@@ -1,0 +1,30 @@
+# =========================================================================
+# Maestro Platform — production reverse proxy.
+#
+# One origin serves both the app and the API, which is why the frontend needs
+# no baked-in backend URL and why there is no CORS to configure.
+#
+# DOMAIN comes from .env.prod. Set it to a bare hostname for automatic TLS
+# (`maestro.example.com`), or to `http://localhost` for a local smoke test,
+# which tells Caddy to skip certificate provisioning.
+# =========================================================================
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# /health is the backend's liveness probe, exposed for uptime monitors.
+	# Everything the API owns lives under /api, including the two WebSocket
+	# routes — reverse_proxy upgrades those with no extra configuration, and
+	# applies no read timeout to a hijacked connection, so a 30-minute task
+	# stream stays open.
+	@api path /api/* /health
+	handle @api {
+		reverse_proxy backend:8000
+	}
+
+	# Everything else, /docs included: that path is a marketing page here, not
+	# FastAPI's Swagger UI (which is disabled when ENVIRONMENT=production).
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

@@ -9,7 +9,9 @@ _METHODOLOGY = """\
 - Positioning before tactics; every tactic must serve the stated positioning.
 - Every recommended action gets a measurable KPI and a success threshold.
 - Match tone and channel to where the audience actually is.
-- Prefer 2-3 focused moves over a scattershot list."""
+- Prefer 2-3 focused moves over a scattershot list.
+- Perform sentiment and tone analysis directly in your reasoning; no
+  external tool is needed for it."""
 
 _OUTPUT_FORMAT = """\
 1. Objective
@@ -21,9 +23,18 @@ _OUTPUT_FORMAT = """\
 _PLANNING_EXAMPLE = """\
 Task: "Launch plan for a new vegan protein bar"
 {"assignments": [
- {"member": "audience", "brief": "Define 2-3 target segments with pains and channels"},
- {"member": "strategist", "brief": "Position the bar and set messaging pillars"},
- {"member": "copywriter", "brief": "Write launch headlines and ad copy variants"}]}"""
+ {"member": "audience", "brief": "Define 2-3 target segments with pains and \
+channels", "depends_on": []},
+ {"member": "strategist", "brief": "Position the bar for the audience \
+analyst's primary segment and set messaging pillars", "depends_on": ["audience"]},
+ {"member": "copywriter", "brief": "Write launch headlines and ad copy from \
+the strategist's pillars", "depends_on": ["strategist"]}]}"""
+
+_REVIEW_RUBRIC = """\
+- Strategy and copy must target the named segments — generic output is a defect.
+- Every recommended action needs a measurable KPI with a threshold.
+- Copy variants must differ in angle, not just wording; each has one clear CTA.
+- Invented audience data must be labeled as a hypothesis to validate."""
 
 _AUDIENCE_INSTRUCTIONS = """\
 You are an audience research expert.
@@ -157,4 +168,5 @@ DOMAIN: DomainInfo = DomainInfo(
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
+    review_rubric=_REVIEW_RUBRIC,
 )

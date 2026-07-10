@@ -1,30 +1,65 @@
-"""Marketplace endpoints: browse, publish (with security scan), install."""
+"""Marketplace endpoints: browse, publish (with security scan), install.
+
+``GET /marketplace/showcase`` is the one anonymous surface here. It serves the
+public landing page and returns previews only — never a system prompt.
+"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.core.deps import CurrentUser
+from app.core.constants import (
+    RATE_LIMIT_PUBLIC,
+    RATE_LIMIT_READ,
+    RATE_LIMIT_WRITE,
+)
+from app.core.deps import ActiveUser
 from app.schemas.agent import AgentConfigPublic
-from app.schemas.marketplace import MarketplaceItemPublic, MarketplacePublish
+from app.schemas.marketplace import (
+    MarketplaceItemPreview,
+    MarketplaceItemPublic,
+    MarketplacePublish,
+)
 from app.services import marketplace_service
 from app.services.marketplace_service import MarketplaceSecurityError
+from app.utils.rate_limiter import rate_limit
 
 router = APIRouter(prefix="/marketplace", tags=["marketplace"])
 
+_read_rate_limit = rate_limit(RATE_LIMIT_READ, scope="marketplace")
+# Publishing and installing mutate state, so they are throttled harder.
+_write_rate_limit = rate_limit(RATE_LIMIT_WRITE, scope="marketplace")
+# The showcase is unauthenticated, so it is throttled hardest of all.
+_public_rate_limit = rate_limit(RATE_LIMIT_PUBLIC, scope="marketplace")
 
-@router.get("", response_model=list[MarketplaceItemPublic])
-async def list_marketplace(user: CurrentUser) -> list[dict]:
+
+@router.get(
+    "", response_model=list[MarketplaceItemPublic], dependencies=[_read_rate_limit]
+)
+async def list_marketplace(user: ActiveUser) -> list[dict]:
     """List published agent teams."""
     return await marketplace_service.list_items()
+
+
+# Declared before ``/{item_id}``: FastAPI matches in registration order, and the
+# path parameter would otherwise swallow the literal "showcase" segment.
+@router.get(
+    "/showcase",
+    response_model=list[MarketplaceItemPreview],
+    dependencies=[_public_rate_limit],
+)
+async def showcase() -> list[dict]:
+    """List published agent teams for anonymous visitors (featured first)."""
+    return await marketplace_service.list_showcase()
 
 
 @router.post(
     "",
     response_model=MarketplaceItemPublic,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[_write_rate_limit],
 )
-async def publish_item(payload: MarketplacePublish, user: CurrentUser) -> dict:
+async def publish_item(payload: MarketplacePublish, user: ActiveUser) -> dict:
     """Publish an agent team (runs a mandatory security scan, CLAUDE.md §9.3)."""
     try:
         return await marketplace_service.publish(user.id, payload)
@@ -34,8 +69,10 @@ async def publish_item(payload: MarketplacePublish, user: CurrentUser) -> dict:
         ) from exc
 
 
-@router.get("/{item_id}", response_model=MarketplaceItemPublic)
-async def get_item(item_id: str, user: CurrentUser) -> dict:
+@router.get(
+    "/{item_id}", response_model=MarketplaceItemPublic, dependencies=[_read_rate_limit]
+)
+async def get_item(item_id: str, user: ActiveUser) -> dict:
     """Return a single published item."""
     item = await marketplace_service.get_item(item_id)
     if item is None:
@@ -49,8 +86,9 @@ async def get_item(item_id: str, user: CurrentUser) -> dict:
     "/{item_id}/install",
     response_model=AgentConfigPublic,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[_write_rate_limit],
 )
-async def install_item(item_id: str, user: CurrentUser) -> dict:
+async def install_item(item_id: str, user: ActiveUser) -> dict:
     """Install an item into the caller's custom agents (one-click, CLAUDE.md §8)."""
     agent = await marketplace_service.install(user.id, item_id)
     if agent is None:
@@ -60,7 +98,7 @@ async def install_item(item_id: str, user: CurrentUser) -> dict:
     return agent
 
 
-@router.get("/{item_id}/reviews")
-async def item_reviews(item_id: str, user: CurrentUser) -> list[dict]:
+@router.get("/{item_id}/reviews", dependencies=[_read_rate_limit])
+async def item_reviews(item_id: str, user: ActiveUser) -> list[dict]:
     """Return reviews for an item (ratings arrive in a later round)."""
     return await marketplace_service.reviews(item_id)

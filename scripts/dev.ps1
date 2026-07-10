@@ -5,19 +5,21 @@
 
 .DESCRIPTION
     - Brings up PostgreSQL, MongoDB and Qdrant via docker-compose (skippable).
-    - Creates/uses the backend virtualenv, installs deps, runs Alembic migrations
-      and launches uvicorn in this terminal.
+    - Creates/uses the backend virtualenv, installs deps, runs Alembic migrations,
+      seeds the featured marketplace teams and launches uvicorn in this terminal.
     - Installs frontend deps and launches `npm run dev` in this terminal.
     - Both services share the current terminal; press Ctrl+C to stop them.
 
 .EXAMPLE
     ./scripts/dev.ps1
     ./scripts/dev.ps1 -SkipInfra
+    ./scripts/dev.ps1 -SkipSeed
     ./scripts/dev.ps1 -BackendPort 8001 -FrontendPort 3001
 #>
 [CmdletBinding()]
 param(
     [switch]$SkipInfra,
+    [switch]$SkipSeed,
     [int]$BackendPort = 8000,
     [int]$FrontendPort = 3000
 )
@@ -79,6 +81,15 @@ Write-Host 'Installing backend dependencies...'
 Write-Host 'Running database migrations (alembic upgrade head)...'
 try { & $VenvPy -m alembic -c (Join-Path $Backend 'alembic.ini') upgrade head }
 catch { Write-Warning "Alembic migration failed (is Postgres up?): $_" }
+
+if (-not $SkipSeed) {
+    Write-Host 'Seeding featured marketplace teams (idempotent)...'
+    Push-Location $Backend
+    # Seeding is cosmetic: a missing Mongo must not stop the dev stack coming up.
+    try { & $VenvPy -m app.scripts.seed_marketplace }
+    catch { Write-Warning "Marketplace seed failed (is MongoDB up?): $_" }
+    Pop-Location
+}
 
 Clear-Port $BackendPort
 Write-Step "Launching backend on http://localhost:$BackendPort"

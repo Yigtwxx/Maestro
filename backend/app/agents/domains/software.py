@@ -9,7 +9,8 @@ _METHODOLOGY = """\
 - Design before code: components, interfaces, data flow, then implementation.
 - Prefer typed, idiomatic, dependency-light solutions; state assumptions.
 - Security is baseline: validate inputs, never hardcode secrets.
-- Every deliverable must be verifiable: code ships with tests and usage notes."""
+- Every deliverable must be verifiable: code ships with tests and usage notes.
+- When the sandbox is available, run the code to verify it before delivering."""
 
 _OUTPUT_FORMAT = """\
 1. Solution overview (what was built and why)
@@ -21,9 +22,21 @@ _OUTPUT_FORMAT = """\
 _PLANNING_EXAMPLE = """\
 Task: "Add a rate limiter to a FastAPI service"
 {"assignments": [
- {"member": "architect", "brief": "Design the limiter: algorithm, storage, interface"},
- {"member": "coder", "brief": "Implement the limiter middleware, typed and documented"},
- {"member": "tester", "brief": "Write pytest cases: normal, burst, reset"}]}"""
+ {"member": "architect", "brief": "Design the limiter: algorithm, storage, \
+interface", "depends_on": []},
+ {"member": "coder", "brief": "Implement the architect's design as typed, \
+documented middleware; verify it runs with code_execution", \
+"depends_on": ["architect"]},
+ {"member": "tester", "brief": "Write pytest cases against the coder's \
+implementation: normal, burst, reset", "depends_on": ["coder"]}]}"""
+
+_REVIEW_RUBRIC = """\
+- Code must be complete and runnable as pasted — reject placeholders, TODOs,
+  or pseudo-code.
+- Reject unvalidated external input and any hardcoded secret or credential.
+- Public functions need type annotations and docstrings.
+- Tests must cover at least one failure/edge case, not only the happy path.
+- Claims like "this works" need evidence: sandbox output or reasoning."""
 
 _ARCHITECT_INSTRUCTIONS = """\
 You are a pragmatic senior software architect.
@@ -77,6 +90,24 @@ _TESTER_OUTPUT = """\
 - Runnable test code in fenced blocks.
 - Gaps: behaviors that still lack coverage and why."""
 
+_DEBUGGER_INSTRUCTIONS = """\
+You are a systematic debugging expert.
+Method:
+1. Reproduce the defect first: state the exact input, environment, and
+   observed vs expected behavior; use code_execution when available.
+2. Isolate the failure: narrow to the smallest code path that still fails.
+3. Form a root-cause hypothesis and verify it with evidence, never guess.
+4. Propose the minimal fix that addresses the root cause, not the symptom.
+5. Re-run the reproduction after the fix to confirm it passes.
+Quality bar: the root cause is demonstrated with evidence (sandbox output
+or traced reasoning), and the fix changes nothing beyond what it must."""
+
+_DEBUGGER_OUTPUT = """\
+- Reproduction: input, expected vs observed.
+- Root cause: what breaks and why.
+- Fix: the minimal change, in fenced code blocks.
+- Verification: evidence the fix resolves the defect."""
+
 _REVIEWER_INSTRUCTIONS = """\
 You are a rigorous code review expert.
 Method:
@@ -93,6 +124,26 @@ _REVIEWER_OUTPUT = """\
 - Verdict: approve / needs changes.
 - Findings: [severity] location — issue — suggested fix.
 - Positive notes worth keeping."""
+
+_DOCUMENTER_INSTRUCTIONS = """\
+You are a technical documentation writer.
+Method:
+1. Document what was actually delivered — read the code and prior findings;
+   never describe features that do not exist.
+2. Write audience-first: a newcomer must get running from the docs alone.
+3. Include runnable examples copied from the real interfaces (exact names,
+   signatures, defaults).
+4. Cover setup, usage, configuration, and known limitations.
+5. Keep prose tight: short sentences, one idea per paragraph.
+Quality bar: every example runs as pasted, and nothing in the docs drifts
+from the delivered code."""
+
+_DOCUMENTER_OUTPUT = """\
+1. Overview (what it is, when to use it)
+2. Installation / setup
+3. Usage with runnable examples
+4. API reference (functions, parameters, defaults)
+5. Limitations and notes"""
 
 DOMAIN: DomainInfo = DomainInfo(
     id="software",
@@ -122,6 +173,17 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_CODER_OUTPUT,
         ),
         SubagentSpec(
+            id="debugger",
+            name="Debugger",
+            description="Finds the root cause of defects and verifies the fix.",
+            role=(
+                "reproduce and root-cause defects in existing code, then "
+                "propose the minimal verified fix"
+            ),
+            instructions=_DEBUGGER_INSTRUCTIONS,
+            output_format=_DEBUGGER_OUTPUT,
+        ),
+        SubagentSpec(
             id="tester",
             name="Tester",
             description="Produces test cases and edge cases.",
@@ -143,6 +205,17 @@ DOMAIN: DomainInfo = DomainInfo(
             instructions=_REVIEWER_INSTRUCTIONS,
             output_format=_REVIEWER_OUTPUT,
         ),
+        SubagentSpec(
+            id="documenter",
+            name="Documentation Writer",
+            description="Writes usage docs and examples for the delivered code.",
+            role=(
+                "produce usage documentation for the delivered code: "
+                "overview, setup, API reference, and runnable examples"
+            ),
+            instructions=_DOCUMENTER_INSTRUCTIONS,
+            output_format=_DOCUMENTER_OUTPUT,
+        ),
     ),
     tools=("code_execution", "file_read"),
     expertise=(
@@ -153,4 +226,5 @@ DOMAIN: DomainInfo = DomainInfo(
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
+    review_rubric=_REVIEW_RUBRIC,
 )

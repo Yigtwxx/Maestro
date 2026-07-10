@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.database import close_connections
+from app.core.database import close_connections, ensure_indexes
 from app.services.llm_service import aclose as close_llm_client
 
 logging.basicConfig(level=settings.log_level)
@@ -24,17 +24,25 @@ logger = logging.getLogger("maestro")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage startup/shutdown resources."""
     logger.info("Maestro backend starting (env=%s)", settings.environment)
+    await ensure_indexes()
     yield
     await close_llm_client()
     await close_connections()
     logger.info("Maestro backend stopped")
 
 
+_is_production = settings.environment == "production"
+
 app = FastAPI(
     title="Maestro Platform API",
     version="0.1.0",
     description="AI agent orchestration platform (BYOK).",
     lifespan=lifespan,
+    # The frontend owns /docs as a marketing page, and a deployed instance has no
+    # reason to publish its schema. Off in production, on everywhere else.
+    docs_url=None if _is_production else "/docs",
+    redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
 )
 
 # In development, accept any localhost/127.0.0.1 port so IDE preview proxies

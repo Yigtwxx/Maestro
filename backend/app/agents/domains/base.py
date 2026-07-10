@@ -38,7 +38,9 @@ class DomainInfo:
     capabilities: tuple[str, ...]
     # The fixed subagent team the Main Agent manages (never invented per task).
     team: tuple[SubagentSpec, ...]
-    # Declared tool ids from ``TOOL_CATALOG`` (metadata only for this tier).
+    # Declared tool ids from ``TOOL_CATALOG``. Ids in ``EXECUTABLE_TOOL_IDS``
+    # (web_search, data_fetch, code_execution) are executed via the subagent
+    # directive loop; the rest are declared metadata for this tier.
     tools: tuple[str, ...]
     # English prompt fragments (all system prompts are English).
     expertise: str
@@ -51,3 +53,6 @@ class DomainInfo:
     # member ids) injected into the Main Agent planning prompt; teaches small
     # models the exact id vocabulary and JSON shape.
     planning_example: str = ""
+    # Domain-specific acceptance criteria injected into the Reviewer prompt
+    # (3-6 concrete, checkable bullets).
+    review_rubric: str = ""

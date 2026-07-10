@@ -9,6 +9,8 @@ _METHODOLOGY = """\
 - Quantify wherever possible; directional claims need a stated basis.
 - State assumptions, data gaps, and risks explicitly.
 - Consider both the bull and the bear case before concluding.
+- Perform sentiment analysis directly in your reasoning from the collected
+  signals; fetch source pages when snippets are not enough.
 - Never present the output as personalized investment advice."""
 
 _OUTPUT_FORMAT = """\
@@ -22,9 +24,19 @@ End with: "This is general analysis, not personalized investment advice." """
 _PLANNING_EXAMPLE = """\
 Task: "How risky does Tesla stock look this quarter?"
 {"assignments": [
- {"member": "market_data", "brief": "Summarize TSLA price action and valuation"},
- {"member": "news", "brief": "Collect dated headlines affecting Tesla this quarter"},
- {"member": "analyst", "brief": "Combine data and news into a risk assessment"}]}"""
+ {"member": "market_data", "brief": "Summarize TSLA price action and \
+valuation; search for current figures", "depends_on": []},
+ {"member": "news", "brief": "Collect dated headlines affecting Tesla this \
+quarter", "depends_on": []},
+ {"member": "analyst", "brief": "Combine the market data and news into a \
+risk assessment", "depends_on": ["market_data", "news"]}]}"""
+
+_REVIEW_RUBRIC = """\
+- Every figure must carry an as-of date; undated numbers are a defect.
+- Estimates must be labeled as estimates, never presented as facts.
+- Both bull and bear cases must appear before any conclusion.
+- Claims must trace to a named source (filing, outlet, market data).
+- The output must not read as personalized investment advice."""
 
 _MARKET_DATA_INSTRUCTIONS = """\
 You are a market data expert.
@@ -88,6 +100,27 @@ _SENTIMENT_OUTPUT = """\
 - Verdict: direction + confidence (low/medium/high).
 - Drivers: 3-5 bullets with the signal behind each.
 - What would flip the reading."""
+
+_RISK_INSTRUCTIONS = """\
+You are a macro and risk analyst.
+Method:
+1. Set the macro context relevant to the brief: rates, inflation, FX,
+   and where the cycle stands — each with its as-of date.
+2. Enumerate downside risks from prior findings and your own analysis;
+   do not stop at the obvious top two.
+3. Rate each risk's likelihood and impact (low/medium/high) with the
+   reasoning behind the rating.
+4. Sketch 1-2 stress scenarios: what happens to the thesis if the key
+   risk materializes.
+5. Flag which risks are priced in versus underappreciated.
+Quality bar: every risk carries a likelihood, an impact, and a stated
+basis — a bare list of worries is a defect."""
+
+_RISK_OUTPUT = """\
+- Macro context: 3-5 dated bullets.
+- Risk register: risk — likelihood — impact — basis.
+- Stress scenarios: trigger and expected effect.
+- Underpriced risks worth watching."""
 
 _ANALYST_INSTRUCTIONS = """\
 You are a senior financial analyst writing for a smart non-specialist.
@@ -166,6 +199,18 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_SENTIMENT_OUTPUT,
         ),
         SubagentSpec(
+            id="risk",
+            name="Macro & Risk Analyst",
+            description="Assesses macro context and ranks the downside risks.",
+            role=(
+                "assess the macro context (rates, FX, cycle) and build a "
+                "likelihood/impact-rated downside risk register with stress "
+                "scenarios"
+            ),
+            instructions=_RISK_INSTRUCTIONS,
+            output_format=_RISK_OUTPUT,
+        ),
+        SubagentSpec(
             id="analyst",
             name="Financial Analyst & Reporter",
             description=("Turns findings into financial analysis and a clear report."),
@@ -186,4 +231,5 @@ DOMAIN: DomainInfo = DomainInfo(
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
+    review_rubric=_REVIEW_RUBRIC,
 )

@@ -11,24 +11,34 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.core.deps import CurrentUser, DbSession
+from app.core.constants import RATE_LIMIT_READ, RATE_LIMIT_WRITE
+from app.core.deps import ActiveUser, DbSession
 from app.core.security import encrypt_secret, mask_secret
 from app.models.api_key import ApiKey
 from app.schemas.api_key import ApiKeyCreate, ApiKeyPublic
+from app.utils.rate_limiter import rate_limit
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
+_read_rate_limit = rate_limit(RATE_LIMIT_READ, scope="api-keys")
+_write_rate_limit = rate_limit(RATE_LIMIT_WRITE, scope="api-keys")
 
-@router.get("", response_model=list[ApiKeyPublic])
-async def list_api_keys(user: CurrentUser, db: DbSession) -> list[ApiKey]:
+
+@router.get("", response_model=list[ApiKeyPublic], dependencies=[_read_rate_limit])
+async def list_api_keys(user: ActiveUser, db: DbSession) -> list[ApiKey]:
     """List the current user's stored API keys (metadata only)."""
     result = await db.execute(select(ApiKey).where(ApiKey.user_id == user.id))
     return list(result.scalars().all())
 
 
-@router.post("", response_model=ApiKeyPublic, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=ApiKeyPublic,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_write_rate_limit],
+)
 async def create_api_key(
-    payload: ApiKeyCreate, user: CurrentUser, db: DbSession
+    payload: ApiKeyCreate, user: ActiveUser, db: DbSession
 ) -> ApiKey:
     """Store a new encrypted API key for the current user."""
     api_key = ApiKey(
@@ -45,8 +55,12 @@ async def create_api_key(
     return api_key
 
 
-@router.delete("/{key_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_api_key(key_id: uuid.UUID, user: CurrentUser, db: DbSession) -> None:
+@router.delete(
+    "/{key_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[_write_rate_limit],
+)
+async def delete_api_key(key_id: uuid.UUID, user: ActiveUser, db: DbSession) -> None:
     """Delete one of the current user's API keys."""
     api_key = await db.get(ApiKey, key_id)
     if api_key is None or api_key.user_id != user.id:

@@ -1,0 +1,21 @@
+# alembic/ and alembic.ini are NOT ignored: the image runs migrations.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+tests/
+requirements-dev.txt
+
+.env
+.env.*
+.git/
+.gitignore
+Dockerfile
+.dockerignore

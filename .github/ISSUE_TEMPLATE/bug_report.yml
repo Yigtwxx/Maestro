@@ -1,0 +1,98 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+
+        **If this is a security vulnerability, close this form and follow
+        [SECURITY.md](https://github.com/Yigtwxx/maestro/blob/main/SECURITY.md) instead.**
+        Do not describe it here.
+
+  - type: checkboxes
+    id: not-security
+    attributes:
+      label: Confirmation
+      options:
+        - label: This is not a security vulnerability.
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug and what you expected instead.
+      placeholder: |
+        Expected: the task finishes and streams a result over WebSocket.
+        Actual: the task hangs at "planning" and the socket closes after 30s.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Give us the shortest path from a clean checkout to the bug.
+      placeholder: |
+        1. Run `./scripts/dev.sh`
+        2. Register a new account
+        3. Submit the prompt "..." with the Reviewer enabled
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Backend (FastAPI, API endpoints)
+        - Frontend (Next.js, UI)
+        - Agents (orchestrator, main agent, subagent, reviewer)
+        - LLM providers / adapters
+        - RAG / memory (Qdrant)
+        - Billing / quota
+        - Infra (Docker, migrations, dev scripts)
+        - Docs
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit SHA or version
+      description: Output of `git rev-parse --short HEAD`.
+      placeholder: "68454ef"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Python version, Node version, and whether Docker is running the databases.
+      placeholder: |
+        OS: Windows 11 / macOS 15 / Ubuntu 24.04
+        Python: 3.11.9
+        Node: 20.11.0
+        Docker: yes (docker compose up -d)
+        Model: qwen3 via Ollama / Gemini free tier / OpenAI
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or traceback
+      description: |
+        **Redact your API keys before pasting.** Check the output for provider
+        credentials, JWTs, and the contents of your `.env`.
+      render: shell
+    validations:
+      required: false

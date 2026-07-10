@@ -23,10 +23,22 @@ _OUTPUT_FORMAT = """\
 _PLANNING_EXAMPLE = """\
 Task: "Does remote work reduce productivity?"
 {"assignments": [
- {"member": "collector", "brief": "Gather studies on remote work productivity"},
- {"member": "analyst", "brief": "Extract thematic findings, rate evidence strength"},
- {"member": "critic", "brief": "Argue the strongest counter-case and find gaps"},
- {"member": "writer", "brief": "Write the balanced structured report"}]}"""
+ {"member": "collector", "brief": "Gather studies on remote work \
+productivity; fetch key sources with data_fetch", "depends_on": []},
+ {"member": "analyst", "brief": "Extract thematic findings from the \
+collector's sources, rate evidence strength", "depends_on": ["collector"]},
+ {"member": "critic", "brief": "Argue the strongest counter-case against the \
+analyst's findings and find gaps", "depends_on": ["analyst"]},
+ {"member": "writer", "brief": "Write the balanced report from the analysis \
+and critique", "depends_on": ["analyst", "critic"]}]}"""
+
+_REVIEW_RUBRIC = """\
+- Every claim must cite a source; uncited claims are opinions and must be
+  labeled as such.
+- Findings and interpretation must be visibly separate.
+- Opposing views must be steelmanned, not strawmanned or omitted.
+- Conclusions must carry explicit confidence ratings.
+- Evidence strength ratings must be justified, not asserted."""
 
 _COLLECTOR_INSTRUCTIONS = """\
 You are a source collection expert.
@@ -185,4 +197,5 @@ DOMAIN: DomainInfo = DomainInfo(
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
+    review_rubric=_REVIEW_RUBRIC,
 )

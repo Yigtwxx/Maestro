@@ -25,9 +25,41 @@ _OUTPUT_FORMAT = """\
 _PLANNING_EXAMPLE = """\
 Task: "Analyze last quarter's customer churn data"
 {"assignments": [
- {"member": "cleaner", "brief": "Assess data quality: missingness and outliers"},
- {"member": "statistician", "brief": "Quantify churn drivers with appropriate tests"},
- {"member": "interpreter", "brief": "Translate results into business takeaways"}]}"""
+ {"member": "cleaner", "brief": "Assess data quality: missingness and \
+outliers", "depends_on": []},
+ {"member": "statistician", "brief": "Quantify churn drivers on the cleaned \
+data; verify calculations with code_execution", "depends_on": ["cleaner"]},
+ {"member": "interpreter", "brief": "Translate the statistician's results \
+into business takeaways", "depends_on": ["statistician"]}]}"""
+
+_REVIEW_RUBRIC = """\
+- Results must report effect sizes with uncertainty, not bare point
+  estimates or p-values.
+- Correlation must never be presented as causation.
+- Method must be stated before results; assumptions before method.
+- Numeric claims should be verified by an actual computation (sandbox
+  output) when possible, not mental arithmetic.
+- Chart specs must match the relationship shown; axes must be honest."""
+
+_COLLECTOR_INSTRUCTIONS = """\
+You are a data sourcing expert.
+Method:
+1. Determine exactly what data the task needs: entities, fields, period,
+   granularity.
+2. Locate candidate sources with web_search and pull what is reachable
+   with data_fetch: public datasets, APIs, official statistics, files.
+3. Document each source: origin, schema (fields and types), coverage
+   period, freshness, and license or usage terms.
+4. Prefer primary and official sources; flag secondary sources as such.
+5. If the needed data cannot be acquired, say so explicitly and list the
+   closest available alternatives — never fabricate records.
+Quality bar: downstream teammates can assess fitness for use from your
+source notes alone, without re-checking the source."""
+
+_COLLECTOR_OUTPUT = """\
+- Sources: name, origin/URL, schema summary, period, freshness, license.
+- Retrieved data or samples (tables or fenced blocks).
+- Gaps: what could not be acquired and suggested alternatives."""
 
 _CLEANER_INSTRUCTIONS = """\
 You are a data preparation expert.
@@ -102,6 +134,17 @@ DOMAIN: DomainInfo = DomainInfo(
     capabilities=("Data analysis", "Statistics", "Visualization", "Data pipelines"),
     team=(
         SubagentSpec(
+            id="collector",
+            name="Data Collector",
+            description="Locates and acquires the data the analysis needs.",
+            role=(
+                "locate and acquire the needed data (public datasets, APIs, "
+                "files) and document source, schema, freshness, and license"
+            ),
+            instructions=_COLLECTOR_INSTRUCTIONS,
+            output_format=_COLLECTOR_OUTPUT,
+        ),
+        SubagentSpec(
             id="cleaner",
             name="Data Cleaner",
             description="Cleans the data and fixes gaps and inconsistencies.",
@@ -146,10 +189,11 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_INTERPRETER_OUTPUT,
         ),
     ),
-    tools=("data_fetch", "code_execution", "file_read"),
+    tools=("web_search", "data_fetch", "code_execution", "file_read"),
     expertise=("data: data analysis, statistics, visualization, and data pipelines"),
     routing_hint="data analysis, statistics, visualization, datasets, pipelines",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
+    review_rubric=_REVIEW_RUBRIC,
 )

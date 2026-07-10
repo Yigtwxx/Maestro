@@ -9,7 +9,7 @@ gracefully instead of failing hard; the existing fallback paths catch
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class RouteDecision(BaseModel):
@@ -22,12 +22,28 @@ class RouteDecision(BaseModel):
 
 
 class PlanAssignment(BaseModel):
-    """One Main Agent team briefing: ``{"member": ..., "brief": ...}``."""
+    """One Main Agent team briefing.
+
+    ``{"member": ..., "brief": ..., "depends_on": [...]}`` — ``depends_on``
+    lists earlier members whose outputs this member needs (optional; older
+    plans without it remain valid).
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     member: str = ""
     brief: str = ""
+    depends_on: list[str] = Field(default_factory=list)
+
+    @field_validator("depends_on", mode="before")
+    @classmethod
+    def _coerce_depends_on(cls, value: object) -> object:
+        """Accept a bare string or null — small models get this wrong."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        return value
 
 
 class PlanResult(BaseModel):

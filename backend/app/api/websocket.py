@@ -14,9 +14,12 @@ import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 
 from app.core.constants import EventType, TaskStatus
+from app.core.database import SessionLocal
 from app.core.security import decode_token
+from app.models.user import User
 from app.services import task_service
 from app.utils.events import event_bus
+from app.utils.rate_limiter import check_websocket
 
 router = APIRouter(tags=["websocket"])
 
@@ -29,17 +32,36 @@ _TERMINAL = {
 
 
 async def _authenticate(websocket: WebSocket) -> uuid.UUID | None:
-    """Return the authenticated user id, or None (after closing) if invalid."""
+    """Return the authenticated user id, or None (after closing) if invalid.
+
+    Mirrors the HTTP ``get_active_user`` dependency: an account pending deletion
+    holds valid credentials but is locked out of the product, sockets included.
+
+    Connection attempts are rate-limited here rather than by a dependency: a
+    ``Depends`` throttle cannot reject a socket before the handshake, and the
+    point is to refuse the handshake (CLAUDE.md §9.4).
+    """
+    if not await check_websocket(websocket):
+        await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
+        return None
+
     token = websocket.query_params.get("token")
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return None
     try:
         payload = decode_token(token, expected_type="access")
-        return uuid.UUID(payload["sub"])
+        user_id = uuid.UUID(payload["sub"])
     except (jwt.InvalidTokenError, KeyError, ValueError):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return None
+
+    async with SessionLocal() as session:
+        user = await session.get(User, user_id)
+    if user is None or user.deletion_requested_at is not None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return None
+    return user_id
 
 
 async def _forward_events(websocket: WebSocket, queue: asyncio.Queue) -> None:

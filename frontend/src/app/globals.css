@@ -24,6 +24,14 @@ body {
   @apply rounded-full bg-border-bright;
 }
 
+/* Scrollable but chromeless — the landing nav's tab strip on narrow screens. */
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 @layer utilities {
   /* Faint grid backdrop, tintable per module via `--grid-rgb` (inline style).
      Defaults to neutral slate; auth/landing set lime, architect sets violet. */
@@ -37,19 +45,6 @@ body {
   /* Uppercase micro-label used for stat labels and section eyebrows. */
   .text-micro {
     @apply text-[10px] font-semibold uppercase tracking-micro;
-  }
-
-  /* Soft neon mesh behind section headers — tint via `--aurora-rgb` (inline
-     style). Opacity stays low so text on `muted` remains readable. */
-  .aurora {
-    pointer-events: none;
-    background-image:
-      radial-gradient(38% 90% at 18% 20%, rgb(var(--aurora-rgb, 163 230 53) / 0.14), transparent 70%),
-      radial-gradient(30% 80% at 78% 60%, rgb(var(--aurora-rgb, 163 230 53) / 0.07), transparent 70%);
-    background-size:
-      160% 160%,
-      160% 160%;
-    animation: aurora-drift 18s ease-in-out infinite alternate;
   }
 
   /* Animated neon gradient border for featured cards — double-background
@@ -214,8 +209,12 @@ body {
     animation: skeleton-sheen 1.6s ease-in-out infinite;
   }
 
+  /* Toast entrance — a short fade + slide from the right edge. */
+  .toast-in {
+    animation: toast-in 0.22s ease-out both;
+  }
+
   @media (prefers-reduced-motion: reduce) {
-    .aurora,
     .gradient-border,
     .shimmer-hover:hover::after,
     .skeleton,
@@ -223,7 +222,8 @@ body {
     .stagger-children > *,
     .topbar-pan,
     .bar-grow,
-    .log-flash {
+    .log-flash,
+    .toast-in {
       animation: none;
     }
     .page-scanline,
@@ -237,6 +237,13 @@ body {
 @keyframes spark-grow {
   from {
     transform: scaleY(0);
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
   }
 }
 
