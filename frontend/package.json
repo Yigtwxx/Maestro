@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -30,6 +30,7 @@
     "@types/node": "22.10.7",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
+    "@eslint/eslintrc": "^3.2.0",
     "autoprefixer": "10.5.2",
     "eslint": "9.18.0",
     "eslint-config-next": "^15.5.19",
