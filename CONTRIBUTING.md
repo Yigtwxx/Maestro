@@ -157,8 +157,16 @@ closes.
 
 ## Licensing of contributions
 
-Maestro is licensed under the [Apache License 2.0](./LICENSE). Under section 5 of that
-license, any contribution you intentionally submit for inclusion is automatically
-licensed under the same terms, unless you explicitly state otherwise.
+Maestro is distributed under the [Sustainable Use License](./LICENSE) (fair-code). By
+intentionally submitting a contribution for inclusion, you agree that:
 
-**There is no CLA and no DCO sign-off requirement.** Opening a pull request is enough.
+1. Your contribution is licensed to the project under the same Sustainable Use License.
+2. You grant the maintainer the right to relicense your contribution as part of the
+   project (for example, to offer it under a commercial license for the hosted service,
+   or to adjust the project license in the future).
+3. You have the right to submit the contribution (it is your own work, or you are
+   authorized to contribute it).
+
+Opening a pull request constitutes acceptance of these terms — there is no separate
+signature step or DCO sign-off. A formal CLA bot may be added later; these terms are the
+substance of it.
