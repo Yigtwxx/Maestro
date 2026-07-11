@@ -15,6 +15,7 @@ context can fetch the original user request on demand via the built-in
 
 from __future__ import annotations
 
+import logging
 import time
 
 from app.agents import tools as tool_directives
@@ -42,6 +43,8 @@ from app.core.constants import (
     SubagentStatus,
 )
 from app.services.llm_service import ChatMessage, LLMError, LLMResponse
+
+logger = logging.getLogger(__name__)
 
 
 def _format_upstream(upstream: list[tuple[str, str]]) -> str:
@@ -136,6 +139,7 @@ async def run_subtask(
             ctx, messages, member=member, index=index, specs=specs
         )
     except LLMError as exc:
+        logger.warning("subtask failed: member=%s error=%s", member.id, exc)
         return SubagentResult(
             status=SubagentStatus.ERROR,
             data={"error": str(exc), "subtask": brief, "member": member.id},
