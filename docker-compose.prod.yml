@@ -196,8 +196,75 @@ services:
       # Not derived from DOMAIN: DOMAIN may carry a scheme (e.g. http://localhost),
       # which would produce https://http://localhost.
       SITE_URL: ${SITE_URL:?set SITE_URL in .env.prod}
+      # Umami website id; empty/unset = analytics fully disabled (no script is
+      # served and the storage notice stays informational). Read at request
+      # time like SITE_URL. `:-` on purpose: it must not break deployments
+      # that never enable the analytics profile.
+      UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
     depends_on:
       - backend
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  # --- Optional self-hosted analytics (COMPOSE_PROFILES=analytics) ---
+  # One-shot: creates the umami role and database inside the existing postgres.
+  # Needed because /docker-entrypoint-initdb.d scripts never re-run on an
+  # already-initialized volume, and existing deployments have one. Idempotent:
+  # the role is created once (its password re-synced on every run, so a
+  # changed UMAMI_DB_PASSWORD propagates), the database created only if absent.
+  umami-db-init:
+    image: postgres:16-alpine
+    restart: "no"
+    profiles: ["analytics"]
+    environment:
+      PGHOST: postgres
+      PGUSER: maestro
+      PGDATABASE: maestro
+      PGPASSWORD: ${POSTGRES_PASSWORD:-}
+      UMAMI_DB_PASSWORD: ${UMAMI_DB_PASSWORD:-}
+    entrypoint: ["/bin/sh", "-c"]
+    # $$ keeps compose from interpolating; the value resolves in-container.
+    command:
+      - |
+        set -eu
+        psql -v ON_ERROR_STOP=1 -v pw="$$UMAMI_DB_PASSWORD" <<'SQL'
+        SELECT format('CREATE ROLE umami LOGIN PASSWORD %L', :'pw')
+        WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'umami')\gexec
+        SELECT format('ALTER ROLE umami PASSWORD %L', :'pw')\gexec
+        SELECT 'CREATE DATABASE umami OWNER umami'
+        WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'umami')\gexec
+        SQL
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Runs its own Prisma migrations on startup — no separate migrate service.
+  # Caddy exposes only /a/script.js and /a/api/send; the dashboard is reachable
+  # solely through the loopback port below (SSH tunnel), never the internet.
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-v3.2.0
+    restart: unless-stopped
+    profiles: ["analytics"]
+    environment:
+      DATABASE_URL: postgresql://umami:${UMAMI_DB_PASSWORD:-}@postgres:5432/umami
+      APP_SECRET: ${UMAMI_APP_SECRET:-}
+      DISABLE_TELEMETRY: "1"
+    ports:
+      - "127.0.0.1:3001:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      umami-db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/api/heartbeat"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # First boot runs the Prisma migrations; give it room.
+      start_period: 60s
     deploy:
       resources:
         limits:
