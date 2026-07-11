@@ -404,8 +404,20 @@ async def run(
     # FAILED on this signal. Skip the synthesis call: with no output to merge it
     # would only waste another (doomed) LLM round-trip.
     all_failed = not successful
+    failure_reason: str | None = None
     if all_failed:
         final_answer = "No successful subtask output."
+        # Carry the real cause (e.g. "gemini chat failed: HTTP 404 ...") up to the
+        # task layer so the terminal log and the UI error say why, not just that
+        # everything failed. Subtasks share one adapter, so the first is
+        # representative.
+        reasons = [
+            str(r.data.get("error", "")).strip()
+            for r in results
+            if r.status == SubagentStatus.ERROR and r.data.get("error")
+        ]
+        if reasons:
+            failure_reason = reasons[0]
     else:
         final_answer = await _synthesize(ctx, domain, prompt, successful)
 
@@ -420,4 +432,5 @@ async def run(
         "subtasks": [r.to_dict() for r in results],
         "metadata": {"subtask_count": len(results)},
         "all_subtasks_failed": all_failed,
+        "failure_reason": failure_reason,
     }
