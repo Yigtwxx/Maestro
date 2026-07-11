@@ -13,10 +13,12 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import settings
-from app.core.database import close_connections, ensure_indexes
+from app.core.database import check_readiness, close_connections, ensure_indexes
+from app.core.observability import configure_logging, init_sentry
 from app.services.llm_service import aclose as close_llm_client
 
-logging.basicConfig(level=settings.log_level)
+configure_logging()
+init_sentry()
 logger = logging.getLogger("maestro")
 
 
@@ -99,8 +101,28 @@ async def _unhandled_exception_handler(
 
 @app.get("/health", tags=["health"])
 async def health() -> dict[str, str]:
-    """Liveness probe."""
+    """Liveness probe.
+
+    Stays dependency-free on purpose: the Docker HEALTHCHECK and Caddy hit this,
+    so touching a database here would risk a restart loop when a backing service
+    is briefly down. Use ``/health/ready`` for dependency health.
+    """
     return {"status": "ok"}
+
+
+@app.get("/health/ready", tags=["health"])
+async def readiness() -> JSONResponse:
+    """Readiness probe: pings every backing service (Postgres/Mongo/Qdrant/Redis).
+
+    Returns 200 ``{"status": "ready", ...}`` when all required dependencies
+    answer, or 503 ``{"status": "degraded", ...}`` with per-check results when
+    any fail — the shape an external uptime monitor alerts on.
+    """
+    ready, checks = await check_readiness()
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={"status": "ready" if ready else "degraded", "checks": checks},
+    )
 
 
 app.include_router(api_router)
