@@ -12,12 +12,13 @@
 {$DOMAIN} {
 	encode zstd gzip
 
-	# /health is the backend's liveness probe, exposed for uptime monitors.
-	# Everything the API owns lives under /api, including the two WebSocket
+	# /health (liveness) and /health/ready (dependency readiness) are the
+	# backend's probes, exposed for uptime monitors — the /health* glob covers
+	# both. Everything the API owns lives under /api, including the two WebSocket
 	# routes — reverse_proxy upgrades those with no extra configuration, and
 	# applies no read timeout to a hijacked connection, so a 30-minute task
 	# stream stays open.
-	@api path /api/* /health
+	@api path /api/* /health*
 	handle @api {
 		reverse_proxy backend:8000
 	}
