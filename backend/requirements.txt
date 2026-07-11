@@ -24,6 +24,9 @@ redis>=5.2
 httpx>=0.28.1
 tenacity>=9.0
 
+# --- Observability (error tracking; no-op when SENTRY_DSN is unset) ---
+sentry-sdk[fastapi]>=2.0,<3.0
+
 # --- Web search (DuckDuckGo, free, no API key) ---
 ddgs>=9.0,<10
 
