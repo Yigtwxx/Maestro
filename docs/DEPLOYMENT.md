@@ -195,6 +195,120 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod exec ollama ollam
 
 ---
 
+## Monitoring
+
+The stack ships a lightweight observability setup: dependency health probes,
+structured logs, and optional error tracking. No metrics stack (Prometheus /
+Grafana) runs on the host — deliberately, to keep RAM free on a single small box.
+
+### Health probes
+
+Two endpoints, both reachable through Caddy without authentication:
+
+- **`GET /health`** — liveness. Returns `{"status":"ok"}` without touching any
+  dependency. The Docker `HEALTHCHECK` uses this; keep an uptime monitor on it.
+- **`GET /health/ready`** — readiness. Pings Postgres, Mongo, Qdrant and Redis
+  and returns `200 {"status":"ready", ...}` or, if any required service is down,
+  `503 {"status":"degraded","checks":{...}}`.
+
+Point a free uptime monitor (UptimeRobot, Better Stack, …) at both:
+
+```
+https://<your-domain>/health        # expect 200 — process is up
+https://<your-domain>/health/ready   # expect 200 — dependencies are up
+```
+
+Set a 1–3 minute interval and an email/Slack alert on a non-200 response. The
+`/health/ready` monitor catches "the API is running but Mongo/Qdrant is
+unreachable" — a state `/health` alone would miss.
+
+### Error tracking (Sentry)
+
+Optional and off by default. To enable:
+
+1. Create a project at [sentry.io](https://sentry.io) (free tier is enough) and
+   copy its DSN.
+2. Set `SENTRY_DSN=<dsn>` in `.env.prod` (see also `SENTRY_ENVIRONMENT`,
+   `SENTRY_TRACES_SAMPLE_RATE`) and restart the backend.
+3. Configure an alert rule + email in the Sentry project.
+
+Unhandled errors — including background task failures, which never reach the
+request handler — are reported automatically via the logging integration. PII is
+scrubbed before events leave the process: `send_default_pii=False` plus a
+`before_send` hook that masks credential headers and drops request bodies, so
+API keys, prompts and card data are never sent. With `SENTRY_DSN` empty, Sentry
+is a no-op and the app makes no external calls.
+
+### Logs
+
+`LOG_FORMAT=json` (the production default in `.env.prod.example`) emits one JSON
+object per line — pipe `docker compose logs` into any aggregator. `LOG_FORMAT=text`
+keeps the readable format for local debugging.
+
+---
+
+## Analytics (optional, self-hosted Umami)
+
+Off by default. When enabled it is first-party (data never leaves the host),
+cookieless, consent-gated (the notice becomes a real Accept/Reject, the script
+loads only after an explicit yes), and counts the public marketing pages only —
+never the signed-in app. The Umami dashboard is deliberately not exposed to the
+internet; only `/a/script.js` and `/a/api/send` pass through Caddy.
+
+### Enabling
+
+1. In `.env.prod`, set:
+
+   ```env
+   COMPOSE_PROFILES=analytics
+   UMAMI_DB_PASSWORD=<openssl rand -base64 24>
+   UMAMI_APP_SECRET=<openssl rand -hex 32>
+   ```
+
+2. `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d`.
+   `umami-db-init` runs once and creates the `umami` role and database inside
+   the existing Postgres (idempotent — safe on an already-initialized `pgdata`
+   volume, which is why an initdb script would not work); `umami` then runs its
+   own Prisma migrations and comes up healthy.
+
+3. Reach the dashboard through an SSH tunnel — it listens on the host's
+   loopback only:
+
+   ```bash
+   ssh -N -L 3001:127.0.0.1:3001 <user>@<host>
+   ```
+
+   Open `http://localhost:3001`, log in as `admin` / `umami`, and **change that
+   password immediately**. Then Settings → Websites → Add website (name:
+   maestro, domain: your `DOMAIN`) and copy the Website ID.
+
+4. Put the id in `.env.prod` as `UMAMI_WEBSITE_ID=<id>` and restart the
+   frontend so it picks up the new env:
+
+   ```bash
+   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d frontend
+   ```
+
+Visitors now get the Accept/Reject notice; views appear in the dashboard only
+for those who accept, and only on marketing pages. Consent can be changed any
+time at the bottom of `/cookies`.
+
+### Enabling on an existing deployment
+
+Copy the updated `docker-compose.prod.yml` and `Caddyfile` to the host first,
+then follow the steps above. `up -d` recreates Caddy with the `/a/*` route (or
+reload in place: `docker compose -f docker-compose.prod.yml --env-file .env.prod
+exec caddy caddy reload --config /etc/caddy/Caddyfile`). Nothing else in the
+stack restarts.
+
+### Disabling
+
+Set `COMPOSE_PROFILES=` and `UMAMI_WEBSITE_ID=` back to empty and `up -d
+--remove-orphans`. The frontend reverts to the informational notice; the
+`umami` database stays in `pgdata` (harmless) unless you drop it.
+
+---
+
 ## Backups
 
 Everything durable lives in named volumes: `pgdata`, `mongodata`, `qdrantdata`.
@@ -204,6 +318,16 @@ quota ledger.
 ```bash
 docker compose -f docker-compose.prod.yml --env-file .env.prod \
   exec -T postgres pg_dump -U maestro maestro | gzip > "maestro-$(date +%F).sql.gz"
+```
+
+If analytics is enabled, the `umami` database lives in the same instance but is
+owned by the `umami` role, so it needs its own dump line (or accept the loss of
+anonymous view counts and skip it — nothing else depends on them):
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  exec -T -e PGPASSWORD="$UMAMI_DB_PASSWORD" postgres \
+  pg_dump -U umami umami | gzip > "umami-$(date +%F).sql.gz"
 ```
 
 Back up `.env.prod` separately and somewhere else. A Postgres dump without
@@ -236,6 +360,13 @@ Then check, in order:
    stream events.
 7. Upload a `.txt` under Documents. A `200` proves the embedding service is
    wired up.
+8. If testing analytics (`COMPOSE_PROFILES=analytics` + the `UMAMI_*` vars): in
+   a fresh browser profile the notice must show Accept/Reject with **no**
+   `/a/script.js` request before you answer. After Accept, each marketing page
+   navigation sends one `POST /a/api/send`; navigating into `/login` or
+   `/dashboard` must send **zero**. `curl http://localhost/api/send` must still
+   reach the backend (a FastAPI 404/405, not Umami) — that proves the `/a`
+   matcher split.
 
 ---
 
