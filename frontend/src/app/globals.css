@@ -42,6 +42,30 @@ body {
     background-size: 32px 32px;
   }
 
+  /* Colored spotlight beam for the landing stage. A beam is three stacked
+     parts — source hotspot, coned shaft, hot core — each hued via its inline
+     gradient. The shaft and core get a slow opacity breathe plus a gentle sway
+     around the top apex; the source only breathes (swaying it would drift the
+     lamp off the apex). Each part carries its own duration/delay so beams never
+     move in lockstep. Breathe touches only opacity and sway only transform, so
+     they never fight over the same property on one element. */
+  .spotlight-beam,
+  .spotlight-core {
+    animation:
+      spotlight-breathe var(--beam-dur, 8s) ease-in-out infinite,
+      spotlight-sway var(--beam-sway, 16s) ease-in-out infinite;
+  }
+  .spotlight-source {
+    animation: spotlight-breathe var(--beam-dur, 8s) ease-in-out infinite;
+  }
+
+  /* Wordmark lit by the beams: its multi-hue gradient drifts slowly, as if the
+     overhead light were shifting across the letters. */
+  .lit-text {
+    background-size: 200% 100%;
+    animation: spotlight-text-shift 12s ease-in-out infinite;
+  }
+
   /* Uppercase micro-label used for stat labels and section eyebrows. */
   .text-micro {
     @apply text-[10px] font-semibold uppercase tracking-micro;
@@ -226,11 +250,47 @@ body {
     .toast-in {
       animation: none;
     }
+    .spotlight-beam,
+    .spotlight-source,
+    .spotlight-core,
+    .lit-text {
+      animation: none;
+    }
     .page-scanline,
     .radar-layer,
     .panel-scan {
       display: none;
     }
+  }
+}
+
+@keyframes spotlight-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes spotlight-sway {
+  0%,
+  100% {
+    transform: rotate(-1.5deg);
+  }
+  50% {
+    transform: rotate(1.5deg);
+  }
+}
+
+@keyframes spotlight-text-shift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
   }
 }
 
