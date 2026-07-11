@@ -23,6 +23,20 @@
 		reverse_proxy backend:8000
 	}
 
+	# Umami analytics (optional, COMPOSE_PROFILES=analytics). Only the tracker
+	# script and the collect endpoint are public; the dashboard is deliberately
+	# not exposed — reach it through an SSH tunnel to the loopback port
+	# published in compose. The /a prefix exists because Umami's native
+	# /api/send would collide with the backend's /api/* matcher above;
+	# strip_prefix restores the path Umami expects. On deployments without the
+	# analytics profile this upstream does not exist and a hand-crafted request
+	# gets a 502 — the frontend never emits one, so nobody sees it.
+	@umami path /a/script.js /a/api/send
+	handle @umami {
+		uri strip_prefix /a
+		reverse_proxy umami:3000
+	}
+
 	# Everything else, /docs included: that path is a marketing page here, not
 	# FastAPI's Swagger UI (which is disabled when ENVIRONMENT=production).
 	handle {
