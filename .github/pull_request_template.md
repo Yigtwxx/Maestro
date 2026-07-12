@@ -39,6 +39,7 @@ Tick what you ran locally; leave a box unticked rather than guessing.
 - [ ] Any new LLM provider is a **new adapter class**; existing adapters are untouched.
 - [ ] New behavior has a test; a bug fix has a regression test that failed before it.
 - [ ] Code, identifiers, and comments are in English.
+- [ ] I agree my contribution is licensed under the [Sustainable Use License](../LICENSE) and I grant the maintainer relicensing rights (see [CONTRIBUTING.md](../CONTRIBUTING.md#licensing-of-contributions)).
 
 ## Screenshots
 
