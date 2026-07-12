@@ -40,8 +40,7 @@ is connected. RAG embeddings are generated locally with `nomic-embed-text`, so t
 pipeline can run offline and free.
 
 Architecture, conventions, and code standards live in a single source of truth:
-[`CLAUDE.md`](./CLAUDE.md). The original product specification is in
-[`project-docs.md`](./project-docs.md).
+[`CLAUDE.md`](./CLAUDE.md).
 
 ## Self-Hosting vs Maestro Cloud
 
@@ -311,8 +310,7 @@ maestro/
 ├── Caddyfile                        # single-origin reverse proxy + auto TLS
 ├── docs/DEPLOYMENT.md               # deployment guide
 ├── .env.example / .env.prod.example
-├── CLAUDE.md                        # Architecture & standards (single source of truth)
-└── project-docs.md                  # Original product requirements
+└── CLAUDE.md                        # Architecture & standards (single source of truth)
 ```
 
 ## Configuration
@@ -646,7 +644,6 @@ The Maestro name and logo are trademarks and are not covered by the license.
 
 <div align="center">
 
-Architecture and standards: [`CLAUDE.md`](./CLAUDE.md) · Product spec:
-[`project-docs.md`](./project-docs.md)
+Architecture and standards: [`CLAUDE.md`](./CLAUDE.md)
 
 </div>
