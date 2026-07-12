@@ -10,10 +10,21 @@
 # =========================================================================
 name: maestro
 
+# json-file is Docker's default driver, but the size caps require naming it
+# explicitly. 10m x 5 files per service caps the whole stack around ~550MB —
+# noise on this host, whereas unbounded logs eventually fill any disk.
+# Changing these values requires recreating the containers (`up -d` does it).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: maestro
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
@@ -33,6 +44,7 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
+    logging: *default-logging
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:?set MONGO_USER in .env.prod}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?set MONGO_PASSWORD in .env.prod}
@@ -62,6 +74,7 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.18.2
     restart: unless-stopped
+    logging: *default-logging
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY in .env.prod}
     volumes:
@@ -79,6 +92,7 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    logging: *default-logging
     command:
       - redis-server
       - --requirepass
@@ -110,11 +124,14 @@ services:
           memory: 192m
 
   # Embeddings only. RAG and document upload call this whatever chat provider
-  # the user picked; a chat model is NOT pulled here. See docs/DEPLOYMENT.md to
-  # opt into the free chat tier.
+  # the user picked; a chat model is NOT pulled here and OLLAMA_CHAT_ENABLED
+  # stays false, so the free tier rejects task starts with a clear error.
+  # Opting into the free chat tier (self-host) also requires raising the 2g
+  # limit below — a 9B model does not load inside it. See docs/DEPLOYMENT.md.
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - ollamadata:/root/.ollama
     healthcheck:
@@ -132,6 +149,7 @@ services:
   ollama-pull:
     image: ollama/ollama:latest
     restart: "no"
+    logging: *default-logging
     entrypoint: ["/bin/ollama"]
     command: ["pull", "${EMBEDDING_MODEL_NAME:-nomic-embed-text}"]
     environment:
@@ -148,6 +166,7 @@ services:
     build:
       context: ./backend
     restart: "no"
+    logging: *default-logging
     command: ["alembic", "upgrade", "head"]
     env_file: .env.prod
     depends_on:
@@ -159,6 +178,7 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
+    logging: *default-logging
     env_file: .env.prod
     # Lets FREE_MODEL_ENDPOINT reach an Ollama installed on the host itself.
     # That Ollama must bind 0.0.0.0 (OLLAMA_HOST=0.0.0.0), not loopback.
@@ -187,6 +207,7 @@ services:
     build:
       context: ./frontend
     restart: unless-stopped
+    logging: *default-logging
     environment:
       # /pricing and /templates are force-dynamic server components: they fetch
       # from inside this container, where a same-origin relative URL has no base.
@@ -201,6 +222,13 @@ services:
       # time like SITE_URL. `:-` on purpose: it must not break deployments
       # that never enable the analytics profile.
       UMAMI_WEBSITE_ID: ${UMAMI_WEBSITE_ID:-}
+      # Frontend Sentry project DSN (a *separate* Sentry project from the
+      # backend's SENTRY_DSN, which reaches the backend via env_file — two
+      # projects, one env file, hence the distinct variable name). Empty/unset
+      # = error tracking fully disabled: no SDK chunk is served, zero egress.
+      # Read at request/startup time like SITE_URL, never baked into the image.
+      SENTRY_DSN: ${FRONTEND_SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
     depends_on:
       - backend
     deploy:
@@ -217,6 +245,7 @@ services:
   umami-db-init:
     image: postgres:16-alpine
     restart: "no"
+    logging: *default-logging
     profiles: ["analytics"]
     environment:
       PGHOST: postgres
@@ -246,6 +275,7 @@ services:
   umami:
     image: ghcr.io/umami-software/umami:postgresql-v3.2.0
     restart: unless-stopped
+    logging: *default-logging
     profiles: ["analytics"]
     environment:
       DATABASE_URL: postgresql://umami:${UMAMI_DB_PASSWORD:-}@postgres:5432/umami
@@ -273,6 +303,7 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "80:80"
       - "443:443"

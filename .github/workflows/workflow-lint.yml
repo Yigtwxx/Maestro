@@ -1,0 +1,79 @@
+name: Workflow Lint
+
+# Meta-gate: keeps the CI configuration itself correct and safe. Runs on every
+# PR (not path-filtered) so all three checks can be marked "required" without a
+# path-filtered PR leaving them pending forever. actionlint/zizmor scan the whole
+# workflows dir and pass instantly when nothing changed; the conflict-marker scan
+# applies to every file, so it belongs on every PR anyway.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: workflow-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint
+        run: |
+          curl -sSfL -o download-actionlint.bash \
+            https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash
+          bash download-actionlint.bash 1.7.12
+
+      - name: Lint workflow files
+        run: ./actionlint -color
+
+  zizmor:
+    name: zizmor (workflow security)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Audit workflows
+        uses: zizmorcore/zizmor-action@192e21d79ab29983730a13d1382995c2307fbcaa # v0.5.7
+        with:
+          # Fail on genuine issues (script injection, unsafe triggers, excessive
+          # permissions); leave the low-severity nitpicks as advisory.
+          min-severity: medium
+          persona: regular
+          advanced-security: false
+
+  conflict-markers:
+    name: No merge conflict markers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Scan for leftover conflict markers
+        run: |
+          # Character-class patterns ([<]{7}) so this very file does not match
+          # itself. Only start/end markers are checked; a bare "=======" line is
+          # too common in prose to match safely.
+          if git grep -nIE '^([<]{7}|[>]{7}) ' -- .; then
+            echo "::error::Merge conflict markers found"
+            exit 1
+          fi
+          echo "No conflict markers found."

@@ -1,0 +1,12 @@
+# zizmor configuration.
+#
+# Accept tag-pinned actions (ref-pin) rather than demanding a commit hash for
+# every single `uses:`. Third-party actions in this repo are already pinned to
+# full commit SHAs; first-party actions/* and github/* stay on their major tag,
+# matching the repo convention. Every other zizmor audit (template-injection,
+# excessive-permissions, dangerous-triggers, ...) stays on at full strength.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": ref-pin

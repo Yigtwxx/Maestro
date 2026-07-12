@@ -1,0 +1,39 @@
+name: PR Lint
+
+# Enforce Conventional-Commits PR titles (see rules in the repo's commit
+# convention). Uses the plain pull_request event (not pull_request_target): the
+# title lives in the event payload, so a read-only token is enough and fork PRs
+# stay safe.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+concurrency:
+  group: pr-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  semantic-title:
+    name: Semantic PR title
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@0723387faaf9b38adef4775cd42cfd5155ed6017 # v5.5.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            refactor
+            test
+            docs
+            chore
+            build
+            ci
+            perf

@@ -5,10 +5,15 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # ready_for_review lets the draft-gated docker job run once a PR leaves draft.
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   backend:
@@ -68,8 +73,9 @@ jobs:
   docker:
     name: Docker (build verify)
     # On main the publish workflow builds and pushes these same images; here we
-    # only prove a pull request has not broken either Dockerfile.
-    if: github.event_name == 'pull_request'
+    # only prove a pull request has not broken either Dockerfile. Skipped on
+    # drafts (a draft can't merge anyway) and re-runs when marked ready.
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
