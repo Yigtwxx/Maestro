@@ -19,7 +19,6 @@ from alembic import op
 
 from app.core.constants import (
     PAYMENT_PROVIDER_MOCK,
-    TRIAL_DURATION_DAYS,
     SubscriptionPlan,
     SubscriptionStatus,
 )
@@ -31,6 +30,10 @@ branch_labels = None
 depends_on = None
 
 _LEGACY_FREE_TIER = "free"
+# Pinned to the value in force when this migration was authored. Kept as a local
+# literal so removing the trial constant from the codebase cannot break Alembic
+# history import. Later migration 0009 flips these grandfathered rows to inactive.
+_TRIAL_DAYS = 14
 
 
 def upgrade() -> None:
@@ -139,7 +142,7 @@ def _grandfather_existing_users() -> None:
         return
 
     now = datetime.now(UTC)
-    trial_end = now + timedelta(days=TRIAL_DURATION_DAYS)
+    trial_end = now + timedelta(days=_TRIAL_DAYS)
     subscriptions = sa.table(
         "subscriptions",
         sa.column("id", GUID()),
