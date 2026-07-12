@@ -79,7 +79,6 @@ Kullanıcı Promptu
 ```
 maestro/
 ├── CLAUDE.md                        # Bu dosya
-├── project-docs.md                  # Proje gereksinimleri
 │
 ├── frontend/                        # Next.js + React + TypeScript
 │   ├── src/
@@ -222,7 +221,6 @@ users
 ├── hashed_password
 ├── display_name
 ├── subscription_tier (starter | pro | scale)   ← aktif planın denormalize cache'i
-├── first_discount_used (bool)                  ← ilk ay %50 indirimi, kullanıcı başına bir kez
 ├── created_at
 └── updated_at
 
@@ -240,13 +238,13 @@ subscriptions                                   ← kullanıcı başına tek sat
 ├── id (UUID, PK)
 ├── user_id (FK → users, UNIQUE)
 ├── plan (starter | pro | scale)
-├── status (trialing | active | past_due | canceled | inactive)
+├── status (active | past_due | canceled | inactive)   ← trial yok; kayıt abonelik oluşturmaz
 ├── provider (mock | …)                         ← processor-agnostic
 ├── provider_subscription_id
 ├── provider_customer_id
 ├── current_period_start                        ← kota penceresinin çıpası
 ├── current_period_end
-├── trial_end
+├── trial_end                                   ← legacy, nullable, artık kullanılmıyor (0009)
 └── cancel_at_period_end
 
 payment_methods                                 ← ham PAN ASLA saklanmaz
@@ -471,8 +469,16 @@ MAX_REVIEW_ITERATIONS=3
 TASK_TIMEOUT_SECONDS=300
 
 # Ödeme sağlayıcı (yalnızca "mock" implement edildi; gerçek processor = yeni adapter)
-# Fiyat/kota/trial/indirim değerleri secret değil → constants.py'de tutulur.
+# Fiyat/kota değerleri secret değil → constants.py'de tutulur. Trial/indirim yok.
 PAYMENT_PROVIDER=mock
+
+# Observability (boş DSN = tamamen kapalı, sıfır egress)
+LOG_FORMAT=text                  # prod'da "json" (structured, satır başına obje)
+SENTRY_DSN=                      # backend Sentry projesi
+SENTRY_TRACES_SAMPLE_RATE=0.0
+SENTRY_ENVIRONMENT=              # boşsa ENVIRONMENT'a düşer
+# Frontend'in DSN'i AYRI bir Sentry projesidir; prod compose'ta
+# FRONTEND_SENTRY_DSN olarak verilir (backend'inki env_file ile gider).
 
 # Frontend: kanonik URL / sitemap / OG origin'i (şema dahil). Server-only,
 # request-time'da okunur; NEXT_PUBLIC_ DEĞİL (imaj domain-agnostik kalmalı).
@@ -520,12 +526,11 @@ SITE_URL=https://maestro.example.com
 - **Dev script'leri:** `scripts/dev.ps1` (Windows) + `scripts/dev.sh` (macOS/Linux) — infra + backend + frontend.
 
 ### Tur 3 — Tamamlandı (abonelik + kota)
-- **Planlar:** Free tier yok. `starter` $15 / `pro` $50 / `scale` $100 aylık; sırasıyla 500K / 3M / 10M token kotası. Yeni kayıt 14 gün `trialing` (Starter kotası) ile başlar; trial biterse `inactive` → görev başlatamaz (HTTP 402).
-- **İlk ay %50 indirimi:** Kullanıcı başına yalnızca bir kez, `users.first_discount_used` ile server-side garanti. İptal edip yeniden abone olmak indirimi geri kazandırmaz.
-- **Ödeme katmanı:** `services/payment/` — `PaymentProvider` protokolü + `MockPaymentProvider` (sıfır bağımlılık, sıfır network). Visa/Mastercard **şema** desteği: Luhn + BIN→marka tespiti. Stripe **kullanılmıyor**; gerçek processor (iyzico/PayTR/Adyen/Stripe) = tek yeni adapter dosyası, mevcut kod değişmez.
+- **Planlar:** Free tier yok, trial yok, indirim yok (bkz. aşağıdaki "Fiyatlandırma sadeleştirmesi" turu). `starter` $5 / `pro` $15 / `scale` $50 aylık; sırasıyla 500K / 3M / 10M token kotası. Yeni kayıt **abonelik oluşturmaz** → ürünü kullanmak (yerel Ollama modeli dahil, çünkü hosted'da o da sunulan bir hizmet) için tam fiyattan abone olmak şart; abonelik yoksa `POST /tasks` **HTTP 402**.
+- **Ödeme katmanı:** `services/payment/` — `PaymentProvider` protokolü + `MockPaymentProvider` (sıfır bağımlılık, sıfır network). Visa/Mastercard **şema** desteği: Luhn + BIN→marka tespiti. Stripe **kullanılmıyor**; gerçek processor (iyzico/PayTR/Adyen/Stripe) = tek yeni adapter dosyası, mevcut kod değişmez. `create_subscription`'ın `first_amount_cents`/`recurring_amount_cents` ayrımı korunur ama bugün ikisi eşittir (ilk dönem indirimi yok).
 - **Kota enforcement:** `POST /tasks` (tek giriş noktası) → `quota_service.enforce_can_start_task`. Pre-flight görevin maliyetini bilemez; yalnızca zaten limitte/üstündeyken bloklanır.
 - **Token muhasebesi düzeltmeleri:** `TokenMeter` adapter'ı tüm LLM çağrılarını (orchestrator, planner, subagent, reviewer, synthesis) sayar — eskiden sadece subagent'lar sayılıyordu (~%45 eksik). `_run_task` tamamen `try/finally` ile sarıldı: iptal/hata/timeout eden görevler de harcadıkları token'ı öder ve terminal duruma geçer.
-- **UI:** `/settings/billing` — kota göstergesi, plan grid'i (indirimli ilk ay), canlı Luhn + marka tespitli kart formu. Profil sayfasındaki mock plan seçici kaldırıldı.
+- **UI:** `/settings/billing` — kota göstergesi, plan grid'i (liste fiyatı), canlı Luhn + marka tespitli kart formu. Abonesiz kullanıcı (subscription 404) plan grid'ini görüp abone olur. Profil sayfasındaki mock plan seçici kaldırıldı.
 
 ### Tur 4 — Tamamlandı (hukuk, güven, silme hakkı)
 - **Legal sayfalar:** `/legal` hub + `/terms`, `/privacy` (KVKK+GDPR), `/security` (BYOK güven sayfası), `/acceptable-use`, `/cookies`. Metinler `frontend/src/lib/legal/` altında modül başına bir dosya; `LEGAL_DOCS` registry hem hub'ı hem footer'ı besler (drift imkânsız). Operatör bilgileri tek yerde: `lib/legal/config.ts`.
@@ -534,7 +539,7 @@ SITE_URL=https://maestro.example.com
 - **Hesap silme (GDPR Md.17 / KVKK Md.7):** `users.deletion_requested_at` tek kaynak. Talep → hesap anında kilitli (`ActiveUser` dep'i tüm ürün endpoint'lerinde 403; login/refresh çalışır ki self-servis geri alma mümkün olsun) → 30 gün içinde `POST /users/me/deletion/cancel` ile geri alınır → süre dolunca `python -m app.scripts.purge_deleted_accounts` (cron) kalıcı siler. Veri dışa aktarma: `GET /users/me/export` (Md.20).
 - **Düzeltilen iki erasure defect'i:** (1) `agent_logs` dokümanlarına `user_id` yazılmıyordu, purge filtresi sıfır doküman eşleştiriyordu — write path düzeltildi, eski satırlar `task_id` üzerinden siliniyor. (2) Qdrant vektörleri (`conversation_memories` + `document_chunks`) hiç silinmiyordu — `memory_service.purge_user_vectors` eklendi.
 - **Purge kontratı:** Sıra Mongo → Qdrant → **PG en son** (flag'i taşıyan satır, retry'ın çıpası). `purge_user_data` artık hata yutmuyor, fırlatıyor; sweep kullanıcı bazında yakalar, flag durur, sonraki run retry eder. Tüm işlemler idempotent. `marketplace_items` silinmez, `author_id` unset edilip anonimleştirilir.
-- **Abonelik:** Silme talebinde yalnızca **ACTIVE** abonelik iptal edilir; trial hiçbir şey tahsil etmediği için dokunulmaz (yoksa geri yükleyen kullanıcı ödeme duvarına çarpardı).
+- **Abonelik:** Silme talebinde yalnızca **ACTIVE** abonelik iptal edilir (abonesiz hesapta iptal edilecek bir şey yoktur). Geri yükleme cancelled planı diriltmez — kullanıcı yeniden abone olur.
 
 ### Tur 5 — Tamamlandı (deployment)
 - **Container'lar:** `backend/Dockerfile` (multi-stage `python:3.11-slim`, venv, non-root, urllib healthcheck; `alembic/`+`alembic.ini` imajda çünkü migration ve purge cron aynı imajı kullanır) ve `frontend/Dockerfile` (Next `output: 'standalone'`, iki stage de bookworm-slim — musl/glibc karışımı standalone'un trace ettiği native modülleri runtime'da bozar). `frontend/public/` bu repoda yok, runner stage onu kopyalamıyor.
@@ -564,14 +569,52 @@ SITE_URL=https://maestro.example.com
 - **Yapılmadı (bilinçli):** `(app)`/`(auth)` client layout'ları noindex-meta için bölünmedi — `robots.ts` disallow zaten crawl'ı engelliyor.
 - **Doğrulandı:** `type-check`/`lint`/`build` temiz; build tablosunda `sitemap.xml`/`robots.txt`/marketing sayfaları `ƒ`, görseller `○`; farklı `SITE_URL` ile `robots.txt` çıktısı değişiyor (runtime kanıtı); tüm görsel route'ları 200 + doğru content-type.
 
+### E-posta Doğrulama & Transactional E-posta — Tamamlandı
+- **Provider katmanı:** `services/email/` — `EmailProvider` protokolü + `ConsoleEmailProvider` (varsayılan; mesajı loglar, dev/self-host'ta doğrulama linki log'dan alınır, sıfır bağımlılık/network) + `ResendProvider` (httpx, retry+backoff; 429/5xx/network transient sayılır, kalıcı 4xx anında fırlar; API key ve ham response body asla loglanmaz). `PaymentProvider` deseninin birebir aynısı: yeni gerçek gönderici = tek adapter dosyası. Şablonlar `templates.py`'de (kod içine gömülü değil), her tip `(subject, html, text)` döner.
+- **Token modeli (migration 0008):** `users.email_verified` (bool, default false) + `email_tokens` tablosu. Yalnızca token'ın SHA-256 hash'i saklanır; ham token sadece e-posta linkinde yaşar. Tek kullanımlık (`used_at`), TTL constants.py'de (verify 24s / reset 60dk), aynı (user, purpose) için yeni token eskiyi geçersizler. Satır kullanıcıyla CASCADE silinir → purge kontratına ekstra adım gerekmez.
+- **`email_service`:** `issue_token`/`consume_token` commit'i çağırana bırakır (endpoint transaction'ıyla kompoze olur); `consume_token` bilinmeyen/kullanılmış/yanlış-amaç/süresi-dolmuş için ayrımsız `None` döner. `send_*` helper'ları **asla fırlatmaz** — provider hatası loglanır (yalnızca subject + exception sınıfı; alıcı adresi/token/gövde/traceback yok) ve endpoint devam eder.
+- **4 endpoint (auth router, `RATE_LIMIT_AUTH`):** `verify-email` (public, tek kullanım), `resend-verification` (auth; doğrulanmışsa yine 202, e-posta göndermez → durum sızmaz), `forgot-password` (her zaman 202, enumeration'a kapalı; silme-kilitli hesaplar için de çalışır), `reset-password` (invalid→400; başarıda parola + **tüm refresh session'ları iptal**). Register `start_trial` sonrası token'ı transaction içinde üretir, **commit sonrası** e-posta yollar (e-posta veriden önce gidemez / veriyle rollback olmaz).
+- **Yumuşak kapı:** `deps.VerifiedUser` (`ActiveUser` üzerine katmanlı) yalnız `POST /tasks` + `POST /api-keys`'e uygulanır; `email_verification_required and not user.email_verified` iken 403. `EMAIL_VERIFICATION_REQUIRED=false` ile self-host'ta kapatılır (e-posta yine gider). Diğer tüm route'lar `ActiveUser`'da kalır.
+- **Silme yaşam döngüsü e-postaları:** `request_deletion` yalnız taze yolda (idempotent tekrar sessiz) commit sonrası "silme planlandı" (purge tarihi gövdede) yollar; `cancel_deletion` yalnız `was_locked` iken "hesap geri yüklendi" yollar.
+- **Frontend:** `api.verifyEmail/resendVerification/forgotPassword/resetPassword` + `UserPublic.email_verified`; `(app)` layout'ta doğrulama banner'ı (`email_verified === false` iken, resend butonlu); register'da toast; login'de "Forgot password?" linki; 3 yeni sayfa `/verify-email` (StrictMode-güvenli `useRef` guard, tek kullanımlık token'ı iki kez yakmaz), `/forgot-password` (enumeration-nötr kopya), `/reset-password` (`useSearchParams` → `<Suspense>` sarmalı, uzunluk+eşleşme validasyonu).
+- **Config:** `EMAIL_PROVIDER` (console|resend), `RESEND_API_KEY`, `EMAIL_FROM`, `SITE_URL` (backend'in link kurmak için okuduğu kendi kopyası — frontend'in server-only `SITE_URL`'ünden ayrı), `EMAIL_VERIFICATION_REQUIRED`; prod'da `EMAIL_PROVIDER=resend` iken `RESEND_API_KEY` boşsa boot reddedilir. `.env.example` + `docs/DEPLOYMENT.md` güncellendi.
+- **Doğrulandı:** backend `pytest` 524 geçer, `ruff check`/`format` temiz; frontend `type-check`/`lint`/`build` temiz, build tablosunda 3 yeni route.
+
+### Gözlemlenebilirlik — Tamamlandı
+- **Zaten vardı (önceki iş, bu turda korundu):** backend Sentry (`core/observability.py`, env-gated, PII scrub) + stdlib `JsonLogFormatter` (`LOG_FORMAT=json`) + `/health` & `/health/ready` probe'ları. "Observability sıfır" tespiti bu tur itibarıyla tamamen kapandı.
+- **Frontend Sentry (`@sentry/nextjs@10`):** DSN **runtime'da** okunur (Umami/SITE_URL server-only deseninin birebiri: `lib/observability/config.ts` `server-only`, layout `connection()` ile dinamik, DSN prop → `SentryInit` client component) — imaj domain-agnostik kaldı, `NEXT_PUBLIC_*` yok. SDK **dynamic import**: DSN boşken Sentry chunk'ı tarayıcıya hiç inmez, sıfır egress. Server tarafı `src/instrumentation.ts` (`register` + `onRequestError`). 3 error boundary `reportError()` çağırır (`console.error` da kalır). **Bilinçli yok:** `withSentryConfig`/source-map upload (CI token istemez; client stack'ler minified), tunnel route (ad-blocker browser event'i düşürebilir; server yakalama etkilenmez), Replay (bundle+PII). `tracesSampleRate: 0`, `sendDefaultPii: false`. Compose'ta `FRONTEND_SENTRY_DSN` (backend'in `SENTRY_DSN`'i env_file ile gittiği için ayrı ad — iki ayrı Sentry projesi).
+- **Request-ID + access log:** `main.py`'de `@app.middleware("http")` — her istekte server-side üretilen id (`X-Request-ID` yanıt header'ı, inbound header'a güvenilmez: Caddy set etmiyor, forge edilebilir), `maestro.access` logger'ına `extra={request_id, method, path, status, duration_ms}` ile tek satır; `/health*` hariç. Unhandled exception'da access satırı middleware içindeki `try/except+raise` ile yazılır (handler ServerErrorMiddleware'de, middleware'in DIŞINDA — "sadeleştirme" diye kaldırma). Exception handler 500'e de `X-Request-ID` koyar. Sentry event'ine `set_tag("request_id")`.
+- **WS hata görünürlüğü:** `websocket.py` artık logger taşıyor; `_run_stream` sarmalayıcısı beklenmedik hatayı `logger.exception` (extra: task_id/user_id) + `close(1011)` ile yakalar (eskiden uvicorn içinde sessizce ölüyordu). `_receive_answers` bozuk JSON'da socket'i öldürmek yerine warning + continue.
+- **Seviye disiplini:** agent fallback'leri (orchestrator classification, plan retry, sibling subtask crash, synthesis, reviewer auto-approve) **WARNING** — Sentry `LoggingIntegration(event_level=ERROR)` olduğu için flood etmez; task başına tek Sentry event'i `task_service`'teki ERROR/exception olarak kalır. `task_service` log çağrılarına `extra={task_id, user_id}` eklendi (JSON loglar filtrelenebilir).
+- **Infra:** `docker-compose.prod.yml`'e `x-logging` anchor'ı (`json-file`, 10m×5, tüm servisler; stack toplamı ~550MB tavan — eskiden sınırsız büyüyordu); `Caddyfile`'a JSON access log (stdout, rotasyonu compose cap'leri yapar).
+- **Metrik YOK (bilinçli, korunan karar):** Prometheus/Grafana kurulmadı (RAM); uptime dış servisle (`/health` + `/health/ready`). Hata görünürlüğü Sentry + structured log + Mongo `task_sessions` üzerinden.
+- **Doğrulandı:** backend `pytest` 532 (524+8 yeni: request-context 5, WS logging 3), `ruff` temiz; frontend `type-check`/`lint`/`build` temiz. Kalan risk: standalone imajda `@sentry/nextjs` server trace'i yalnız Docker build kanıtlar — patlarsa `outputFileTracingIncludes` (aynı OG-image riski gibi, aşağıda).
+
+### Fiyatlandırma sadeleştirmesi — Tamamlandı (2026-07-12)
+- **Karar:** Free tier yok, 14 gün trial yok, %50 ilk-ay indirimi yok. Her şey (yerel Ollama modeli dahil — hosted'da o da sunulan bir hizmet) baştan abonelik gerektiriyor. Self-host tarafı değişmedi: kendi makinende tüm stack'i koşmak hâlâ bedava (§17 open-core).
+- **Fiyatlar:** `PLAN_PRICE_USD_CENTS` starter **$5** / pro **$15** / scale **$50** (eski 15/50/100). Kotalar (500K/3M/10M) aynı. Frontend'de hardcoded fiyat yok; hepsi `GET /billing/plans` üzerinden.
+- **Backend söküm:** `start_trial` + `first_month_price_cents` silindi; `resolve_effective_status`'tan trial dalı, `ACTIVE_SUBSCRIPTION_STATUSES`'tan `TRIALING` çıktı (enum üyesi legacy satırlar için kaldı). `register` artık abonelik oluşturmuyor → abonesiz `POST /tasks` **402**. `subscribe` her dönemi tam fiyattan tahsil ediyor. Schema'lardan `discounted_price_cents`/`discount_eligible`/`first_discount_available`/`trial_end` kaldırıldı.
+- **Migration `0009_remove_trial_and_discount`:** `users.first_discount_used` drop + kalan `status='trialing'` satırları → `inactive`. `trial_end` kolonu yerinde (nullable, kullanılmıyor). `0003`'ün `TRIAL_DURATION_DAYS` import'u Alembic history'yi kırmasın diye lokal literal `14`'e çevrildi.
+- **Frontend:** trial/indirim UI mantığı (`PlanGrid` discount, billing sayfası trial banner, `QuotaMeter` trialing) kaldırıldı; abonesiz kullanıcının billing sayfası 404'ü "henüz abone değil" olarak ele alıp plan grid'i gösteriyor. Tüm "free/ücretsiz" pazarlama+legal dili nötrlendi ("Get started", "local model"); CTA'lar, `LandingMetrics`, docs/architect/marketing/legal (terms 4.1/4.2, security, privacy TR+EN, acceptable-use) güncellendi. Google Gemini'nin gerçek "free tier"ı (üçüncü taraf) ve `TRIALING` enum'u bilerek bırakıldı.
+- **Doğrulandı:** backend `pytest` 524, `ruff` temiz; frontend `type-check`/`lint` (0 error)/`build` temiz.
+
+### Backend v2 (Tur 8–13) — Tamamlandı (2026-07-12)
+> Tasarım dokümanı (`docs/BACKEND-V2-DESIGN.md` + `.tr.md`) uygulandıktan sonra silindi; aşağısı özet, ayrıntı kod içindedir. Backend `pytest` 599 yeşil, `ruff` temiz, migration head `0011_model_prefs`.
+- **Tur 8 — Durable execution engine:** Postgres checkpoint'ler (`task_runs`/`task_checkpoints`/`task_questions`), lease + heartbeat + reconciliation sweep (crash → resume/finalize, asla "running"da asılı kalmaz), usage upsert-max + billable split, `cancelled`/`awaiting_answer`/`completed_with_warnings` statüleri. `task_engine` durable step loop (ROUTE→EXECUTE→FINALIZE, replay-on-resume); `task_service` public API'yi koruyup delege eder.
+- **Tur 9 — Distributed runtime:** Redis `EventBus` (pub/sub) + in-proc fallback (redis_url boşsa); `{v,seq,type,ts,...}` envelope; `agent_logs` seq-sıralı kaynak; WS `?after_seq` snapshot/cursor; HITL+cancel `maestro:ctrl:{id}` üzerinden cross-worker; `--workers N`.
+- **Tur 10 — LLM Layer v2:** `AdapterCapabilities/ToolDef/StreamEvent`; `structured_call` (extract_json yerine); **native tool-call loop** (directive fallback) + OpenAI tool_calls parse/serialize; **AGENT_DELTA streaming** (synthesis `chat_stream`); TokenMeter v2 (paylaşılan `_TokenCounter`, estimation); **AdapterPool** (rol başına model, tek sayaç; `ctx.role_adapter`); **ToolProvider seam**; model routing (`model_overrides`, `users.model_preferences`, tier default'lar).
+- **Tur 11 — Dynamic agent registry:** `resolve_domain_info(user_id, custom:{id})` — custom agent'lar gerçekten koşar (execution-time re-scan + `<agent_persona>` sandbox); orchestrator routing-catalog merge (routable custom agent'lara otomatik yönlendirme, cap 10); agent_configurations metadata + provenance (source/marketplace_item_id/security_scan) + Mongo index'ler.
+- **Tur 12 — Observability:** kendi trace altyapımız (`utils/tracing.py`, contextvars nesting, best-effort buffer flush, `tracing_enabled` ile kapalı=sıfır overhead); `TracedAdapter` (TokenMeter altında, OTel `gen_ai.*` + cost); `trace_spans` koleksiyonu + TTL; trace + `/dashboard/costs` endpoint'leri (`MODEL_PRICING`).
+- **Tur 13 — Quality & intelligence:** deterministic pre-review validators; structured `review_criteria` (weighted approval + `hard_fail`); partial-failure → `completed_with_warnings` + "Known gaps"; effort scaling (`RouteDecision.complexity`, `simple→1 üye + reviewer skip`); hierarchical token budget (`BudgetGuard` dalga + per-call, step-boundary quota re-check); subagent summaries + context compaction; `reviewer_fail_mode`.
+- **Bilinçli sadeleştirmeler (kod yorumlarında işaretli):** OpenAI `tool_call_id` strict round-trip basitleştirildi; context compaction deterministik (LLM'siz); `output_format_sections_present` validator yanlış-pozitif riskiyle bağlanmadı. **Frontend touchpoint'leri** (AGENT_DELTA birleştirme, trace waterfall/cost UI, rol-başına model ayarları) tasarım kapsamı dışıydı — sıradaki frontend işi.
+
 ### Sonraki turlar
-- **Backend v2 (Tur 8–13): `docs/BACKEND-V2-DESIGN.md`** — onaylı mimari tasarım: durable execution engine (Postgres checkpoint + reconciliation), Redis distributed runtime (multi-worker WS/HITL/cancel), LLM Layer v2 (streaming, native tools, structured outputs, model routing), dinamik agent registry (custom/marketplace agent'lar gerçekten koşar), kendi trace altyapımız, kalite katmanı (rubric reviewer, partial-failure, token bütçeleri). Sıradaki backend işi bu dokümandan başlar.
 - **OG image'ın Docker imajında smoke testi** (standalone `next/og` WASM/font trace riski — `next dev` kanıt değil; patlarsa `outputFileTracingIncludes`).
 - **Türkçe KVKK aydınlatma metni** (yapı `lib/legal/` locale'e hazır; şu an `/privacy`'de "coming soon" notu var). VERBİS kayıt eşiği kontrolü.
 - **Gerçek ödeme processor'ü.** Mock provider'a asla gerçek kart girilmemeli (`payment_methods` PCI kapsamına girer). Processor gelince `BILLING_LIVE=true`.
-- Transactional e-posta: silme onayı + purge öncesi hatırlatma (şu an kullanıcı hiç login olmazsa uyarı almıyor).
+- Purge öncesi hatırlatma e-postası (30 günlük süre dolmadan; şu an kullanıcı hiç login olmazsa uyarı almıyor). Doğrulama/reset/silme e-postaları eklendi; kalan tek transactional parça bu.
 - Purge sweep'te tekrarlayan hata için log/alarm.
-- Trial/abonelik süre bitişi için scheduler (şu an lazy, request anında hesaplanıyor).
+- Abonelik süre bitişi (cancelled → inactive) için scheduler (şu an lazy, request anında hesaplanıyor).
 - Marketplace değerlendirmeleri/puanlama; dinamik agent'ların görev akışında kullanımı.
 - GraphQL (gerekirse), long-polling fallback, i18n altyapısı.
 - Refresh token rotation; WS/task_service için test kapsamı.
