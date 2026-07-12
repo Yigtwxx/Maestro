@@ -73,3 +73,6 @@ desktop.ini
 # --- Docker volumes (local data) ---
 .data/
 
+
+# Superpowers SDD scratch (plans/specs live under docs/, this is transient)
+.superpowers/
