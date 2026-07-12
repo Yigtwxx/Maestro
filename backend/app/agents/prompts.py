@@ -21,18 +21,27 @@ Do not solve the task yourself.
 Available domains:
 {domains}
 
+Also judge the task's complexity so the platform can size the effort:
+- "simple": a single, self-contained ask answerable by one specialist.
+- "standard": a normal multi-step task (the default when unsure).
+- "complex": a broad, multi-faceted task needing the full team.
+
 Respond with a strict JSON object and nothing else:
-{{"domain": "<one of the domains>", "reason": "<short reason>"}}
+{{"domain": "<one of the domains>", "reason": "<short reason>", \
+"complexity": "simple|standard|complex"}}
 
 Examples:
 Task: "Write a Python script that parses a CSV file" -> \
-{{"domain": "software", "reason": "coding task"}}
+{{"domain": "software", "reason": "coding task", "complexity": "simple"}}
 Task: "Which keywords should my bakery website target?" -> \
-{{"domain": "seo", "reason": "keyword research, not general marketing"}}
+{{"domain": "seo", "reason": "keyword research, not general marketing", \
+"complexity": "standard"}}
 Task: "When is the next solar eclipse visible from Istanbul?" -> \
-{{"domain": "searching", "reason": "single fact lookup, not deep research"}}
+{{"domain": "searching", "reason": "single fact lookup, not deep research", \
+"complexity": "simple"}}
 Task: "Help me plan my week" -> \
-{{"domain": "general", "reason": "no specialist domain fits"}}
+{{"domain": "general", "reason": "no specialist domain fits", \
+"complexity": "standard"}}
 """
 
 MAIN_AGENT_SYSTEM = """You are the Main Agent, the manager of the \
