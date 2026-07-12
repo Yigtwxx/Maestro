@@ -12,6 +12,14 @@
 {$DOMAIN} {
 	encode zstd gzip
 
+	# Access logs to stdout as JSON — collected by Docker, rotated by the
+	# json-file caps in docker-compose.prod.yml. Uptime-monitor hits on /health*
+	# are logged too; filtering them at the proxy is not worth the config.
+	log {
+		output stdout
+		format json
+	}
+
 	# /health (liveness) and /health/ready (dependency readiness) are the
 	# backend's probes, exposed for uptime monitors — the /health* glob covers
 	# both. Everything the API owns lives under /api, including the two WebSocket
