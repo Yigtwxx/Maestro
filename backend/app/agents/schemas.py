@@ -11,14 +11,29 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.constants import DEFAULT_TASK_COMPLEXITY, TASK_COMPLEXITIES
+
 
 class RouteDecision(BaseModel):
-    """Orchestrator routing output: ``{"domain": ..., "reason": ...}``."""
+    """Orchestrator routing output: ``{"domain", "reason", "complexity"}``.
+
+    ``complexity`` drives effort scaling (Backend v2 §4.6/D15): the Main Agent
+    scales team size, reviewer use, and fallback-plan size to it.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     domain: str = ""
     reason: str = ""
+    complexity: str = DEFAULT_TASK_COMPLEXITY
+
+    @field_validator("complexity", mode="before")
+    @classmethod
+    def _normalize_complexity(cls, value: object) -> str:
+        """Coerce anything outside the known set to the standard tier."""
+        if isinstance(value, str) and value.strip().lower() in TASK_COMPLEXITIES:
+            return value.strip().lower()
+        return DEFAULT_TASK_COMPLEXITY
 
 
 class PlanAssignment(BaseModel):
@@ -56,10 +71,16 @@ class PlanResult(BaseModel):
 
 
 class ReviewVerdict(BaseModel):
-    """Reviewer output: ``{"approved": ..., "issues": [...], "retry_hints": [...]}``."""
+    """Reviewer output: ``{"approved": ..., "issues": [...], "retry_hints": [...]}``.
+
+    ``scores`` is optional forward-compatibility for structured, per-criterion
+    review (Backend v2 §4.6): a criterion-id → 0-2 map. Absent/older reviewers
+    simply omit it and the string-rubric path is unchanged.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     approved: bool = False
     issues: list[str] = Field(default_factory=list)
     retry_hints: list[str] = Field(default_factory=list)
+    scores: dict[str, int] = Field(default_factory=dict)
