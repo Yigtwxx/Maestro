@@ -7,11 +7,15 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.agents.prompts import CURRENT_DATE_LINE
 from app.core.constants import EventType, SubagentStatus
 from app.services.llm_service import LLMAdapter
+
+if TYPE_CHECKING:
+    from app.agents.domains import DomainInfo
+    from app.services.llm_service import AdapterPool
 
 # Emit callback: (event_type, payload) -> awaitable. Wired by the task service
 # to publish to the event bus and persist logs.
@@ -51,6 +55,25 @@ class AgentContext:
     max_original_request_views: int = 1
     # Concurrent subagents per task (wave execution in main_agent.py).
     max_parallel_subagents: int = 3
+    # Resolved domain agent for this task. Set for a custom (``custom:{id}``)
+    # agent — a one-member team adapted from the user's config; None means use
+    # the built-in catalog by domain string (registry.resolve_domain_info).
+    domain_info: DomainInfo | None = None
+    # Task-scoped token budget (Backend v2 §4.6/D19). None means unbounded; when
+    # set, the Main Agent stops launching new subagent waves once the metered
+    # spend crosses it. Read from the wrapping TokenMeter's running total.
+    token_budget: int | None = None
+    # Per-role adapter pool (Backend v2 §4.4). When set, ``role_adapter`` hands
+    # each agent role its own model (all sharing one token counter); when None,
+    # every role uses ``adapter``. Kept off in unit tests (they pass ``adapter``).
+    adapter_pool: AdapterPool | None = None
+
+    def role_adapter(self, role: str) -> LLMAdapter:
+        """The adapter an agent role should use: its pooled per-role model when a
+        pool is present, else the single ``adapter``."""
+        if self.adapter_pool is not None:
+            return self.adapter_pool.for_role(role)
+        return self.adapter
 
 
 def format_memory_block(items: list[str]) -> str:
@@ -111,12 +134,16 @@ class ReviewResult:
     approved: bool
     issues: list[str] = field(default_factory=list)
     retry_hints: list[str] = field(default_factory=list)
+    # True when the reviewer itself failed and was auto-approved under the
+    # "warn" fail mode — surfaced so the quality gate's silence is visible.
+    review_skipped: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "approved": self.approved,
             "issues": self.issues,
             "retry_hints": self.retry_hints,
+            "review_skipped": self.review_skipped,
         }
 
 
