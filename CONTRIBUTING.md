@@ -168,5 +168,8 @@ intentionally submitting a contribution for inclusion, you agree that:
    authorized to contribute it).
 
 Opening a pull request constitutes acceptance of these terms — there is no separate
-signature step or DCO sign-off. A formal CLA bot may be added later; these terms are the
-substance of it.
+signature step or DCO sign-off. In particular, the relicensing grant in point 2 lets the
+maintainer offer contributed code under a commercial license as part of the hosted
+Maestro service without asking again. These terms are the substance of a CLA; a formal
+CLA bot is intentionally not used while external contribution volume is low, and may be
+added later without changing what you agree to here.
