@@ -6,6 +6,10 @@ updates:
     directory: /backend
     schedule:
       interval: weekly
+    # Wait a few days after a release before bumping — dodges a freshly
+    # published compromised version. Security updates ignore the cooldown.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(backend)"
@@ -19,6 +23,8 @@ updates:
     directory: /frontend
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(frontend)"
@@ -31,6 +37,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "chore(ci)"
     groups:

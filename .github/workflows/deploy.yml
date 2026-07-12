@@ -14,6 +14,8 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+permissions: {}
+
 jobs:
   deploy:
     name: Roll out to production
@@ -23,18 +25,23 @@ jobs:
     steps:
       - name: Pull images and restart the stack
         uses: appleboy/ssh-action@v1
+        # Pass the tag through an env var instead of interpolating ${{ }} into
+        # the shell script — a dispatch input / ref name must never be expanded
+        # directly into a command (code-injection vector).
+        env:
+          IMAGE_TAG_INPUT: ${{ github.event.inputs.image_tag || github.ref_name }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: IMAGE_TAG_INPUT
           # The host holds docker-compose.prod.yml, Caddyfile and .env.prod;
           # none of them are in the repo. Migrations run on their own: the
           # `migrate` service must exit 0 before `backend` is allowed to start.
           script: |
             set -euo pipefail
             cd /opt/maestro
-            export IMAGE_TAG="${{ github.event.inputs.image_tag || github.ref_name }}"
-            export IMAGE_TAG="${IMAGE_TAG#v}"
+            export IMAGE_TAG="${IMAGE_TAG_INPUT#v}"
             echo "Rolling out ${IMAGE_TAG}"
             docker compose -f docker-compose.prod.yml --env-file .env.prod pull
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --remove-orphans
