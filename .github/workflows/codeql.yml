@@ -1,0 +1,55 @@
+name: CodeQL
+
+# Static analysis (SAST) for the two languages in this repo. Findings surface in
+# the Security tab; to make them block a PR, mark the "Code scanning results"
+# check required in branch protection (see SECURITY.md).
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**"]
+  pull_request:
+    branches: [main]
+    paths-ignore: ["**/*.md", "docs/**"]
+  schedule:
+    # Weekly, so new CodeQL query packs run against unchanged code too.
+    - cron: "27 3 * * 1"
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    # Skip the expensive scan on draft PRs; it still runs once the PR is marked
+    # ready and on every push to main.
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-and-quality
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}
