@@ -20,7 +20,7 @@ from app.agents.domains import (
     seo,
     software,
 )
-from app.agents.domains.base import DomainInfo, SubagentSpec
+from app.agents.domains.base import DomainInfo, ReviewCriterion, SubagentSpec
 
 DOMAIN_CATALOG: tuple[DomainInfo, ...] = (
     software.DOMAIN,
@@ -36,4 +36,4 @@ DOMAIN_CATALOG: tuple[DomainInfo, ...] = (
     general.DOMAIN,
 )
 
-__all__ = ["DOMAIN_CATALOG", "DomainInfo", "SubagentSpec"]
+__all__ = ["DOMAIN_CATALOG", "DomainInfo", "ReviewCriterion", "SubagentSpec"]
