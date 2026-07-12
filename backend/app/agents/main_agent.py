@@ -14,15 +14,16 @@ reviewer↔subagent retry loop by ``max_review_iterations`` (CLAUDE.md §9.2).
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents import budget
 from app.agents import reviewer as reviewer_agent
 from app.agents import subagent as subagent_worker
 from app.agents.base import (
     AgentContext,
     SubagentResult,
-    extract_json,
     format_memory_block,
     format_optional_block,
     with_current_date,
@@ -35,15 +36,21 @@ from app.agents.prompts import (
 )
 from app.agents.registry import SubagentSpec, get_domain_info
 from app.agents.schemas import PlanAssignment, PlanResult
+from app.agents.structured import structured_call
 from app.core.constants import (
     MAX_SUBTASKS,
+    MAX_SUBTASKS_BY_COMPLEXITY,
     PLAN_MAX_TOKENS,
+    STREAM_DELTA_FLUSH_CHARS,
     SYNTHESIS_MAX_TOKENS,
+    UPSTREAM_OUTPUT_MAX_CHARS,
     AgentRole,
     EventType,
     SubagentStatus,
 )
 from app.services.llm_service import ChatMessage, LLMError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -135,7 +142,7 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
 
     Returns ``("assignments", list[Assignment])`` or ``("question", str)``.
     """
-    info = get_domain_info(domain)
+    info = ctx.domain_info or get_domain_info(domain)
     clarify_rule = MAIN_AGENT_CLARIFY_RULE if allow_clarify else ""
     team_lines = "\n".join(f"- {member.id}: {member.role}" for member in info.team)
     system = MAIN_AGENT_SYSTEM.format(
@@ -151,19 +158,20 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
         ChatMessage("system", with_current_date(system)),
         ChatMessage("user", prompt),
     ]
-    plan: PlanResult | None = None
-    # One retry: local models fail strict-JSON planning often enough that a
-    # second attempt is cheap insurance before the role-scoped fallback.
-    for _ in range(2):
-        try:
-            response = await ctx.adapter.chat(
-                messages, temperature=0.2, max_tokens=PLAN_MAX_TOKENS
-            )
-            plan = PlanResult.model_validate(extract_json(response.content))
-            break
-        except (LLMError, ValueError):
-            continue
-    if plan is None:
+    # One retry with validation feedback: local models fail strict-JSON planning
+    # often enough that a second attempt is cheap insurance before the
+    # role-scoped fallback.
+    try:
+        plan = await structured_call(
+            ctx.role_adapter("main"),
+            messages,
+            PlanResult,
+            temperature=0.2,
+            max_tokens=PLAN_MAX_TOKENS,
+            max_attempts=2,
+        )
+    except (LLMError, ValueError):
+        logger.warning("planning failed twice; using role-scoped fallback briefs")
         return "assignments", _fallback_assignments(info.team)
 
     question = plan.question.strip()
@@ -172,7 +180,9 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
     return "assignments", _parse_assignments(plan.assignments, info.team)
 
 
-async def _assign(ctx: AgentContext, domain: str, prompt: str) -> list[Assignment]:
+async def _assign(
+    ctx: AgentContext, domain: str, prompt: str, *, max_subtasks: int = MAX_SUBTASKS
+) -> list[Assignment]:
     """Brief the team, optionally asking the user one clarifying question first."""
     can_ask = ctx.allow_questions and ctx.ask_user is not None
     kind, value = await _plan(ctx, domain, prompt, allow_clarify=can_ask)
@@ -190,12 +200,13 @@ async def _assign(ctx: AgentContext, domain: str, prompt: str) -> list[Assignmen
     assignments = (
         value
         if isinstance(value, list)
-        else _fallback_assignments(get_domain_info(domain).team)
+        else _fallback_assignments((ctx.domain_info or get_domain_info(domain)).team)
     )
-    # Loop protection: never exceed the configured iteration budget or the
-    # hard cap, whichever is lower (teams are defined within the cap). Deps
-    # are re-sanitized so nothing references a member the cap removed.
-    return _sanitize_depends_on(assignments[: min(ctx.max_iterations, MAX_SUBTASKS)])
+    # Loop protection + effort scaling: never exceed the iteration budget or the
+    # complexity-scaled cap, whichever is lower. Deps are re-sanitized so nothing
+    # references a member the cap removed.
+    limit = min(ctx.max_iterations, max_subtasks, MAX_SUBTASKS)
+    return _sanitize_depends_on(assignments[:limit])
 
 
 async def _run_with_review(
@@ -248,11 +259,32 @@ async def _run_with_review(
     return result
 
 
+def _skipped_over_budget(assignment: Assignment) -> SubagentResult:
+    """A subagent skipped because the task ran out of budget (surfaced as a
+    warning by the partial-failure path, not a hard error)."""
+    return SubagentResult(
+        status=SubagentStatus.ERROR,
+        data={
+            "error": "Task token budget exhausted; subtask skipped.",
+            "subtask": assignment.brief,
+            "member": assignment.member.id,
+        },
+    )
+
+
 def _teammate_note(assignment: Assignment, result: SubagentResult) -> str:
-    """Text a dependent member sees for this teammate's finished work."""
+    """Text a dependent member sees for this teammate's finished work.
+
+    A large deliverable is handed on as its concise ``summary`` (Backend v2
+    §4.6) so a downstream member's prompt is not flooded; short outputs pass
+    through in full.
+    """
     if result.status == SubagentStatus.ERROR:
         return f"(teammate {assignment.member.name} failed; work without their input)"
-    return str(result.data.get("output", ""))
+    output = str(result.data.get("output", ""))
+    if len(output) > UPSTREAM_OUTPUT_MAX_CHARS:
+        return str(result.data.get("summary", "")) or output
+    return output
 
 
 async def _run_assignments(
@@ -296,6 +328,14 @@ async def _run_assignments(
                     upstream=upstream,
                 )
             except Exception as exc:  # noqa: BLE001 — sibling subtasks must survive
+                logger.warning(
+                    "subtask crashed; sibling subtasks continue",
+                    exc_info=True,
+                    extra={
+                        "subtask_index": index,
+                        "member": assignment.member.id,
+                    },
+                )
                 result = SubagentResult(
                     status=SubagentStatus.ERROR,
                     data={
@@ -309,6 +349,17 @@ async def _run_assignments(
 
     remaining = list(enumerate(assignments))
     while remaining:
+        # Budget guard (D19): once the task's token cap is crossed, skip every
+        # remaining member instead of launching another wave. Skipped members
+        # surface as warnings and the engine goes straight to synthesis.
+        if budget.budget_exceeded(ctx):
+            logger.warning(
+                "task token budget exhausted; skipping %d remaining subtask(s)",
+                len(remaining),
+            )
+            for index, assignment in remaining:
+                results[index] = _skipped_over_budget(assignment)
+            break
         wave = [
             (index, a)
             for index, a in remaining
@@ -326,12 +377,18 @@ async def _run_assignments(
 
 
 async def _synthesize(
-    ctx: AgentContext, domain: str, prompt: str, outputs: list[tuple[str, str]]
+    ctx: AgentContext,
+    domain: str,
+    prompt: str,
+    outputs: list[tuple[str, str]],
+    known_gaps: list[str] | None = None,
 ) -> str:
     """Combine labeled subtask outputs into a single, domain-shaped answer.
 
     Each output is ``(member_name, text)`` — authorship labels measurably help
-    the synthesis model weigh and merge multi-member results.
+    the synthesis model weigh and merge multi-member results. ``known_gaps`` names
+    subtasks that failed so the answer acknowledges holes instead of papering
+    over them (D7).
     """
     if len(outputs) == 1:
         return outputs[0][1]
@@ -339,19 +396,51 @@ async def _synthesize(
     system = SYNTHESIS_SYSTEM.format(
         domain=domain,
         output_format=format_optional_block(
-            "Structure the final answer as:", get_domain_info(domain).output_format
+            "Structure the final answer as:",
+            (ctx.domain_info or get_domain_info(domain)).output_format,
         ),
     )
+    gaps_block = ""
+    if known_gaps:
+        listed = "\n".join(f"- {gap}" for gap in known_gaps)
+        gaps_block = (
+            "\n\nKnown gaps (these subtasks did not complete — acknowledge their "
+            f"absence, do not fabricate their results):\n{listed}"
+        )
     messages = [
         ChatMessage("system", with_current_date(system)),
-        ChatMessage("user", f"Original task:\n{prompt}\n\nSubtask results:\n{joined}"),
+        ChatMessage(
+            "user",
+            f"Original task:\n{prompt}\n\nSubtask results:\n{joined}{gaps_block}",
+        ),
     ]
     try:
-        response = await ctx.adapter.chat(
+        # Stream the final answer so the UI fills in token-by-token; the default
+        # chat_stream degrades a non-streaming provider to a single delta, so this
+        # is safe for every adapter and leaves token accounting unchanged.
+        chunks: list[str] = []
+        buffer = ""
+        async for event in ctx.role_adapter("synthesis").chat_stream(
             messages, temperature=0.3, max_tokens=SYNTHESIS_MAX_TOKENS
-        )
-        return response.content
+        ):
+            if event.kind == "text_delta" and event.text:
+                chunks.append(event.text)
+                buffer += event.text
+                if len(buffer) >= STREAM_DELTA_FLUSH_CHARS:
+                    await ctx.emit(
+                        EventType.AGENT_DELTA,
+                        {"role": AgentRole.MAIN.value, "text": buffer},
+                    )
+                    buffer = ""
+        if buffer:
+            await ctx.emit(
+                EventType.AGENT_DELTA, {"role": AgentRole.MAIN.value, "text": buffer}
+            )
+        return "".join(chunks) or joined
     except LLMError:
+        logger.warning(
+            "synthesis failed; returning joined subtask outputs", exc_info=True
+        )
         return joined
 
 
@@ -361,13 +450,24 @@ async def run(
     domain: str,
     prompt: str,
     reviewer_enabled: bool,
+    complexity: str = "complex",
 ) -> dict[str, Any]:
-    """Execute the full main-agent workflow and return a result payload."""
+    """Execute the full main-agent workflow and return a result payload.
+
+    ``complexity`` scales the effort (Backend v2 §4.6/D15): the team size is
+    capped per tier and a ``simple`` task skips the reviewer entirely. The
+    default is ``complex`` (no reduction) so a direct caller or a user who
+    picked the domain explicitly still gets the full team — only an actual
+    orchestrator classification narrows the effort.
+    """
+    max_subtasks = MAX_SUBTASKS_BY_COMPLEXITY.get(complexity, MAX_SUBTASKS)
+    if complexity == "simple":
+        reviewer_enabled = False
     await ctx.emit(
         EventType.NODE_UPDATE,
         {"role": AgentRole.MAIN.value, "state": "running", "domain": domain},
     )
-    assignments = await _assign(ctx, domain, prompt)
+    assignments = await _assign(ctx, domain, prompt, max_subtasks=max_subtasks)
     await ctx.emit(
         EventType.AGENT_MESSAGE,
         {
@@ -394,10 +494,24 @@ async def run(
         reviewer_enabled=reviewer_enabled,
     )
 
+    per_subtask = list(zip(assignments, results, strict=True))
     successful = [
         (a.member.name, str(r.data.get("output", "")))
-        for a, r in zip(assignments, results, strict=True)
+        for a, r in per_subtask
         if r.status != SubagentStatus.ERROR
+    ]
+    # Failed members are surfaced (not silently dropped): the task layer maps a
+    # partial failure to ``completed_with_warnings`` and the synthesis prompt
+    # acknowledges the gaps (D7).
+    failed_subtasks = [
+        {
+            "member_id": a.member.id,
+            "member_name": a.member.name,
+            "brief": a.brief,
+            "error": str(r.data.get("error", "")).strip(),
+        }
+        for a, r in per_subtask
+        if r.status == SubagentStatus.ERROR
     ]
     # Every subtask erroring (e.g. the chat model is unreachable) is a task
     # failure, not a success with an empty answer -- the caller marks the task
@@ -411,15 +525,14 @@ async def run(
         # task layer so the terminal log and the UI error say why, not just that
         # everything failed. Subtasks share one adapter, so the first is
         # representative.
-        reasons = [
-            str(r.data.get("error", "")).strip()
-            for r in results
-            if r.status == SubagentStatus.ERROR and r.data.get("error")
-        ]
+        reasons = [f["error"] for f in failed_subtasks if f["error"]]
         if reasons:
             failure_reason = reasons[0]
     else:
-        final_answer = await _synthesize(ctx, domain, prompt, successful)
+        known_gaps = [f"{f['member_name']}: {f['brief']}" for f in failed_subtasks]
+        final_answer = await _synthesize(
+            ctx, domain, prompt, successful, known_gaps=known_gaps
+        )
 
     await ctx.emit(
         EventType.NODE_UPDATE, {"role": AgentRole.MAIN.value, "state": "done"}
@@ -432,5 +545,6 @@ async def run(
         "subtasks": [r.to_dict() for r in results],
         "metadata": {"subtask_count": len(results)},
         "all_subtasks_failed": all_failed,
+        "failed_subtasks": failed_subtasks,
         "failure_reason": failure_reason,
     }
