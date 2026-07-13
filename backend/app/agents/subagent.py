@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import time
 
+from app.agents import budget
 from app.agents import tools as tool_directives
 from app.agents.base import (
     AgentContext,
@@ -36,6 +37,11 @@ from app.agents.prompts import (
 from app.agents.registry import SubagentSpec
 from app.agents.tools import TOOL_SPECS, ToolDirective, ToolSpec
 from app.core.constants import (
+    COMPACTION_KEEP_CHARS,
+    COMPACTION_THRESHOLD_TOKENS,
+    SUBAGENT_MAX_TOKENS,
+    SUBAGENT_SUMMARY_MAX_CHARS,
+    TOKEN_ESTIMATE_CHARS_PER_TOKEN,
     UPSTREAM_OUTPUT_MAX_CHARS,
     VIEW_ORIGINAL_REQUEST_ACTION,
     AgentRole,
@@ -77,6 +83,50 @@ def _tools_rule(ctx: AgentContext, specs: dict[str, ToolSpec]) -> str:
 
 
 async def run_subtask(
+    ctx: AgentContext,
+    *,
+    domain: str,
+    member: SubagentSpec,
+    brief: str,
+    index: int,
+    review_hints: list[str] | None = None,
+    objective: str = "",
+    upstream: list[tuple[str, str]] | None = None,
+) -> SubagentResult:
+    """Execute one brief as a team member, wrapped in an ``agent:{id}`` trace
+    span (Backend v2 §4.5). The span records failure without raising: a subtask
+    error is returned as a structured result, so the span is flagged here."""
+    from app.core.constants import SpanKind, SpanStatus
+    from app.utils import tracing
+
+    async with tracing.tracer.span(
+        f"agent:{member.id}",
+        SpanKind.AGENT,
+        **{
+            "maestro.role": AgentRole.SUBAGENT.value,
+            "maestro.member_id": member.id,
+            "maestro.domain": domain,
+            "maestro.index": index,
+        },
+    ) as span:
+        result = await _run_subtask(
+            ctx,
+            domain=domain,
+            member=member,
+            brief=brief,
+            index=index,
+            review_hints=review_hints,
+            objective=objective,
+            upstream=upstream,
+        )
+        if result.status == SubagentStatus.ERROR:
+            span.set_status(
+                SpanStatus.ERROR.value, str(result.data.get("error", ""))[:200]
+            )
+        return result
+
+
+async def _run_subtask(
     ctx: AgentContext,
     *,
     domain: str,
@@ -159,7 +209,14 @@ async def run_subtask(
         metadata[spec.metadata_key] = usage.get(action, 0)
     result = SubagentResult(
         status=SubagentStatus.SUCCESS,
-        data={"subtask": brief, "output": response.content, "member": member.id},
+        data={
+            "subtask": brief,
+            "output": response.content,
+            "member": member.id,
+            # A concise view handed to dependent members (Backend v2 §4.6); the
+            # full output stays in ``output`` for synthesis.
+            "summary": truncate_text(response.content, SUBAGENT_SUMMARY_MAX_CHARS),
+        },
         metadata=metadata,
     )
     await ctx.emit(
@@ -190,11 +247,35 @@ async def _chat_with_tools(
     ``max_tool_calls + max_original_request_views + 2`` LLM calls per run.
     Returns ``(final_response, total_tokens, usage_per_tool)``.
     """
+    # Providers with real function calling take the native path; everyone else
+    # (Ollama/qwen by default) uses the provider-agnostic directive loop below.
+    if specs and getattr(
+        ctx.role_adapter("subagent").capabilities, "native_tools", False
+    ):
+        return await _native_tool_loop(
+            ctx, messages, member=member, index=index, specs=specs
+        )
     enabled = frozenset(specs)
     total_tokens = 0
     usage: dict[str, int] = {}
     while True:
-        response = await ctx.adapter.chat(messages, temperature=0.3)
+        # Per-call budget guard (D19): if the task's token cap is already spent,
+        # force one final answer instead of another tool round-trip.
+        if budget.budget_exceeded(ctx):
+            messages.append(
+                ChatMessage(
+                    "user", "Token budget exhausted. Give your final answer now."
+                )
+            )
+            response = await ctx.role_adapter("subagent").chat(
+                messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
+            )
+            total_tokens += response.tokens_used
+            return response, total_tokens, usage
+        messages = _compact_transcript(messages)
+        response = await ctx.role_adapter("subagent").chat(
+            messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
+        )
         total_tokens += response.tokens_used
         directive = (
             tool_directives.parse_directive(response.content, enabled)
@@ -225,7 +306,9 @@ async def _chat_with_tools(
                     "user", "Tool budget exhausted. Give your final answer now."
                 )
             )
-            response = await ctx.adapter.chat(messages, temperature=0.3)
+            response = await ctx.role_adapter("subagent").chat(
+                messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
+            )
             total_tokens += response.tokens_used
             return response, total_tokens, usage
 
@@ -240,9 +323,116 @@ async def _chat_with_tools(
         messages.append(ChatMessage("user", feedback))
 
 
+async def _native_tool_loop(
+    ctx: AgentContext,
+    messages: list[ChatMessage],
+    *,
+    member: SubagentSpec,
+    index: int,
+    specs: dict[str, ToolSpec],
+) -> tuple[LLMResponse, int, dict[str, int]]:
+    """Native function-calling variant of the directive loop.
+
+    Passes the tools as :class:`ToolDef`s and reacts to ``response.tool_calls``;
+    a reply with no tool calls is the final answer. The same per-tool and total
+    budgets as the directive loop apply, and the token-budget guard forces a
+    final answer when the task cap is spent. Tool results are fed back as ``tool``
+    messages. Falls back to the directive path implicitly (the caller only routes
+    here when the adapter advertises ``native_tools``).
+    """
+    tool_defs = tool_directives.tool_defs_for(specs)
+    total_tokens = 0
+    usage: dict[str, int] = {}
+
+    async def _final() -> tuple[LLMResponse, int, dict[str, int]]:
+        response = await ctx.role_adapter("subagent").chat(
+            messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
+        )
+        return response, total_tokens + response.tokens_used, usage
+
+    while True:
+        if budget.budget_exceeded(ctx):
+            messages.append(
+                ChatMessage(
+                    "user", "Token budget exhausted. Give your final answer now."
+                )
+            )
+            return await _final()
+        messages = _compact_transcript(messages)
+        response = await ctx.role_adapter("subagent").chat(
+            messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS, tools=tool_defs
+        )
+        total_tokens += response.tokens_used
+        if not response.tool_calls:
+            return response, total_tokens, usage
+        messages.append(ChatMessage("assistant", response.content))
+        for call in response.tool_calls:
+            spec = specs.get(call.name)
+            if spec is None:
+                messages.append(ChatMessage("tool", f"Unknown tool: {call.name}"))
+                continue
+            executable_calls = sum(
+                count
+                for action, count in usage.items()
+                if action != VIEW_ORIGINAL_REQUEST_ACTION
+            )
+            over_tool = usage.get(call.name, 0) >= _tool_budget(ctx, call.name, specs)
+            over_total = (
+                call.name != VIEW_ORIGINAL_REQUEST_ACTION
+                and executable_calls >= ctx.max_tool_calls
+            )
+            if over_tool or over_total:
+                messages.append(ChatMessage("tool", "Tool budget exhausted."))
+                continue
+            directive = ToolDirective(action=call.name, args=call.arguments)
+            usage[call.name] = usage.get(call.name, 0) + 1
+            await _emit_tool(
+                ctx, member=member, index=index, directive=directive, specs=specs
+            )
+            feedback = await _execute(directive, specs)
+            await _emit_tool(
+                ctx,
+                member=member,
+                index=index,
+                directive=directive,
+                specs=specs,
+                done=True,
+            )
+            messages.append(ChatMessage("tool", feedback))
+
+
+def _compact_transcript(messages: list[ChatMessage]) -> list[ChatMessage]:
+    """Collapse older tool exchanges once the transcript grows too large (§4.6).
+
+    Keeps the system prompt, the original brief, and the two most recent turns;
+    the middle is replaced by one truncated summary note. Deterministic (no LLM
+    call), so a subagent's token accounting is unaffected. A no-op below the
+    threshold and for short transcripts (nothing to collapse).
+    """
+    limit = COMPACTION_THRESHOLD_TOKENS * TOKEN_ESTIMATE_CHARS_PER_TOKEN
+    if len(messages) <= 4 or sum(len(m.content) for m in messages) <= limit:
+        return messages
+    head, tail = messages[:2], messages[-2:]
+    middle = "\n".join(m.content for m in messages[2:-2])
+    note = ChatMessage(
+        "system",
+        "[Earlier tool exchanges, summarized to save space]:\n"
+        + truncate_text(middle, COMPACTION_KEEP_CHARS),
+    )
+    return [*head, note, *tail]
+
+
 async def _execute(directive: ToolDirective, specs: dict[str, ToolSpec]) -> str:
     """Run one directive and return the prompt block to feed back."""
-    return await specs[directive.action].executor(directive)
+    from app.core.constants import SpanKind
+    from app.utils import tracing
+
+    async with tracing.tracer.span(
+        f"tool:{directive.action}",
+        SpanKind.TOOL,
+        **{"maestro.tool.action": directive.action},
+    ):
+        return await specs[directive.action].executor(directive)
 
 
 async def _emit_tool(
@@ -265,7 +455,7 @@ async def _emit_tool(
         "content": spec.describe(directive, done),
     }
     if spec.event_arg:
-        payload[spec.event_arg] = directive.args[spec.event_arg]
+        payload[spec.event_arg] = directive.args.get(spec.event_arg, "")
     await ctx.emit(EventType.AGENT_MESSAGE, payload)
 
 
