@@ -53,6 +53,27 @@ class Settings(BaseSettings):
     # --- App ---
     environment: str = "development"
     log_level: str = "INFO"
+    # "text" (default) keeps the human-readable basicConfig format for local dev;
+    # "json" emits one JSON object per line for log aggregation in production.
+    log_format: str = "text"
+
+    # --- Observability (Sentry, error tracking) ---
+    # Empty DSN disables Sentry entirely (dev/test add no extra dependency at
+    # runtime). Tracing/APM starts off (sample_rate 0.0) to protect the free-tier
+    # quota and single-host RAM. sentry_environment falls back to `environment`.
+    sentry_dsn: str = ""
+    sentry_traces_sample_rate: float = 0.0
+    sentry_environment: str = ""
+
+    # --- Observability (own execution tracing, Backend v2 §4.5) ---
+    # Off by default: when on, the engine records OTel-shaped spans to the Mongo
+    # `trace_spans` collection (best-effort — a Mongo hiccup never fails a task)
+    # and the trace/cost endpoints have data to serve. Adds no network egress:
+    # spans stay in the same Mongo the app already uses.
+    tracing_enabled: bool = False
+    # Trace spans are dropped by a MongoDB TTL index this many days after
+    # creation (independent of task_retention_days: traces are heavier).
+    trace_retention_days: int = Field(default=30, ge=1)
 
     # --- Databases ---
     postgres_url: str = "postgresql+asyncpg://maestro:maestro@localhost:5433/maestro"
@@ -91,9 +112,30 @@ class Settings(BaseSettings):
     # decisions, not deployment config.
     payment_provider: str = "mock"
 
+    # --- Transactional email ---
+    # "console" logs messages (dev/self-host default, zero dependencies);
+    # "resend" sends through the Resend HTTP API. Send failures never fail the
+    # calling endpoint. Prices of nothing: templates/TTLs live in constants.py.
+    email_provider: str = "console"
+    resend_api_key: str = ""
+    email_from: str = "Maestro <noreply@maestro.example.com>"
+    # Base URL for action links inside emails (verification, password reset).
+    # The frontend's SITE_URL is a separate, frontend-container-only variable;
+    # the backend reads its own copy because emails are built server-side.
+    site_url: str = "http://localhost:3000"
+    # Soft gate: unverified accounts get 403 on task start and API-key create.
+    # Self-hosters may disable it; verification emails still go out.
+    email_verification_required: bool = True
+
     # --- Free / local model (Ollama, OpenAI-compatible) ---
     free_model_endpoint: str = "http://localhost:11434/v1"
     free_model_name: str = "qwen3.5:9b"
+    # Whether this deployment actually serves a chat model at
+    # free_model_endpoint. Hosted instances set this to false (the prod ollama
+    # service pulls only the embedding model), which turns task starts on the
+    # local model into an explicit 400 instead of a task whose every subtask
+    # fails. Embeddings are unaffected — see embedding_endpoint below.
+    ollama_chat_enabled: bool = True
     # Embeddings are needed by RAG and document upload whatever chat provider the
     # user picked, so they get their own endpoint: a deployment can serve only
     # nomic-embed-text without also hosting a chat model. Falls back to
@@ -103,7 +145,13 @@ class Settings(BaseSettings):
     embedding_dim: int = 768
 
     # --- Gemini (BYOK, free tier; OpenAI-compatible endpoint) ---
-    gemini_model_name: str = "gemini-3.5-flash"
+    # Must be a valid Google model id, else every call 404s and (with Ollama
+    # unavailable) the whole task fails with "all subtasks failed". The
+    # "-latest" alias tracks the newest Flash release, so it survives model
+    # retirements (gemini-2.5-flash started 404ing before its announced
+    # shutdown date). Pin a stable id via GEMINI_MODEL_NAME if deterministic
+    # behavior matters more than availability.
+    gemini_model_name: str = "gemini-flash-latest"
 
     # --- Web search (ddgs / DuckDuckGo, free, no API key) ---
     web_search_enabled: bool = True
@@ -124,6 +172,19 @@ class Settings(BaseSettings):
     code_execution_cpus: str = "1"
     code_execution_max_uses_per_subtask: int = 3
 
+    # --- LLM layer v2 ---
+    # Whether the local Ollama model is driven with native function-calling.
+    # Off by default: qwen-class local models are unreliable at native tools, so
+    # the directive/extract_json protocol stays the default for Ollama.
+    ollama_native_tools: bool = False
+
+    # --- Quality (reviewer) ---
+    # What the Reviewer does when *it* fails (LLMError / unparseable verdict):
+    # "approve" (silent pass, legacy), "warn" (pass but flag review_skipped —
+    # default), or "reject" (fail the check). A flaky model no longer silently
+    # turns the quality gate into a no-op (Backend v2 §4.6/D8).
+    reviewer_fail_mode: str = "warn"
+
     # --- Subagent execution ---
     # Concurrent subagents per task (protects local Ollama queue depth).
     subagent_max_parallel: int = 3
@@ -139,12 +200,22 @@ class Settings(BaseSettings):
 
     # --- Retention ---
     # Task sessions and agent logs are dropped by a MongoDB TTL index this many
-    # days after creation. Dashboard metrics only cover this window.
-    task_retention_days: int = Field(default=7, ge=1)
+    # days after creation. Dashboard metrics only cover this window, and it must
+    # stay >= TREND_WINDOW_DAYS or the oldest sparkline days read as zero.
+    task_retention_days: int = Field(default=30, ge=1)
 
     # --- LLM HTTP client timeouts ---
     llm_request_timeout_seconds: float = 180.0
     llm_connect_timeout_seconds: float = 10.0
+
+    # --- Custom LLM endpoint SSRF guard ---
+    # A user-supplied ``custom`` provider stores an arbitrary base_url the
+    # backend then POSTs to server-side. With this on (default), that URL must
+    # be http(s), credential-free, and resolve only to globally-routable
+    # addresses — blocking probes of cloud metadata and internal services from
+    # a hosted deployment. Turn OFF only for a fully self-hosted stack where the
+    # custom endpoint legitimately points at a private host (e.g. localhost).
+    llm_ssrf_guard_enabled: bool = True
 
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -179,6 +250,8 @@ class Settings(BaseSettings):
             problems.append(
                 "API_KEY_MASTER_KEY must decode to 32 bytes (base64/hex/utf-8)"
             )
+        if self.email_provider == "resend" and not self.resend_api_key:
+            problems.append("RESEND_API_KEY must be set when EMAIL_PROVIDER=resend")
         if problems:
             raise ValueError(
                 "Insecure production configuration: " + "; ".join(problems)
