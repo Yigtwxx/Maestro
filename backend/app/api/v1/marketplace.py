@@ -6,22 +6,33 @@ public landing page and returns previews only — never a system prompt.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.constants import (
     RATE_LIMIT_PUBLIC,
     RATE_LIMIT_READ,
     RATE_LIMIT_WRITE,
+    REVIEWS_PAGE_SIZE_DEFAULT,
+    REVIEWS_PAGE_SIZE_MAX,
+    ReportTarget,
 )
 from app.core.deps import ActiveUser
 from app.schemas.agent import AgentConfigPublic
+from app.schemas.auth import DetailResponse
 from app.schemas.marketplace import (
     MarketplaceItemPreview,
     MarketplaceItemPublic,
     MarketplacePublish,
+    MarketplaceReportSubmit,
+    MarketplaceReviewList,
+    MarketplaceReviewPublic,
+    MarketplaceReviewSubmit,
 )
-from app.services import marketplace_service
-from app.services.marketplace_service import MarketplaceSecurityError
+from app.services import marketplace_service, moderation_service
+from app.services.marketplace_service import (
+    MarketplaceReviewForbiddenError,
+    MarketplaceSecurityError,
+)
 from app.utils.rate_limiter import rate_limit
 
 router = APIRouter(prefix="/marketplace", tags=["marketplace"])
@@ -98,7 +109,91 @@ async def install_item(item_id: str, user: ActiveUser) -> dict:
     return agent
 
 
-@router.get("/{item_id}/reviews", dependencies=[_read_rate_limit])
-async def item_reviews(item_id: str, user: ActiveUser) -> list[dict]:
-    """Return reviews for an item (ratings arrive in a later round)."""
-    return await marketplace_service.reviews(item_id)
+@router.get(
+    "/{item_id}/reviews",
+    response_model=MarketplaceReviewList,
+    dependencies=[_read_rate_limit],
+)
+async def item_reviews(
+    item_id: str,
+    user: ActiveUser,
+    limit: int = Query(
+        default=REVIEWS_PAGE_SIZE_DEFAULT, ge=1, le=REVIEWS_PAGE_SIZE_MAX
+    ),
+    offset: int = Query(default=0, ge=0),
+) -> dict:
+    """Return one page of an item's reviews plus the caller's own review."""
+    page = await marketplace_service.list_reviews(
+        item_id, user.id, limit=limit, offset=offset
+    )
+    if page is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Item not found."
+        )
+    return page
+
+
+@router.post(
+    "/{item_id}/reviews",
+    response_model=MarketplaceReviewPublic,
+    dependencies=[_write_rate_limit],
+)
+async def submit_review(
+    item_id: str, payload: MarketplaceReviewSubmit, user: ActiveUser
+) -> dict:
+    """Create or replace the caller's review of an item (one per user).
+
+    Responds 200 rather than 201: the write is an upsert, so a repeat call
+    replaces the existing review instead of creating a second one.
+    """
+    try:
+        review = await marketplace_service.submit_review(user.id, item_id, payload)
+    except MarketplaceReviewForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
+    if review is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Item not found."
+        )
+    return review
+
+
+@router.post(
+    "/{item_id}/report",
+    response_model=DetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[_write_rate_limit],
+)
+async def report_item(
+    item_id: str, payload: MarketplaceReportSubmit, user: ActiveUser
+) -> DetailResponse:
+    """Flag an item for moderator review (one open report per user per item)."""
+    if await marketplace_service.get_item(item_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Item not found."
+        )
+    await moderation_service.submit_report(
+        user.id, ReportTarget.ITEM, item_id, payload.reason, payload.note
+    )
+    return DetailResponse(detail="Report submitted for review. Thank you.")
+
+
+@router.post(
+    "/reviews/{review_id}/report",
+    response_model=DetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[_write_rate_limit],
+)
+async def report_review(
+    review_id: str, payload: MarketplaceReportSubmit, user: ActiveUser
+) -> DetailResponse:
+    """Flag a review for moderator review (one open report per user per review)."""
+    if not await marketplace_service.review_exists(review_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Review not found."
+        )
+    await moderation_service.submit_report(
+        user.id, ReportTarget.REVIEW, review_id, payload.reason, payload.note
+    )
+    return DetailResponse(detail="Report submitted for review. Thank you.")
