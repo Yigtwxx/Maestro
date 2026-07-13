@@ -52,11 +52,9 @@ async def _to_public(
         status=billing_service.resolve_effective_status(subscription),
         current_period_start=subscription.current_period_start,
         current_period_end=subscription.current_period_end,
-        trial_end=subscription.trial_end,
         cancel_at_period_end=subscription.cancel_at_period_end,
         used_tokens=snapshot.used_tokens,
         quota_tokens=snapshot.quota_tokens,
-        first_discount_available=not user.first_discount_used,
         payment_method=(
             PaymentMethodPublic.model_validate(payment_method)
             if payment_method is not None
@@ -67,16 +65,11 @@ async def _to_public(
 
 @router.get("/plans", response_model=list[PlanPublic], dependencies=[_read_rate_limit])
 async def list_plans(user: ActiveUser) -> list[PlanPublic]:
-    """The three paid plans, priced for this user's discount eligibility."""
-    discount_eligible = not user.first_discount_used
+    """The three paid plans at list price."""
     return [
         PlanPublic(
             plan=plan,
             price_cents=PLAN_PRICE_USD_CENTS[plan.value],
-            discounted_price_cents=billing_service.first_month_price_cents(
-                plan.value, discount_eligible=discount_eligible
-            ),
-            discount_eligible=discount_eligible,
             quota_tokens=PLAN_MONTHLY_TOKEN_QUOTA[plan.value],
             currency=BILLING_CURRENCY,
         )
@@ -112,6 +105,9 @@ async def get_subscription(user: ActiveUser, db: DbSession) -> SubscriptionPubli
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=NO_SUBSCRIPTION_DETAIL
         )
+    # Roll the window forward if the period has elapsed, so the displayed period
+    # and quota reflect the current billing cycle rather than a stale one.
+    subscription = await billing_service.sync_billing_period(db, subscription)
     return await _to_public(db, user, subscription)
 
 
