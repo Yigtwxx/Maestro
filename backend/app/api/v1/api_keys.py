@@ -11,12 +11,14 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.core.constants import RATE_LIMIT_READ, RATE_LIMIT_WRITE
-from app.core.deps import ActiveUser, DbSession
+from app.core.config import settings
+from app.core.constants import RATE_LIMIT_READ, RATE_LIMIT_WRITE, LLMProvider
+from app.core.deps import ActiveUser, DbSession, VerifiedUser
 from app.core.security import encrypt_secret, mask_secret
 from app.models.api_key import ApiKey
 from app.schemas.api_key import ApiKeyCreate, ApiKeyPublic
 from app.utils.rate_limiter import rate_limit
+from app.utils.url_guard import check_public_url
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
@@ -38,9 +40,24 @@ async def list_api_keys(user: ActiveUser, db: DbSession) -> list[ApiKey]:
     dependencies=[_write_rate_limit],
 )
 async def create_api_key(
-    payload: ApiKeyCreate, user: ActiveUser, db: DbSession
+    payload: ApiKeyCreate, user: VerifiedUser, db: DbSession
 ) -> ApiKey:
     """Store a new encrypted API key for the current user."""
+    # A custom endpoint is a server-side SSRF sink: the backend later POSTs to
+    # this base_url. Reject private/internal/metadata hosts at creation (the
+    # request-time guard in llm_service closes the DNS-rebinding window).
+    if (
+        payload.provider is LLMProvider.CUSTOM
+        and settings.llm_ssrf_guard_enabled
+        and payload.base_url is not None
+    ):
+        reason = await check_public_url(payload.base_url)
+        if reason is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Custom endpoint rejected: {reason}.",
+            )
+
     api_key = ApiKey(
         user_id=user.id,
         provider=payload.provider.value,
@@ -48,6 +65,8 @@ async def create_api_key(
         label=payload.label,
         key_hint=mask_secret(payload.key),
         is_active=True,
+        base_url=payload.base_url,
+        model=payload.model,
     )
     db.add(api_key)
     await db.commit()
