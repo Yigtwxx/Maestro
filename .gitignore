@@ -73,6 +73,9 @@ desktop.ini
 # --- Docker volumes (local data) ---
 .data/
 
+# --- Local backup-script test output (scripts/backup.sh) ---
+.backups/
+
 
 # Superpowers SDD scratch (plans/specs live under docs/, this is transient)
 .superpowers/
