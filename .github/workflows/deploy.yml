@@ -23,6 +23,21 @@ jobs:
     # Configure required reviewers on this environment to gate the rollout.
     environment: production
     steps:
+      # backup.sh is the one host file that comes from the repo; keep it in
+      # sync on every rollout. First-time placement (before any tagged deploy)
+      # is the manual copy in docs/DEPLOYMENT.md "Place the deployment files".
+      - uses: actions/checkout@v4
+
+      - name: Sync backup script to host
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: scripts/backup.sh
+          target: /opt/maestro/
+          strip_components: 1
+
       - name: Pull images and restart the stack
         uses: appleboy/ssh-action@v1
         # Pass the tag through an env var instead of interpolating ${{ }} into
@@ -35,14 +50,16 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           envs: IMAGE_TAG_INPUT
-          # The host holds docker-compose.prod.yml, Caddyfile and .env.prod;
-          # none of them are in the repo. Migrations run on their own: the
+          # The host holds docker-compose.prod.yml, Caddyfile and .env.prod
+          # (host-managed, not in the repo) plus backup.sh (synced above).
+          # Migrations run on their own: the
           # `migrate` service must exit 0 before `backend` is allowed to start.
           script: |
             set -euo pipefail
             cd /opt/maestro
             export IMAGE_TAG="${IMAGE_TAG_INPUT#v}"
             echo "Rolling out ${IMAGE_TAG}"
+            chmod +x backup.sh
             docker compose -f docker-compose.prod.yml --env-file .env.prod pull
             docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --remove-orphans
             docker compose -f docker-compose.prod.yml --env-file .env.prod ps
