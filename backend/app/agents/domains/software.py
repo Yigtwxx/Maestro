@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.agents.domains.base import DomainInfo, SubagentSpec
+from app.agents.domains.base import DomainInfo, ReviewCriterion, SubagentSpec
 
 _METHODOLOGY = """\
 - Work requirements-first: restate what must be built before designing it.
@@ -37,6 +37,36 @@ _REVIEW_RUBRIC = """\
 - Public functions need type annotations and docstrings.
 - Tests must cover at least one failure/edge case, not only the happy path.
 - Claims like "this works" need evidence: sandbox output or reasoning."""
+
+# Structured, weighted version of the rubric above (Backend v2 §4.6). Runnable
+# and secure code are hard-fail: a zero on either rejects regardless of the rest.
+_REVIEW_CRITERIA: tuple[ReviewCriterion, ...] = (
+    ReviewCriterion(
+        id="runnable",
+        description="Code is complete and runnable as pasted — no placeholders, "
+        "TODOs, or pseudo-code.",
+        weight=2,
+        hard_fail=True,
+    ),
+    ReviewCriterion(
+        id="secure",
+        description="No unvalidated external input and no hardcoded secret or "
+        "credential.",
+        weight=2,
+        hard_fail=True,
+    ),
+    ReviewCriterion(
+        id="typed",
+        description="Public functions carry type annotations and docstrings.",
+        weight=1,
+    ),
+    ReviewCriterion(
+        id="tested",
+        description="Tests cover at least one failure/edge case, not only the "
+        "happy path.",
+        weight=1,
+    ),
+)
 
 _ARCHITECT_INSTRUCTIONS = """\
 You are a pragmatic senior software architect.
@@ -227,4 +257,5 @@ DOMAIN: DomainInfo = DomainInfo(
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
+    review_criteria=_REVIEW_CRITERIA,
 )
