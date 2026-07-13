@@ -220,7 +220,7 @@ users
 ├── email (UNIQUE)
 ├── hashed_password
 ├── display_name
-├── subscription_tier (starter | pro | scale)   ← aktif planın denormalize cache'i
+├── subscription_tier (starter | pro | scale | NULL)   ← aktif planın denormalize cache'i; NULL = abonelik yok
 ├── created_at
 └── updated_at
 
@@ -607,6 +607,13 @@ SITE_URL=https://maestro.example.com
 - **Tur 12 — Observability:** kendi trace altyapımız (`utils/tracing.py`, contextvars nesting, best-effort buffer flush, `tracing_enabled` ile kapalı=sıfır overhead); `TracedAdapter` (TokenMeter altında, OTel `gen_ai.*` + cost); `trace_spans` koleksiyonu + TTL; trace + `/dashboard/costs` endpoint'leri (`MODEL_PRICING`).
 - **Tur 13 — Quality & intelligence:** deterministic pre-review validators; structured `review_criteria` (weighted approval + `hard_fail`); partial-failure → `completed_with_warnings` + "Known gaps"; effort scaling (`RouteDecision.complexity`, `simple→1 üye + reviewer skip`); hierarchical token budget (`BudgetGuard` dalga + per-call, step-boundary quota re-check); subagent summaries + context compaction; `reviewer_fail_mode`.
 - **Bilinçli sadeleştirmeler (kod yorumlarında işaretli):** OpenAI `tool_call_id` strict round-trip basitleştirildi; context compaction deterministik (LLM'siz); `output_format_sections_present` validator yanlış-pozitif riskiyle bağlanmadı. **Frontend touchpoint'leri** (AGENT_DELTA birleştirme, trace waterfall/cost UI, rol-başına model ayarları) tasarım kapsamı dışıydı — sıradaki frontend işi.
+
+### Yedekleme — Tamamlandı (2026-07-13)
+- **`scripts/backup.sh`** (prod host'ta cron ile koşar; lokalde yalnızca test edilir): Postgres `maestro` (+ `analytics` profili aktifse `umami`) `pg_dump --clean --if-exists | gzip`; Mongo `mongodump --archive --gzip`; Qdrant koleksiyon bazlı snapshot — distroless imaja hiç girmeden compose network'üne katılan tek seferlik `curlimages/curl` container'ı üzerinden HTTP API (`POST snapshot → GET indir → DELETE sunucu temizliği`; koleksiyonlar dinamik sayılır, jq bağımlılığı yok). Redis (ephemeral) / Ollama (yeniden çekilir) / Caddy (sertifika yeniden alınır) bilinçli kapsam dışı.
+- **Retention 7 günlük + 4 haftalık**, script-side: lokal `find -mtime -name 'maestro-*'`, uzak `rclone delete --min-age`. Offsite = Oracle Object Storage S3-uyumlu endpoint + **`rclone copy`** (sync değil — boş dizinden sync uzaktaki her yedeği silerdi); `RCLONE_REMOTE` boş = yalnız lokal (email-provider env-gating deseni). `.env.prod` script tarafından asla push edilmez (manuel + şifreli yedek; `API_KEY_MASTER_KEY` kaybı = BYOK anahtarları kalıcı kayıp) ve asla `source` edilmez (`EMAIL_FROM`'daki `<` redirect olurdu; `get_env` sed helper'ı).
+- **Hata modeli:** `set -uo pipefail`, `-e` yok — her store denenir, hatalar toplanır, sonda non-zero exit + `BACKUP FAILED: ...` özeti; dump'lar `.part`'a yazılıp yalnız başarıda `mv` edilir. Cron 03:30 (purge 03:00'ten offset) + `flock` guard. `deploy.yml` her tag'li rollout'ta `backup.sh`'ı scp ile host'a senkronlar (host artık 4 dosya taşır). Restore runbook + OCI/rclone kurulum adımları `docs/DEPLOYMENT.md`'de; restore script'i bilinçli yok (yıkıcı `--clean`/`--drop` kararları insana ait).
+- **Doğrulandı (lokal round-trip, dev compose):** PG canary (42) ve Mongo canary dump→drop→restore ile geri geldi; hata yolu (mongo durdurulunca pg+qdrant yine üretildi, exit 1) ve retention (10 günlük `maestro-*` silindi, decoy dosya kaldı) test edildi. **Qdrant bulgusu:** Windows bind-mount'ta (dev `./.data/qdrant`) snapshot ~400MB'a şişiyor ve `wal/first-index` sıfırlanıp restore 500 veriyor — named volume'da (prod topolojisi, `v1.18.2` ile ayrıca doğrulandı) snapshot ~140KB ve upload restore round-trip temiz (`points_count` geri geldi). Dev-only filesystem artefaktı, prod riski değil; not DEPLOYMENT.md'de.
+- Yeni dosyalar: `scripts/backup.sh`, `.gitattributes` (`*.sh eol=lf` — CRLF shebang'ı Linux'ta kırar); `.gitignore`'a `.backups/`.
 
 ### Sonraki turlar
 - **OG image'ın Docker imajında smoke testi** (standalone `next/og` WASM/font trace riski — `next dev` kanıt değil; patlarsa `outputFileTracingIncludes`).
