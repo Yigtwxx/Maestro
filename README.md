@@ -401,7 +401,7 @@ openssl rand -base64 32    # API_KEY_MASTER_KEY (32-byte AES-256 master key)
 |---|---|---|
 | `PAYMENT_PROVIDER` | Payment gateway; only `mock` is implemented (Luhn/BIN validation, moves no real money) | `mock` |
 
-Plan prices, quotas, trial length, and the first-month discount are product constants in
+Plan prices and quotas are product constants in
 `backend/app/core/constants.py`, not environment variables.
 
 ### App & observability
@@ -417,18 +417,19 @@ Plan prices, quotas, trial length, and the first-month discount are product cons
 
 ## Plans & Quota
 
-Maestro has no free plan; new accounts begin on a 14-day trial with Starter-tier quota.
-Quota is enforced solely through the Postgres `usage_records` ledger; every terminal task
-path (success, error, timeout, cancellation) writes the tokens it spent.
+Maestro has no free plan, no trial, and no discount: registration creates no
+subscription, so an active paid plan is required before starting any task. Quota is
+enforced solely through the Postgres `usage_records` ledger; every terminal task path
+(success, error, timeout, cancellation) writes the tokens it spent.
 
 | Plan | Price / month | Monthly token quota |
 |---|---|---|
-| Starter | $15 | 500,000 |
-| Pro | $50 | 3,000,000 |
-| Scale | $100 | 10,000,000 |
+| Starter | $5 | 500,000 |
+| Pro | $15 | 3,000,000 |
+| Scale | $50 | 10,000,000 |
 
-- 14-day Starter-quota trial for new accounts; if it lapses, task creation returns HTTP 402.
-- 50% first-month discount, once per user ever (server-enforced via `users.first_discount_used`).
+- Without an active subscription, task creation returns HTTP 402 — including the local
+  Ollama model, which on a hosted instance is itself a served service.
 - 30-day rolling billing window anchored to the subscription period start.
 - Payments run through the **mock gateway** — well-formed Visa / Mastercard numbers are
   validated (Luhn + BIN) but **no real money moves**. A real processor is a single new
@@ -474,7 +475,7 @@ POST   /api/v1/tasks/{id}/answer            # human-in-the-loop answer
 WS     /api/v1/tasks/{id}/stream            # live task stream
 
 # Billing & subscriptions
-GET    /api/v1/billing/plans                # user-priced plan list (discount applied)
+GET    /api/v1/billing/plans                # plan list with prices and quotas
 GET    /api/v1/billing/subscription         # plan, status + live quota usage
 POST   /api/v1/billing/subscribe            # take card, charge first period, activate
 POST   /api/v1/billing/cancel               # stop renewal (usable until period end)
@@ -593,7 +594,7 @@ end-to-end flow at a time.
 - **Round 1** — Auth, BYOK key management, end-to-end task flow, live WebSocket streaming.
 - **Round 2** — RAG memory + document upload, multi-provider LLM adapters, dashboard
   metrics, agent profile CRUD, Marketplace, human-in-the-loop, dev scripts.
-- **Round 3** — Subscriptions, per-period token quota, usage ledger, mock payment gateway.
+- **Round 3** — Subscriptions (no free tier, no trial), per-period token quota, usage ledger, mock payment gateway.
 - **Round 4** — Legal pages, GDPR account deletion + data export, cookie notice.
 - **Round 5** — Containerization, single-origin Caddy stack, GHCR + SSH deployment.
 - **Round 6** — Redis-backed rate limiting across every route and WebSocket.
