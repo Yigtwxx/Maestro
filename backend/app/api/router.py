@@ -6,6 +6,7 @@ from fastapi import APIRouter
 
 from app.api import websocket
 from app.api.v1 import (
+    admin,
     agents,
     api_keys,
     auth,
@@ -30,6 +31,7 @@ api_router.include_router(dashboard.router, prefix=API_V1_PREFIX)
 api_router.include_router(marketplace.router, prefix=API_V1_PREFIX)
 api_router.include_router(agents.router, prefix=API_V1_PREFIX)
 api_router.include_router(documents.router, prefix=API_V1_PREFIX)
+api_router.include_router(admin.router, prefix=API_V1_PREFIX)
 
 # WebSocket (paths already fully qualified in the module)
 api_router.include_router(websocket.router)
