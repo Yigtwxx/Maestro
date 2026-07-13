@@ -28,6 +28,20 @@ class SubagentSpec:
 
 
 @dataclass(frozen=True)
+class ReviewCriterion:
+    """One weighted acceptance criterion for structured review (Backend v2 §4.6).
+
+    The reviewer scores each 0-2; approval is a weighted threshold. A
+    ``hard_fail`` criterion scored 0 rejects regardless of the weighted total.
+    """
+
+    id: str
+    description: str
+    weight: int = 1
+    hard_fail: bool = False
+
+
+@dataclass(frozen=True)
 class DomainInfo:
     """A built-in domain agent (Main Agent) definition."""
 
@@ -56,3 +70,7 @@ class DomainInfo:
     # Domain-specific acceptance criteria injected into the Reviewer prompt
     # (3-6 concrete, checkable bullets).
     review_rubric: str = ""
+    # Optional structured criteria (Backend v2 §4.6). When set, the reviewer also
+    # renders them as a scored checklist and computes a weighted approval; when
+    # empty, the string ``review_rubric`` path above is used unchanged.
+    review_criteria: tuple[ReviewCriterion, ...] = ()
