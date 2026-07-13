@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from app.agents.registry import get_domain_info
 from app.core.config import settings
@@ -215,3 +216,75 @@ async def resolve_enabled_tools(domain: str) -> frozenset[str]:
     ):
         declared.discard(CODE_EXECUTION_ACTION)
     return frozenset(declared)
+
+
+# --- ToolProvider seam (Backend v2 §4.4) ----------------------------------
+# An indirection over where tool specs come from, so a future MCP/plugin source
+# can supply tools without touching the subagent loop. Only the built-in
+# provider exists today; the loop resolves specs through this interface.
+
+
+class ToolProvider(Protocol):
+    """Supplies the executable tool specs available to a subagent run."""
+
+    def specs(self) -> dict[str, ToolSpec]: ...
+
+
+class BuiltinToolProvider:
+    """The default provider: the process-wide built-in ``TOOL_SPECS``."""
+
+    def specs(self) -> dict[str, ToolSpec]:
+        return TOOL_SPECS
+
+
+builtin_tool_provider: ToolProvider = BuiltinToolProvider()
+
+# JSON-schema parameter shapes for native function calling, one per tool. Mirrors
+# the directive args each executor already expects.
+_TOOL_PARAMETERS: dict[str, dict] = {
+    WEB_SEARCH_ACTION: {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "category": {"type": "string", "enum": sorted(WEB_SEARCH_CATEGORIES)},
+        },
+        "required": ["query"],
+    },
+    DATA_FETCH_ACTION: {
+        "type": "object",
+        "properties": {"url": {"type": "string"}},
+        "required": ["url"],
+    },
+    CODE_EXECUTION_ACTION: {
+        "type": "object",
+        "properties": {"code": {"type": "string"}},
+        "required": ["code"],
+    },
+    VIEW_ORIGINAL_REQUEST_ACTION: {"type": "object", "properties": {}},
+}
+
+_TOOL_DESCRIPTIONS: dict[str, str] = {
+    WEB_SEARCH_ACTION: "Search the web for up-to-date information.",
+    DATA_FETCH_ACTION: "Fetch the contents of a URL.",
+    CODE_EXECUTION_ACTION: "Run Python code in a sandbox and return its output.",
+    VIEW_ORIGINAL_REQUEST_ACTION: "Read the original user request for context.",
+}
+
+
+def tool_defs_for(specs: dict[str, ToolSpec]) -> list:
+    """Build native-function-calling ``ToolDef``s from the enabled specs.
+
+    Imported lazily to avoid a hard dependency on the LLM service at module load.
+    """
+    from app.services.llm_service import ToolDef
+
+    return [
+        ToolDef(
+            name=action,
+            description=_TOOL_DESCRIPTIONS.get(action, action),
+            parameters=_TOOL_PARAMETERS.get(
+                action, {"type": "object", "properties": {}}
+            ),
+        )
+        for action in specs
+    ]
