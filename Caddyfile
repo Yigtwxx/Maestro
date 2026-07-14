@@ -12,6 +12,32 @@
 {$DOMAIN} {
 	encode zstd gzip
 
+	# Security headers on every response — API, app, and Umami alike. Caddy
+	# adds none of these on its own. CSP is proxy-level and pragmatic:
+	# 'unsafe-inline' stays because Next's hydration scripts, the JSON-LD
+	# block in the root layout, and React style attributes all break without
+	# nonces (nonce-based CSP = Next middleware work, tracked separately).
+	# The only external origin is the Sentry browser SDK; self-hosted Sentry
+	# operators edit the connect-src line. HSTS is ignored by browsers over
+	# plain HTTP, so the localhost smoke test is unaffected.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://*.sentry.io; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+	}
+
+	# Separate block: a deletion op defers every op in its block until the
+	# response is written, and deferred ops are skipped on Caddy-generated
+	# error responses (e.g. 502) — merged, the security headers above would
+	# vanish from error pages.
+	header {
+		-Server
+		-X-Powered-By
+	}
+
 	# Access logs to stdout as JSON — collected by Docker, rotated by the
 	# json-file caps in docker-compose.prod.yml. Uptime-monitor hits on /health*
 	# are logged too; filtering them at the proxy is not worth the config.
