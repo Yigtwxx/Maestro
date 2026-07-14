@@ -33,6 +33,26 @@ updates:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 
+  # Base images are pinned to exact patch tags in the Dockerfiles; these
+  # entries keep those pins from going stale.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(backend)"
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(frontend)"
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
