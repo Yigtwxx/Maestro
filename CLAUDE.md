@@ -615,6 +615,14 @@ SITE_URL=https://maestro.example.com
 - **Doğrulandı (lokal round-trip, dev compose):** PG canary (42) ve Mongo canary dump→drop→restore ile geri geldi; hata yolu (mongo durdurulunca pg+qdrant yine üretildi, exit 1) ve retention (10 günlük `maestro-*` silindi, decoy dosya kaldı) test edildi. **Qdrant bulgusu:** Windows bind-mount'ta (dev `./.data/qdrant`) snapshot ~400MB'a şişiyor ve `wal/first-index` sıfırlanıp restore 500 veriyor — named volume'da (prod topolojisi, `v1.18.2` ile ayrıca doğrulandı) snapshot ~140KB ve upload restore round-trip temiz (`points_count` geri geldi). Dev-only filesystem artefaktı, prod riski değil; not DEPLOYMENT.md'de.
 - Yeni dosyalar: `scripts/backup.sh`, `.gitattributes` (`*.sh eol=lf` — CRLF shebang'ı Linux'ta kırar); `.gitignore`'a `.backups/`.
 
+### Bağımlılık pinleme & tekrarlanabilir build — Tamamlandı (2026-07-14)
+- **Backend lock:** pip-tools konvansiyonu — `requirements(.-dev).in` insan eliyle düzenlenen niyet dosyaları, `requirements(.-dev).txt` **üretilen lock** (elle düzenlenmez). `uv pip compile --universal --python-version 3.11 --generate-hashes` ile üretilir (`--python-version 3.11` şart: uv yoksa derleyen yorumlayıcıya göre çözer, 3.12+ host'ta üretilen pin — örn. numpy — 3.11 imajında kurulamaz): `--universal` marker'lı platform-bağımsız çözüm (Windows dev + Linux prod aynı lock'tan; `uvloop` win32-dışı marker'la pinli), hash'ler pip'i otomatik `--require-hashes` moduna sokar (supply-chain doğrulaması). Dev lock `-c requirements.txt` ile prod'a hizalı. Dockerfile/CI/dev script yolları değişmedi (hepsi `.txt` okur).
+- **CI tazelik kontrolü:** `ci.yml` backend job'ında lock yeniden üretilip `git diff --exit-code` — `.in` düzenlenip `.txt` unutulursa (veya Dependabot yalnız `.in`'i bump'larsa) PR kırmızı. `--upgrade` verilmediği için deterministik, flaky değil.
+- **Frontend:** `package.json` caret'leri lock'taki kurulu sürümlere sabitlendi (hepsi zaten caret tabanındaydı → sadece `^` düştü); `.npmrc` `save-exact=true`. Reprodusibilite zaten `npm ci` + lockfile'daydı; bu, `npm install/update` drift'ini kapatır.
+- **Base image'lar:** `python:3.11.15-slim-bookworm`, `node:20.20.2-bookworm-slim` (iki stage aynı tag). `dependabot.yml`'e 2 docker ecosystem girdisi eklendi ki pinler bayatlamasın.
+- **Actions SHA pin:** 8 workflow'daki tüm `uses:` satırları commit SHA + `# vX.Y.Z` yorumuyla pinli (Scorecard Pinned-Dependencies). Dependabot github-actions ecosystem'i SHA pinleri günceller.
+- **İzlenecek:** ilk haftalık Dependabot pip PR'ı compiled lock'u yeniliyor mu — yenilemezse tazelik kontrolü yakalar, lock o PR'da elle regen edilir.
+
 ### Sonraki turlar
 - **OG image'ın Docker imajında smoke testi** (standalone `next/og` WASM/font trace riski — `next dev` kanıt değil; patlarsa `outputFileTracingIncludes`).
 - **Türkçe KVKK aydınlatma metni** (yapı `lib/legal/` locale'e hazır; şu an `/privacy`'de "coming soon" notu var). VERBİS kayıt eşiği kontrolü.
