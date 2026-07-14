@@ -41,7 +41,10 @@ def verify_password(password: str, hashed: str) -> bool:
 
 # --- JWT ------------------------------------------------------------------
 
-TokenType = Literal["access", "refresh"]
+# "mfa" is a short-lived interim token issued between the password check and the
+# TOTP step; it is NOT accepted by the access-token guard (type mismatch), so it
+# can never be used to call the API — only to complete the second login factor.
+TokenType = Literal["access", "refresh", "mfa"]
 
 
 def create_token(
