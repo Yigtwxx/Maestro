@@ -4,7 +4,7 @@
 # the account-purge cron, so alembic/ and alembic.ini must ship with it.
 # =========================================================================
 
-FROM python:3.11-slim-bookworm AS builder
+FROM python:3.11.15-slim-bookworm AS builder
 
 WORKDIR /app
 ENV PIP_NO_CACHE_DIR=1 \
@@ -20,7 +20,7 @@ COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.11.15-slim-bookworm AS runtime
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
