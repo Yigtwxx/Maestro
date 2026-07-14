@@ -26,10 +26,10 @@ jobs:
       # backup.sh is the one host file that comes from the repo; keep it in
       # sync on every rollout. First-time placement (before any tagged deploy)
       # is the manual copy in docs/DEPLOYMENT.md "Place the deployment files".
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Sync backup script to host
-        uses: appleboy/scp-action@v1
+        uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
@@ -39,7 +39,7 @@ jobs:
           strip_components: 1
 
       - name: Pull images and restart the stack
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         # Pass the tag through an env var instead of interpolating ${{ }} into
         # the shell script — a dispatch input / ref name must never be expanded
         # directly into a command (code-injection vector).
