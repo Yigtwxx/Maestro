@@ -1,3 +1,8 @@
 # Shell scripts must keep LF endings: a CRLF shebang breaks execution on the
 # Linux production host and in Git Bash on Windows checkouts.
 *.sh text eol=lf
+
+# uv writes the lockfiles with LF; keep checkouts LF too so a regeneration on
+# Windows never produces a whole-file line-ending diff.
+backend/requirements*.txt text eol=lf
+backend/requirements*.in text eol=lf
