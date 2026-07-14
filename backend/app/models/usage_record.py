@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import GUID, Base, TimestampMixin, _uuid_pk
@@ -29,6 +29,10 @@ class UsageRecord(Base, TimestampMixin):
     tokens: Mapped[int] = mapped_column(Integer)
     provider: Mapped[str] = mapped_column(String(20))
     status: Mapped[str] = mapped_column(String(20))
+    # Free-tier (Ollama) tokens are recorded but do not count against paid quota;
+    # quota enforcement sums only ``billable`` rows. Defaults true so every
+    # pre-existing row keeps counting.
+    billable: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     # Denormalized from the subscription so period sums are a single-table scan.
     period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
