@@ -33,6 +33,10 @@ class ApiKey(Base, TimestampMixin):
     # Masked hint for display only (e.g. "****abcd") — not the real key.
     key_hint: Mapped[str] = mapped_column(String(16), default="****")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Only set for the "custom" provider: the user's OpenAI-compatible endpoint
+    # and the model to request there. NULL for all named providers.
+    base_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    model: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="api_keys", foreign_keys=[user_id])
 
