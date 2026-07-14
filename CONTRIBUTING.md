@@ -93,6 +93,30 @@ npm run build
 **The frontend has no test runner yet.** There is no `npm test` script — do not add one
 to a feature PR without discussing it in an issue first.
 
+## Dependency management
+
+Both stacks pin dependencies for reproducible builds.
+
+**Backend** uses the pip-tools convention: `requirements.in` / `requirements-dev.in`
+hold the human-edited version ranges; `requirements.txt` / `requirements-dev.txt` are
+**generated lockfiles** (pinned, hashed, platform-independent) — never edit them by
+hand. To add or change a dependency, edit the `.in` file and regenerate with
+[uv](https://docs.astral.sh/uv/):
+
+```bash
+cd backend
+uv pip compile requirements.in -o requirements.txt --universal --python-version 3.11 --generate-hashes
+uv pip compile requirements-dev.in -o requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.txt
+```
+
+Commit the `.in` and `.txt` files together — CI's "Lock freshness check" fails if they
+drift apart. `--universal` keeps one lock valid on Windows, macOS, and Linux.
+
+**Frontend** pins exact versions in `package.json` (`.npmrc` sets `save-exact=true`,
+so `npm install <pkg>` does the right thing) and `package-lock.json` locks the tree.
+Routine version bumps arrive as weekly Dependabot PRs; don't bump versions in a
+feature PR.
+
 ## Code standards
 
 Condensed from [`CLAUDE.md`](./CLAUDE.md) §5. Read that section before your first PR.
