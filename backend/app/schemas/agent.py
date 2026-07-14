@@ -19,6 +19,12 @@ class AgentConfigCreate(BaseModel):
     domain: str = Field(min_length=1, max_length=40)
     system_prompt: str = Field(min_length=1, max_length=8000)
     tools: list[str] = Field(default_factory=list)
+    # Metadata that shapes how the agent runs and whether the orchestrator may
+    # auto-route to it (Backend v2 §4.3). All optional and backward-compatible.
+    description: str = Field(default="", max_length=280)
+    routing_hint: str = Field(default="", max_length=280)
+    output_format: str = Field(default="", max_length=2000)
+    routable: bool = False
 
 
 class AgentConfigUpdate(BaseModel):
@@ -28,6 +34,10 @@ class AgentConfigUpdate(BaseModel):
     domain: str | None = Field(default=None, min_length=1, max_length=40)
     system_prompt: str | None = Field(default=None, min_length=1, max_length=8000)
     tools: list[str] | None = None
+    description: str | None = Field(default=None, max_length=280)
+    routing_hint: str | None = Field(default=None, max_length=280)
+    output_format: str | None = Field(default=None, max_length=2000)
+    routable: bool | None = None
 
 
 class SystemPromptUpdate(BaseModel):
@@ -44,6 +54,11 @@ class AgentConfigPublic(BaseModel):
     domain: str
     system_prompt: str
     tools: list[str]
+    description: str = ""
+    routing_hint: str = ""
+    output_format: str = ""
+    routable: bool = False
+    source: str = "custom"
     type: str = "custom"
     created_at: datetime
     updated_at: datetime
