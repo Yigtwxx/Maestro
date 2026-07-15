@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.agents.registry import normalize_domain
-from app.core.constants import TOOL_IDS, MongoCollection
+from app.core.constants import ROUTING_CUSTOM_AGENTS_MAX, TOOL_IDS, MongoCollection
 from app.core.database import get_mongo_db
 from app.schemas.agent import AgentConfigCreate, AgentConfigUpdate
 from app.utils import prompt_guard
@@ -60,10 +60,37 @@ async def get_agent(user_id: uuid.UUID, agent_id: str) -> dict[str, Any] | None:
     )
 
 
+async def list_routable_agents(user_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Return the user's routable custom agents (id + routing_hint + name).
+
+    Feeds the orchestrator's routing-catalog merge; capped so a user with many
+    agents cannot blow up the classifier prompt (Backend v2 §4.3).
+    """
+    cursor = (
+        _collection()
+        .find(
+            {"user_id": str(user_id), "routable": True},
+            {"_id": 0, "id": 1, "name": 1, "routing_hint": 1},
+        )
+        .sort("created_at", -1)
+        .limit(ROUTING_CUSTOM_AGENTS_MAX)
+    )
+    return [doc async for doc in cursor]
+
+
 async def create_agent(
-    user_id: uuid.UUID, payload: AgentConfigCreate
+    user_id: uuid.UUID,
+    payload: AgentConfigCreate,
+    *,
+    source: str = "custom",
+    marketplace_item_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create and persist a validated custom agent."""
+    """Create and persist a validated custom agent.
+
+    ``source``/``marketplace_item_id`` record provenance (a marketplace install
+    stamps them). The passing security scan is recorded with the scanner version
+    so a later scanner bump forces a re-scan at execution time.
+    """
     _guard_prompt(payload.system_prompt)
     tools = _validate_tools(payload.tools)
     now = datetime.now(UTC)
@@ -74,6 +101,13 @@ async def create_agent(
         "domain": normalize_domain(payload.domain),
         "system_prompt": payload.system_prompt,
         "tools": tools,
+        "description": payload.description,
+        "routing_hint": payload.routing_hint,
+        "output_format": payload.output_format,
+        "routable": payload.routable,
+        "source": source,
+        "marketplace_item_id": marketplace_item_id,
+        "security_scan": {"version": prompt_guard.SCANNER_VERSION, "passed": True},
         "created_at": now,
         "updated_at": now,
     }
@@ -93,8 +127,21 @@ async def update_agent(
     if payload.system_prompt is not None:
         _guard_prompt(payload.system_prompt)
         changes["system_prompt"] = payload.system_prompt
+        # Re-record the passing scan under the current scanner version.
+        changes["security_scan"] = {
+            "version": prompt_guard.SCANNER_VERSION,
+            "passed": True,
+        }
     if payload.tools is not None:
         changes["tools"] = _validate_tools(payload.tools)
+    if payload.description is not None:
+        changes["description"] = payload.description
+    if payload.routing_hint is not None:
+        changes["routing_hint"] = payload.routing_hint
+    if payload.output_format is not None:
+        changes["output_format"] = payload.output_format
+    if payload.routable is not None:
+        changes["routable"] = payload.routable
     if not changes:
         return await get_agent(user_id, agent_id)
 
