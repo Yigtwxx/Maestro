@@ -33,17 +33,23 @@ from app.core.constants import (
 from app.core.database import get_mongo_db
 from app.models.usage_record import UsageRecord
 from app.models.user import User
-from app.services import billing_service, memory_service
+from app.services import billing_service, marketplace_service, memory_service
 
 logger = logging.getLogger(__name__)
 
 # Purged wholesale on account deletion, keyed by `user_id`. `agent_logs` is
 # handled separately (see below) and `marketplace_items` is anonymized, not
 # deleted: community content outlives the author's account.
+# `marketplace_installs` is deliberately absent: install events are anonymous
+# ({item_id, created_at} only), so there is nothing to erase.
+# `marketplace_reviews` is also handled separately: deleting a review must
+# recompute the item's denormalized aggregates, so a plain delete_many won't do.
 _USER_SCOPED_COLLECTIONS = (
     MongoCollection.TASK_SESSIONS,
     MongoCollection.AGENT_CONFIGURATIONS,
     MongoCollection.DOCUMENTS,
+    # Execution trace spans carry user_id (Backend v2 §4.5); erased wholesale.
+    MongoCollection.TRACE_SPANS,
 )
 
 
@@ -91,6 +97,7 @@ async def purge_user_data(user_id: uuid.UUID) -> None:
     await _purge_agent_logs(db, user_id)
     for collection in _USER_SCOPED_COLLECTIONS:
         await db[collection.value].delete_many({"user_id": str(user_id)})
+    await marketplace_service.purge_user_reviews(user_id)
     await _anonymize_marketplace_items(db, user_id)
 
     await memory_service.purge_user_vectors(user_id)
@@ -124,8 +131,17 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
             "id": str(user.id),
             "email": user.email,
             "display_name": user.display_name,
+            "bio": user.bio,
+            "avatar_color": user.avatar_color,
+            "avatar_emoji": user.avatar_emoji,
+            "timezone": user.timezone,
+            "default_reviewer_enabled": user.default_reviewer_enabled,
+            # Status only. The TOTP secret and recovery-code hashes are never
+            # exported (they are credentials, not personal data to hand back).
+            "two_factor_enabled": user.totp_enabled,
             "subscription_tier": user.subscription_tier,
             "default_provider": user.default_provider,
+            "model_preferences": user.model_preferences,
             "created_at": user.created_at.isoformat(),
             "deletion_requested_at": (
                 user.deletion_requested_at.isoformat()
@@ -167,6 +183,7 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
         "tasks": await _find(MongoCollection.TASK_SESSIONS),
         "agents": await _find(MongoCollection.AGENT_CONFIGURATIONS),
         "documents": await _find(MongoCollection.DOCUMENTS),
+        "marketplace_reviews": await _find(MongoCollection.MARKETPLACE_REVIEWS),
         "conversation_memories": await memory_service.export_user_texts(
             user.id, QDRANT_CONVERSATION_MEMORIES
         ),
