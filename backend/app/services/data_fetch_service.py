@@ -14,9 +14,7 @@ this tier.
 from __future__ import annotations
 
 import asyncio
-import ipaddress
 import logging
-import socket
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
@@ -31,6 +29,8 @@ from app.core.constants import (
     UNTRUSTED_CONTENT_NOTICE,
 )
 from app.utils.prompt_guard import is_suspicious
+from app.utils.url_guard import resolve_is_public as _resolve_is_public
+from app.utils.url_guard import validate_url_shape as _validate_url
 
 logger = logging.getLogger(__name__)
 
@@ -101,30 +101,6 @@ def html_to_text(html: str) -> str:
         logger.warning("HTML parsing failed; falling back to raw text")
         return html
     return extractor.text()
-
-
-def _validate_url(url: str) -> str | None:
-    """Return a rejection reason for unsafe URLs, or None if fetchable."""
-    parts = urlsplit(url)
-    if parts.scheme not in {"http", "https"}:
-        return "only http(s) URLs are allowed"
-    if parts.username or parts.password:
-        return "URLs with embedded credentials are not allowed"
-    if not parts.hostname:
-        return "URL has no hostname"
-    return None
-
-
-def _resolve_is_public(hostname: str) -> bool:
-    """True only if every resolved address is globally routable (anti-SSRF)."""
-    try:
-        infos = socket.getaddrinfo(hostname, None, proto=socket.IPPROTO_TCP)
-    except OSError:
-        return False
-    addresses = {info[4][0] for info in infos}
-    if not addresses:
-        return False
-    return all(ipaddress.ip_address(address).is_global for address in addresses)
 
 
 async def fetch(url: str) -> str:
