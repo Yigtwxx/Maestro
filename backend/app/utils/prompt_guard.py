@@ -9,6 +9,11 @@ from __future__ import annotations
 
 import re
 
+# Bumped whenever the pattern set changes. Stored on a custom agent's
+# ``security_scan`` at write time; ``registry.resolve_domain_info`` re-scans at
+# execution so a config written under an older scanner is never grandfathered in.
+SCANNER_VERSION = 1
+
 # Patterns commonly seen in prompt-injection / jailbreak attempts.
 _SUSPICIOUS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
