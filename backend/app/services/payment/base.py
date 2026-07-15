@@ -92,8 +92,9 @@ class PaymentProvider(Protocol):
     ) -> SubscriptionResult:
         """Start a recurring subscription, billing the first period separately.
 
-        ``first_amount_cents`` may differ from ``recurring_amount_cents`` when a
-        first-month discount applies.
+        ``first_amount_cents`` and ``recurring_amount_cents`` are equal today;
+        the split is kept so a future adapter could price the first period
+        differently without an interface change.
         """
         ...
 
