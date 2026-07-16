@@ -76,11 +76,17 @@ async def test_route_malformed_decision_falls_back_to_general(reply: str) -> Non
     ],
 )
 async def test_review_malformed_verdict_fails_open(reply: str) -> None:
+    # Default reviewer_fail_mode is "warn": a reviewer that cannot produce a
+    # verdict still passes (does not block the pipeline) but flags the skipped
+    # review so the gate's silence is visible (Backend v2 §4.6/D8).
     ctx = AgentContext(adapter=RawReplyAdapter(reply))
-    result = SubagentResult(status=SubagentStatus.SUCCESS, data={"output": "something"})
+    result = SubagentResult(
+        status=SubagentStatus.SUCCESS,
+        data={"output": "This is a complete answer to the subtask, long enough."},
+    )
     verdict = await reviewer.review(ctx, subtask="check it", result=result)
-    assert verdict.approved is True, "Reviewer must fail open on malformed output"
-    assert verdict.issues == [], f"Expected no issues, got {verdict.issues}"
+    assert verdict.approved is True, "Reviewer must fail open (warn) when it fails"
+    assert verdict.review_skipped is True, "A skipped review must be flagged"
 
 
 def test_reviewer_system_prompt_renders_single_braces() -> None:
@@ -113,7 +119,10 @@ def test_plan_assignment_depends_on_coercion(raw: dict, expected: list[str]) -> 
 async def test_review_valid_rejection_is_preserved() -> None:
     reply = '{"approved": false, "issues": ["wrong"], "retry_hints": ["fix it"]}'
     ctx = AgentContext(adapter=RawReplyAdapter(reply))
-    result = SubagentResult(status=SubagentStatus.SUCCESS, data={"output": "something"})
+    result = SubagentResult(
+        status=SubagentStatus.SUCCESS,
+        data={"output": "This is a complete answer to the subtask, long enough."},
+    )
     verdict = await reviewer.review(ctx, subtask="check it", result=result)
     assert verdict.approved is False, "Valid rejection must not be coerced to approve"
     assert verdict.retry_hints == ["fix it"], f"Got {verdict.retry_hints}"
