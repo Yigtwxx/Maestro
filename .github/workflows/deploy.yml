@@ -38,7 +38,7 @@ jobs:
           target: /opt/maestro/
           strip_components: 1
 
-      - name: Pull images and restart the stack
+      - name: Pull images, restart the stack, gate on health
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         # Pass the tag through an env var instead of interpolating ${{ }} into
         # the shell script — a dispatch input / ref name must never be expanded
@@ -54,12 +54,85 @@ jobs:
           # (host-managed, not in the repo) plus backup.sh (synced above).
           # Migrations run on their own: the
           # `migrate` service must exit 0 before `backend` is allowed to start.
+          #
+          # After `up -d` the script polls /health/ready (backend) and / (frontend)
+          # from inside the containers. If the gate fails, it rolls back to the
+          # image tag that was serving before the rollout and fails the job — a
+          # bad image never keeps serving just because `up -d` returned 0.
+          #
+          # The rollback uses `--no-deps backend frontend` on purpose: a plain
+          # `up -d` would re-run `migrate` with the OLD image, whose alembic
+          # cannot resolve the new head revision and fails, blocking backend
+          # startup. The database itself is NOT rolled back — migrations must
+          # stay backward-compatible with the previous release (see
+          # docs/DEPLOYMENT.md "Rolling back").
           script: |
             set -euo pipefail
             cd /opt/maestro
             export IMAGE_TAG="${IMAGE_TAG_INPUT#v}"
             echo "Rolling out ${IMAGE_TAG}"
             chmod +x backup.sh
-            docker compose -f docker-compose.prod.yml --env-file .env.prod pull
-            docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --remove-orphans
-            docker compose -f docker-compose.prod.yml --env-file .env.prod ps
+
+            compose() {
+              docker compose -f docker-compose.prod.yml --env-file .env.prod "$@"
+            }
+
+            # Remember what is serving right now so a failed gate can restore it.
+            # Empty on a first deploy (nothing running yet) — no rollback target.
+            PREV_IMAGE="$(docker inspect --format '{{.Config.Image}}' "$(compose ps -q backend)" 2>/dev/null || true)"
+            PREV_TAG="${PREV_IMAGE##*:}"
+            echo "Currently serving: ${PREV_TAG:-nothing}"
+
+            backend_ready() {
+              # /health/ready pings Postgres/Mongo/Qdrant/Redis; 503 raises in
+              # urllib, so a degraded backend exits non-zero. The exec itself
+              # fails while the container is still restarting — also a "not yet".
+              compose exec -T backend python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=5)" >/dev/null 2>&1
+            }
+            frontend_up() {
+              compose exec -T frontend node -e "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" >/dev/null 2>&1
+            }
+            wait_healthy() {
+              # ~3 minutes. `up -d` already blocked on migrate + dependency
+              # healthchecks, so this only needs to cover app startup.
+              for _ in $(seq 1 36); do
+                if backend_ready && frontend_up; then return 0; fi
+                sleep 5
+              done
+              return 1
+            }
+
+            compose pull
+            if ! compose up -d --remove-orphans; then
+              # A failed `migrate` aborts `up` before backend/frontend are
+              # recreated — the previous release is still serving, untouched.
+              echo "ERROR: compose up failed — previous release left as-is."
+              compose logs --tail=100 migrate || true
+              exit 1
+            fi
+
+            if wait_healthy; then
+              echo "Health gate passed for ${IMAGE_TAG}."
+              compose ps
+              exit 0
+            fi
+
+            echo "ERROR: health gate FAILED for ${IMAGE_TAG} — dumping logs, then rolling back."
+            compose ps || true
+            compose logs --tail=100 backend frontend || true
+
+            if [ -z "${PREV_TAG}" ] || [ "${PREV_TAG}" = "${IMAGE_TAG}" ]; then
+              echo "ERROR: no previous release to roll back to (prev='${PREV_TAG:-none}') — manual intervention required."
+              exit 1
+            fi
+
+            echo "Rolling back to ${PREV_TAG}"
+            export IMAGE_TAG="${PREV_TAG}"
+            compose up -d --no-deps backend frontend
+
+            if wait_healthy; then
+              echo "Rollback to ${PREV_TAG} is healthy. The new tag was NOT deployed."
+            else
+              echo "ERROR: rollback to ${PREV_TAG} is ALSO unhealthy — manual intervention required."
+            fi
+            exit 1
