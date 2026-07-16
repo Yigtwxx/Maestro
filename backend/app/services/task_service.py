@@ -9,17 +9,20 @@ live events over the event bus, and enforcing a total task timeout
 from __future__ import annotations
 
 import asyncio
+import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pymongo import DESCENDING
 
 from app.agents import main_agent, orchestrator
-from app.agents.base import AgentContext
 from app.core.config import settings
 from app.core.constants import (
+    HITL_TIMEOUT_SECONDS,
     QDRANT_DOCUMENT_CHUNKS,
+    TASK_EVENT_ENVELOPE_VERSION,
+    TASK_EVENTS_MONGO_KEEP,
     AgentRole,
     EventType,
     LLMProvider,
@@ -28,18 +31,24 @@ from app.core.constants import (
 )
 from app.core.database import get_mongo_db
 from app.schemas.task import TaskCreate
-from app.services import usage_service
-from app.services.llm_service import FallbackLLMAdapter, TokenMeter, get_adapter
+from app.services import question_store, task_engine, task_run_store
+from app.utils import tracing
 from app.utils.events import event_bus
 
-# Registry of running background tasks, for cancellation.
+logger = logging.getLogger(__name__)
+
+# Per-worker cache of running background tasks, for local cancellation. The
+# authoritative record is Postgres ``task_runs``; correctness never depends on
+# this dict (a task owned by another worker simply is not here).
 _running: dict[str, asyncio.Task] = {}
 
-# Pending human-in-the-loop questions, keyed by task id (CLAUDE.md §12).
+# Pending human-in-the-loop questions, keyed by task id (CLAUDE.md §12). The
+# future delivers the answer to the locally-running agent; the durable record is
+# the ``task_questions`` row (see ``question_store``).
 _pending_questions: dict[str, asyncio.Future[str]] = {}
+# Correlates the locally-awaited future with its persisted question row.
+_pending_question_ids: dict[str, uuid.UUID] = {}
 
-# How long an agent waits for a user's answer before giving up.
-_HITL_TIMEOUT_SECONDS = 180
 # Max RAG context snippets injected into the agent prompts.
 _MAX_CONTEXT_ITEMS = 6
 # Prompt characters kept in a history-list entry.
@@ -65,27 +74,58 @@ def _logs_collection():
     return get_mongo_db()[MongoCollection.AGENT_LOGS.value]
 
 
+# Per-task, per-worker sequence counters. ``seq`` orders a task's event stream
+# so a reconnecting client can resume with ``?after_seq=N``. Global monotonicity
+# across workers (Redis ``INCR``) arrives with the Redis event bus; within a
+# single worker this counter is authoritative and persisted into ``agent_logs``.
+_seq_counters: dict[str, int] = {}
+_seq_lock = asyncio.Lock()
+
+
+async def _next_seq(task_id: str) -> int:
+    async with _seq_lock:
+        seq = _seq_counters.get(task_id, 0) + 1
+        _seq_counters[task_id] = seq
+        return seq
+
+
 def _make_emit(task_id: str, user_id: uuid.UUID):
     """Build an emit callback that streams + persists an agent event.
 
-    Log documents carry `user_id` so an account purge can find them directly;
-    the enclosing session document already stores the owner.
+    Each event is stamped with an envelope version and a monotonic ``seq``.
+    ``agent_logs`` is the seq-ordered source of truth (backs the WebSocket
+    snapshot/cursor); the ``task_sessions.events`` mirror is capped so a long
+    task can no longer grow one Mongo document past the 16 MB BSON limit.
+    Log documents carry `user_id` so an account purge can find them directly.
     """
 
     async def emit(event_type: EventType, payload: dict[str, Any]) -> None:
         now = datetime.now(UTC)
+        seq = await _next_seq(task_id)
         event = {
+            "v": TASK_EVENT_ENVELOPE_VERSION,
+            "seq": seq,
             "type": event_type.value,
             "ts": now.isoformat(),
             **payload,
         }
+        # Correlate the event with the active trace span (Backend v2 §4.5); None
+        # when tracing is off, so the wire shape is unchanged for existing clients.
+        current_span = tracing.tracer.current()
+        if current_span is not None:
+            event["span_id"] = current_span.span_id
         await event_bus.publish(task_id, event)
         # The two persistence writes are independent — run them concurrently.
         # `created_at` is a BSON date (unlike the ISO-string `ts`) because the
         # retention TTL index only expires real date fields.
         await asyncio.gather(
             _sessions_collection().update_one(
-                {"task_id": task_id}, {"$push": {"events": event}}
+                {"task_id": task_id},
+                {
+                    "$push": {
+                        "events": {"$each": [event], "$slice": -TASK_EVENTS_MONGO_KEEP}
+                    }
+                },
             ),
             _logs_collection().insert_one(
                 {
@@ -100,11 +140,39 @@ def _make_emit(task_id: str, user_id: uuid.UUID):
     return emit
 
 
+async def events_since(
+    task_id: str, user_id: uuid.UUID, after_seq: int, *, limit: int
+) -> tuple[list[dict[str, Any]], int]:
+    """Owner-scoped snapshot of a task's events with ``seq > after_seq``.
+
+    Reads the ``agent_logs`` source of truth (not the capped session mirror),
+    ordered by seq and capped at ``limit``. Returns the events (projected to the
+    live wire shape) and the highest seq in the batch (the resume cursor).
+    """
+    # Ownership: the session doc is the authoritative owner record.
+    if await get_task(task_id, user_id) is None:
+        return [], after_seq
+    cursor = (
+        _logs_collection()
+        .find(
+            {"task_id": task_id, "seq": {"$gt": after_seq}},
+            {"_id": 0, "task_id": 0, "user_id": 0, "created_at": 0},
+        )
+        .sort("seq", 1)
+        .limit(limit)
+    )
+    events = [event async for event in cursor]
+    last_seq = events[-1]["seq"] if events else after_seq
+    return events, last_seq
+
+
 async def start_task(
     *,
     user_id: uuid.UUID,
     payload: TaskCreate,
     api_key: str | None,
+    base_url: str | None = None,
+    model: str | None = None,
 ) -> str:
     """Create a task session and launch the orchestration in the background."""
     task_id = str(uuid.uuid4())
@@ -126,9 +194,26 @@ async def start_task(
     }
     await _sessions_collection().insert_one(document)
 
-    runner = asyncio.create_task(
-        _run_task(task_id=task_id, user_id=user_id, payload=payload, api_key=api_key)
+    # Durable run header: authoritative status + ownership lease + resume deadline.
+    deadline_at = now + timedelta(seconds=settings.task_timeout_seconds)
+    await task_run_store.create_run(
+        task_id=task_id,
+        user_id=user_id,
+        payload=payload.model_dump(mode="json"),
+        provider=payload.provider.value,
+        deadline_at=deadline_at,
     )
+
+    rc = task_engine.TaskRunContext(
+        task_id=task_id,
+        user_id=user_id,
+        payload=payload,
+        api_key=api_key,
+        deadline_at=deadline_at,
+        base_url=base_url,
+        model=model,
+    )
+    runner = asyncio.create_task(task_engine.run(rc))
     _running[task_id] = runner
     runner.add_done_callback(lambda _t: _on_task_done(task_id))
     return task_id
@@ -137,156 +222,59 @@ async def start_task(
 def _on_task_done(task_id: str) -> None:
     """Clean up per-task registries when a task finishes or is cancelled."""
     _running.pop(task_id, None)
+    _pending_question_ids.pop(task_id, None)
+    _seq_counters.pop(task_id, None)
     future = _pending_questions.pop(task_id, None)
     if future is not None and not future.done():
         future.cancel()
 
 
-async def _run_task(
-    *,
-    task_id: str,
-    user_id: uuid.UUID,
-    payload: TaskCreate,
-    api_key: str | None,
-) -> None:
-    """Execute the pipeline with timeout + error handling."""
-    emit = _make_emit(task_id, user_id)
-
-    adapter = get_adapter(payload.provider, api_key=api_key)
-    if payload.provider is LLMProvider.GEMINI:
-        # Free-tier quota can run out mid-task; degrade to the local model
-        # per call and tell the user instead of failing the whole task.
-        async def _notify_fallback(reason: str) -> None:
-            await emit(
-                EventType.AGENT_MESSAGE,
-                {
-                    "from": "system",
-                    "to": "user",
-                    "content": (
-                        f"Gemini unavailable ({reason}); "
-                        "falling back to the local model."
-                    ),
-                },
-            )
-
-        adapter = FallbackLLMAdapter(
-            primary=adapter,
-            fallback=get_adapter(LLMProvider.OLLAMA),
-            on_fallback=_notify_fallback,
-        )
-
-    # Outermost wrapper: every LLM call the pipeline makes is billed.
-    meter = TokenMeter(adapter)
-
-    terminal = TaskStatus.FAILED
-    # Every await lives inside this block. A cancellation or failure while
-    # setting up -- notably the RAG lookup, which hits Qdrant and the embedding
-    # model -- would otherwise kill the task silently: no terminal status, and
-    # no usage record for the tokens it had already spent.
-    try:
-        await _set_status(task_id, TaskStatus.RUNNING)
-        await emit(EventType.TASK_STARTED, {"prompt": payload.prompt})
-
-        # Best-effort RAG grounding: prior conversations + document chunks.
-        memory_context = await _gather_context(user_id, payload.prompt)
-
-        ctx = AgentContext(
-            adapter=meter,
-            emit=emit,
-            max_iterations=payload.max_iterations,
-            max_review_iterations=payload.max_review_iterations,
-            memory_context=memory_context,
-            ask_user=_make_ask_user(task_id),
-            allow_questions=payload.allow_questions,
-            max_web_searches=settings.web_search_max_uses_per_subtask,
-            max_data_fetches=settings.data_fetch_max_uses_per_subtask,
-            max_code_executions=settings.code_execution_max_uses_per_subtask,
-            max_tool_calls=settings.subagent_max_tool_calls,
-            max_parallel_subagents=settings.subagent_max_parallel,
-        )
-
-        result = await asyncio.wait_for(
-            _pipeline(ctx, payload),
-            timeout=settings.task_timeout_seconds,
-        )
-    except TimeoutError:
-        terminal = TaskStatus.TIMEOUT
-        await _fail(task_id, emit, TaskStatus.TIMEOUT, "Task exceeded time limit.")
-        return
-    except asyncio.CancelledError:
-        terminal = TaskStatus.CANCELLED
-        await _fail(task_id, emit, TaskStatus.CANCELLED, "Task cancelled.")
-        raise
-    except Exception as exc:  # noqa: BLE001 - surface any pipeline failure
-        terminal = TaskStatus.FAILED
-        await _fail(task_id, emit, TaskStatus.FAILED, str(exc))
-        return
-    else:
-        # A pipeline that returned is not automatically a success: if every
-        # subtask errored (e.g. the chat model is unreachable), the task FAILED
-        # -- otherwise the user sees an empty answer marked "completed".
-        all_failed = result.get("all_subtasks_failed", False)
-        terminal = TaskStatus.FAILED if all_failed else TaskStatus.COMPLETED
-        error_message = (
-            "All subtasks failed; no output was produced." if all_failed else None
-        )
-        # The meter, not the subagent sum, is the authoritative token count.
-        metadata = {**result.get("metadata", {}), "total_tokens": meter.total_tokens}
-        await _sessions_collection().update_one(
-            {"task_id": task_id},
-            {
-                "$set": {
-                    "status": terminal.value,
-                    "domain": result.get("domain"),
-                    # Persisted even on failure so the architect view can render
-                    # the failed subtask nodes.
-                    "result": result,
-                    "metadata": metadata,
-                    "error": error_message,
-                    "updated_at": datetime.now(UTC),
-                }
-            },
-        )
-        if all_failed:
-            await emit(EventType.TASK_FAILED, {"error": error_message})
-        else:
-            await emit(EventType.TASK_COMPLETED, {"answer": result.get("answer")})
-            # Best-effort: remember the interaction for future RAG context.
-            await _remember(user_id, payload.prompt, result.get("answer", ""))
-        await event_bus.close(task_id)
-    finally:
-        # Tokens a doomed task already burned still count against the quota, so
-        # this runs on every path -- including the re-raised cancellation.
-        await usage_service.record_task_usage(
-            user_id=user_id,
-            task_id=task_id,
-            tokens=meter.total_tokens,
-            provider=meter.provider.value,
-            status=terminal.value,
-        )
-
-
-async def _pipeline(ctx: AgentContext, payload: TaskCreate) -> dict[str, Any]:
+async def _route(  # noqa: ANN001
+    ctx, payload: TaskCreate, *, user_id: uuid.UUID | None = None
+) -> orchestrator.RouteResult:
+    """Resolve the task's domain + complexity: the user's explicit pick, else
+    orchestrator routing. Split out of ``_pipeline`` so the engine can checkpoint
+    the routing decision independently of execution. A user-picked domain skips
+    classification and runs at the standard effort tier. When ``user_id`` is
+    given, the caller's routable custom agents are merged into the routing
+    catalog so the orchestrator can pick one (Backend v2 §4.3)."""
     if payload.domain:
         # User picked a domain agent explicitly — skip orchestrator routing.
-        domain = payload.domain
         await ctx.emit(
             EventType.NODE_UPDATE,
             {
                 "role": AgentRole.ORCHESTRATOR.value,
                 "state": "done",
-                "domain": domain,
+                "domain": payload.domain,
                 "reason": "Selected by the user",
                 "source": "user",
             },
         )
-    else:
-        domain = await orchestrator.route(ctx, payload.prompt)
+        # A user who picked the domain gets its full team (no effort reduction).
+        return orchestrator.RouteResult(domain=payload.domain, complexity="complex")
+    custom_agents: list[dict[str, Any]] = []
+    if user_id is not None:
+        from app.services import agent_service
+
+        try:
+            custom_agents = await agent_service.list_routable_agents(user_id)
+        except Exception:  # noqa: BLE001 - custom-agent merge is best-effort
+            logger.warning("routable custom agents lookup failed", exc_info=True)
+    return await orchestrator.route_decision(
+        ctx, payload.prompt, custom_agents=custom_agents
+    )
+
+
+async def _pipeline(ctx, payload: TaskCreate) -> dict[str, Any]:  # noqa: ANN001
+    """Route then execute. Retained for direct/domain-selection tests; the engine
+    drives the two steps separately so it can checkpoint between them."""
+    decision = await _route(ctx, payload)
     return await main_agent.run(
         ctx,
-        domain=domain,
+        domain=decision.domain,
         prompt=payload.prompt,
         reviewer_enabled=payload.reviewer_enabled,
+        complexity=decision.complexity,
     )
 
 
@@ -315,33 +303,78 @@ async def _gather_context(user_id: uuid.UUID, prompt: str) -> list[str]:
 
 
 def _make_ask_user(task_id: str):
-    """Build a human-in-the-loop callback bound to a task (CLAUDE.md §12)."""
+    """Build a human-in-the-loop callback bound to a task (CLAUDE.md §12).
+
+    The question is persisted (``task_questions``) and the run flips to
+    ``awaiting_answer`` while waiting, so the pause is visible in durable state;
+    the in-process future still delivers the answer to the local agent (Tur 8).
+    """
 
     async def ask(question: str) -> str:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[str] = loop.create_future()
         _pending_questions[task_id] = future
+        expires_at = datetime.now(UTC) + timedelta(seconds=HITL_TIMEOUT_SECONDS)
+        question_id = await question_store.create_question(
+            task_id=task_id, question=question, expires_at=expires_at
+        )
+        _pending_question_ids[task_id] = question_id
+        await task_run_store.set_status(task_id, TaskStatus.AWAITING_ANSWER.value)
+        await _set_status(task_id, TaskStatus.AWAITING_ANSWER)
         try:
-            return await asyncio.wait_for(future, timeout=_HITL_TIMEOUT_SECONDS)
+            answer = await asyncio.wait_for(future, timeout=HITL_TIMEOUT_SECONDS)
+            await _restore_running(task_id)
+            return answer
         except TimeoutError:
+            await question_store.expire_question(question_id)
+            await _restore_running(task_id)
             return "(no answer provided; proceed with best effort)"
         finally:
+            # No await here on the cancellation path: the engine's terminal
+            # handler owns the authoritative status when the run is cancelled.
             _pending_questions.pop(task_id, None)
+            _pending_question_ids.pop(task_id, None)
 
     return ask
 
 
+async def _restore_running(task_id: str) -> None:
+    """Return a run from ``awaiting_answer`` to ``running`` after HITL resolves."""
+    await task_run_store.set_status(task_id, TaskStatus.RUNNING.value)
+    await _set_status(task_id, TaskStatus.RUNNING)
+
+
 async def submit_answer(task_id: str, user_id: uuid.UUID, answer: str) -> bool:
-    """Deliver a user's answer to a task waiting on a question. Owner-only."""
+    """Deliver a user's answer to a task waiting on a question. Owner-only.
+
+    Delivered locally when this worker runs the task; otherwise routed over the
+    control channel to whichever worker owns it (the answer is persisted first so
+    a concurrent resume sees it).
+    """
     doc = await get_task(task_id, user_id)
     if doc is None:
         return False
+
     future = _pending_questions.get(task_id)
-    if future is None or future.done():
-        return False
-    future.set_result(answer)
-    await _make_emit(task_id, user_id)(EventType.USER_ANSWER, {"answer": answer})
-    return True
+    if future is not None and not future.done():
+        future.set_result(answer)
+        question_id = _pending_question_ids.get(task_id)
+        if question_id is not None:
+            await question_store.answer_question(question_id, answer)
+        await _make_emit(task_id, user_id)(EventType.USER_ANSWER, {"answer": answer})
+        return True
+
+    # Not awaited locally: another worker may own a task paused on a question.
+    if doc.get("status") == TaskStatus.AWAITING_ANSWER.value:
+        pending = await question_store.latest_pending(task_id)
+        if pending is not None:
+            await question_store.answer_question(pending.question_id, answer)
+            await event_bus.publish_ctrl(task_id, {"op": "answer", "answer": answer})
+            await _make_emit(task_id, user_id)(
+                EventType.USER_ANSWER, {"answer": answer}
+            )
+            return True
+    return False
 
 
 async def _remember(user_id: uuid.UUID, prompt: str, answer: str) -> None:
@@ -373,7 +406,16 @@ async def _fail(task_id, emit, status: TaskStatus, message: str) -> None:  # noq
             }
         },
     )
-    await emit(EventType.TASK_FAILED, {"error": message})
+    # Carry the true terminal status so the live view freezes with the right
+    # look (cancelled → orange, timeout/failed → red) even when this client did
+    # not initiate the cancel, and on snapshot replay. A user-initiated cancel
+    # is its own event type so the client can tell it apart from a failure.
+    event_type = (
+        EventType.TASK_CANCELLED
+        if status is TaskStatus.CANCELLED
+        else EventType.TASK_FAILED
+    )
+    await emit(event_type, {"error": message, "status": status.value})
     await event_bus.close(task_id)
 
 
@@ -423,16 +465,63 @@ async def list_tasks(
     return summaries, total
 
 
+_LIVE_STATUSES = {
+    TaskStatus.PENDING.value,
+    TaskStatus.RUNNING.value,
+    TaskStatus.AWAITING_ANSWER.value,
+}
+
+
 async def cancel_task(task_id: str, user_id: uuid.UUID) -> bool:
-    """Cancel a running task owned by the user. Returns True if cancelled."""
+    """Cancel a live task owned by the user. Returns True if the cancel applies.
+
+    The intent is persisted on ``task_runs`` so a task owned by another worker
+    (or one that later resumes) honours it at the next step boundary; if the
+    runner is local, it is cancelled immediately.
+    """
+    doc = await get_task(task_id, user_id)
+    if doc is None:
+        return False
+    await task_run_store.request_cancel(task_id)
+    runner = _running.get(task_id)
+    if runner is not None and not runner.done():
+        runner.cancel()
+        return True
+    # No local runner: the task may be owned by another worker. Signal it over
+    # the control channel (its ctrl-listener cancels the local runner); the
+    # persisted flag is the backstop, honoured at the next step boundary / on
+    # resume. A terminal task cannot be cancelled.
+    if doc.get("status") in _LIVE_STATUSES:
+        await event_bus.publish_ctrl(task_id, {"op": "cancel"})
+        return True
+    return False
+
+
+async def delete_task(task_id: str, user_id: uuid.UUID) -> bool:
+    """Delete a task owned by the user, with its logs. Returns True if removed.
+
+    A still-running task is cancelled first so its background runner stops
+    writing to a session document that is about to disappear. The session and
+    its `agent_logs` are removed together (both keyed by `task_id`); the
+    conversation memory written on success is not tagged per task, so it is
+    left to the account-purge path (CLAUDE.md §Tur 4).
+    """
     doc = await get_task(task_id, user_id)
     if doc is None:
         return False
     runner = _running.get(task_id)
     if runner is not None and not runner.done():
         runner.cancel()
-        return True
-    return False
+    await asyncio.gather(
+        _sessions_collection().delete_one(
+            {"task_id": task_id, "user_id": str(user_id)}
+        ),
+        _logs_collection().delete_many({"task_id": task_id, "user_id": str(user_id)}),
+    )
+    # Drop the durable run header too (checkpoints/questions cascade), so the
+    # reconciliation sweep can never resurrect a deleted task.
+    await task_run_store.delete_run(task_id, user_id)
+    return True
 
 
 def requires_api_key(provider: LLMProvider) -> bool:
