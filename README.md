@@ -155,9 +155,14 @@ feedback format are defined in [`CLAUDE.md`](./CLAUDE.md) §5.4.
 
 | Module | Description | Status |
 |---|---|---|
-| Auth | Register / login / refresh token, JWT-based session management | Live |
+| Auth | Register / login / logout, JWT access tokens + rotating refresh tokens | Live |
+| Email verification | Verify / resend / forgot / reset flows via pluggable email providers (console, Resend); soft-gates task start and key creation | Live |
+| Two-factor auth | TOTP with QR provisioning and single-use recovery codes | Live |
+| Session management | List active sessions, revoke one or all others | Live |
 | BYOK key management | AES-256-GCM encrypted storage for 12 LLM providers, incl. custom endpoints | Live |
 | Task flow | Orchestrator → Main Agent → Subagents → optional Reviewer, live over WebSocket | Live |
+| Durable task engine | Postgres-checkpointed steps with lease + heartbeat — a crashed worker's tasks resume instead of hanging; runs multi-worker over a Redis event bus | Live |
+| Task history | List, inspect, cancel, and delete past tasks | Live |
 | Architect view | Live node map / log stream of inter-agent communication | Live |
 | RAG / memory | Per-user conversation history + document embeddings (Qdrant), retrieved at task start | Live |
 | Document upload | `.txt` / `.md` upload → chunking → embedding (`nomic-embed-text`) | Live |
@@ -166,19 +171,22 @@ feedback format are defined in [`CLAUDE.md`](./CLAUDE.md) §5.4.
 | Code execution tool | Subagents run Python in a resource-limited Docker sandbox; degrades gracefully when Docker is absent | Live |
 | Dashboard & metrics | Token usage, success/failure rate, cost summary from real data | Live |
 | Agent profile | Custom agent CRUD, system prompt editing, tool assignment, security scanning | Live |
+| Dynamic agents | Custom agents run inside the task flow (`custom:{id}` routing, sandboxed persona) | Live |
 | Marketplace | Publish agent teams (mandatory security scan), one-click install, install counter | Live |
+| Marketplace reviews | Ratings (one review per user), aggregated scores, install trends, abuse reports | Live |
 | Human-in-the-loop | Main Agent can ask the user one clarifying question when uncertain | Live |
 | Loop protection | `MAX_ITERATIONS`, `MAX_REVIEW_ITERATIONS`, `TASK_TIMEOUT_SECONDS`, per-subtask tool-call caps | Live |
 | Multi-LLM providers | 12 adapters over one abstract interface, with automatic fallback chains — new provider = one new adapter class | Live |
+| Model routing | Per-role model selection: per-task overrides > user preferences > plan-tier defaults | Live |
 | SSRF guard | Custom provider endpoints validated: http(s) only, credential-free, publicly routable | Live |
 | Rate limiting | Every endpoint throttled; Redis-backed sliding window with in-memory fallback | Live |
 | Subscriptions & quota | Starter / Pro / Scale plans, per-period token quota, usage ledger; **mock payment gateway** | Live |
 | Legal & GDPR | Terms / privacy / security / acceptable-use / cookies pages; account deletion + data export | Live |
-| Observability | Optional Sentry error tracking, structured JSON logging | Live |
-| Deployment | Single Docker Compose stack, Caddy single-origin TLS, GHCR images, SSH rollout | Live |
+| Admin & moderation | Role-gated admin surface: user suspension, marketplace / review moderation, report queue, audit log | Live |
+| Observability | Optional Sentry error tracking (backend + frontend), structured JSON logging, request IDs | Live |
+| Tracing & costs | Optional per-task span tracing with waterfall + cost breakdowns by day / model / domain | Live |
+| Deployment | Single Docker Compose stack, Caddy single-origin TLS, GHCR images, SSH rollout, off-site backups | Live |
 | Real payment processor | Swap the mock gateway for iyzico / PayTR / Adyen / Stripe via one adapter | Planned |
-| Marketplace ratings | Community reviews and scoring on agent teams | Planned |
-| Refresh token rotation | Hardened production auth | Planned |
 | i18n / GraphQL | UI localization; GraphQL API if REST performance requires it | Planned |
 
 ## Tech Stack
@@ -279,8 +287,9 @@ maestro/
 ├── frontend/                        # Next.js + React + TypeScript
 │   └── src/
 │       ├── app/
-│       │   ├── (auth)/              # login, register
-│       │   ├── (app)/               # dashboard, architect, marketplace, agents, documents, settings
+│       │   ├── (auth)/              # login, register, verify-email, password reset
+│       │   ├── (app)/               # dashboard, architect, traces, marketplace, agents,
+│       │   │                        # documents, settings, admin
 │       │   └── (marketing)/         # landing, pricing, legal, docs, how-it-works, use-cases
 │       ├── components/              # ui/ dashboard/ architect/ marketplace/ agents/ layout/ legal/
 │       ├── lib/                     # API client, SEO config, legal content
@@ -292,19 +301,20 @@ maestro/
 │   │   ├── main.py                  # Entry point
 │   │   ├── core/                    # config, security, constants, database
 │   │   ├── api/v1/                  # auth, users, api_keys, agents, tasks, billing,
-│   │   │                            # documents, dashboard, marketplace
+│   │   │                            # documents, dashboard, marketplace, admin
 │   │   ├── api/websocket.py         # WS connection management
 │   │   ├── agents/                  # orchestrator, main_agent, subagent, reviewer, registry
 │   │   ├── models/                  # SQLAlchemy & Pydantic models
 │   │   ├── schemas/                 # Request/response schemas
-│   │   ├── services/                # llm, memory, task, marketplace, billing/quota/usage,
-│   │   │                            # payment/, web_search, data_fetch, code_execution
-│   │   ├── scripts/                 # purge_deleted_accounts, seed_marketplace
-│   │   └── utils/                   # prompt_guard, rate_limiter, events
+│   │   ├── services/                # llm, memory, task_engine, marketplace, moderation,
+│   │   │                            # billing/quota/usage, payment/, email/, trace,
+│   │   │                            # two_factor, web_search, data_fetch, code_execution
+│   │   ├── scripts/                 # purge_deleted_accounts, seed_marketplace, grant_admin
+│   │   └── utils/                   # prompt_guard, rate_limiter, events, tracing
 │   ├── alembic/                     # PostgreSQL migrations
 │   └── tests/
 │
-├── scripts/                         # dev.ps1 (Windows) / dev.sh (macOS/Linux)
+├── scripts/                         # dev.ps1 / dev.sh (one-command dev), backup.sh
 ├── docker-compose.yml               # dev: Postgres, Mongo, Qdrant, Redis
 ├── docker-compose.prod.yml          # prod: full stack + Caddy + Ollama
 ├── Caddyfile                        # single-origin reverse proxy + auto TLS
@@ -360,6 +370,8 @@ openssl rand -base64 32    # API_KEY_MASTER_KEY (32-byte AES-256 master key)
 |---|---|---|
 | `FREE_MODEL_ENDPOINT` | Ollama OpenAI-compatible endpoint | `http://localhost:11434/v1` |
 | `FREE_MODEL_NAME` | Free-tier / local model | `qwen3.5:9b` |
+| `OLLAMA_CHAT_ENABLED` | Serve the local Ollama chat model; `false` on hosted deployments where the Ollama service only runs embeddings | `true` |
+| `OLLAMA_NATIVE_TOOLS` | Use Ollama's native function calling instead of the directive fallback | `false` |
 | `EMBEDDING_ENDPOINT` | Embedding endpoint; reuses `FREE_MODEL_ENDPOINT` when blank | — |
 | `EMBEDDING_MODEL_NAME` | RAG embedding model | `nomic-embed-text` |
 | `EMBEDDING_DIM` | Embedding vector dimension | `768` |
@@ -393,6 +405,7 @@ openssl rand -base64 32    # API_KEY_MASTER_KEY (32-byte AES-256 master key)
 | `TASK_TIMEOUT_SECONDS` | Total timeout per task (whole pipeline) | `1800` |
 | `SUBAGENT_MAX_PARALLEL` | Concurrent Subagents per task | `3` |
 | `SUBAGENT_MAX_TOOL_CALLS` | Total tool calls (all kinds) per subtask | `6` |
+| `REVIEWER_FAIL_MODE` | What a reviewer crash means for the subtask: `warn`, `approve`, or `reject` | `warn` |
 | `TASK_RETENTION_DAYS` | Mongo TTL on task sessions + agent logs; dashboard metrics cover this window | `30` |
 
 ### Payments
@@ -404,6 +417,16 @@ openssl rand -base64 32    # API_KEY_MASTER_KEY (32-byte AES-256 master key)
 Plan prices and quotas are product constants in
 `backend/app/core/constants.py`, not environment variables.
 
+### Transactional email
+
+| Variable | Description | Default |
+|---|---|---|
+| `EMAIL_PROVIDER` | `console` logs messages (dev / self-host — verification links are read from the log); `resend` sends via the Resend API | `console` |
+| `RESEND_API_KEY` | Required when `EMAIL_PROVIDER=resend`; checked at boot in production | — |
+| `EMAIL_FROM` | From header for outgoing mail | `Maestro <noreply@maestro.example.com>` |
+| `SITE_URL` | Base URL the backend uses to build verification / reset links | `http://localhost:3000` |
+| `EMAIL_VERIFICATION_REQUIRED` | Soft-gates task start and API-key creation until the email is verified | `true` |
+
 ### App & observability
 
 | Variable | Description | Default |
@@ -414,6 +437,8 @@ Plan prices and quotas are product constants in
 | `SENTRY_DSN` | Sentry error tracking; empty disables Sentry entirely | — |
 | `SENTRY_TRACES_SAMPLE_RATE` | Tracing/APM sample rate (`0.0` = off) | `0.0` |
 | `SENTRY_ENVIRONMENT` | Sentry environment tag; falls back to `ENVIRONMENT` | — |
+| `TRACING_ENABLED` | Per-task span tracing (Mongo `trace_spans`); disabled = zero overhead | `false` |
+| `TRACE_RETENTION_DAYS` | TTL on stored trace spans | `30` |
 
 ## Plans & Quota
 
@@ -443,13 +468,31 @@ authentication and carry an explicit rate limit; request and response bodies are
 with Pydantic v2.
 
 ```
+# Health
+GET    /health                              # liveness
+GET    /health/ready                        # Postgres / Mongo / Qdrant / Redis probes
+
 # Authentication
 POST   /api/v1/auth/register
 POST   /api/v1/auth/login
-POST   /api/v1/auth/refresh
+POST   /api/v1/auth/login/totp              # second step when 2FA is enabled
+POST   /api/v1/auth/refresh                 # rotating refresh tokens (reuse detection)
+POST   /api/v1/auth/logout
+POST   /api/v1/auth/verify-email
+POST   /api/v1/auth/resend-verification
+POST   /api/v1/auth/forgot-password
+POST   /api/v1/auth/reset-password
 
-# User account (GDPR)
+# User account (profile, sessions, 2FA, GDPR)
 GET    /api/v1/users/me
+PATCH  /api/v1/users/me                     # profile + model preferences
+POST   /api/v1/users/me/password
+GET    /api/v1/users/me/sessions
+DELETE /api/v1/users/me/sessions/{family_id}
+POST   /api/v1/users/me/sessions/revoke-others
+POST   /api/v1/users/me/2fa/setup
+POST   /api/v1/users/me/2fa/enable
+POST   /api/v1/users/me/2fa/disable
 GET    /api/v1/users/me/export              # downloadable JSON data export (Art. 20)
 DELETE /api/v1/users/me                     # request account deletion (30-day grace)
 POST   /api/v1/users/me/deletion/cancel     # cancel a pending deletion
@@ -461,39 +504,61 @@ DELETE /api/v1/api-keys/{id}
 
 # Agent management
 GET    /api/v1/agents
+GET    /api/v1/agents/tools                 # assignable tool catalog
 POST   /api/v1/agents
 GET    /api/v1/agents/{id}
 PUT    /api/v1/agents/{id}
-DELETE /api/v1/agents/{id}
 PATCH  /api/v1/agents/{id}/system-prompt
+DELETE /api/v1/agents/{id}
 
 # Task management
 POST   /api/v1/tasks
+GET    /api/v1/tasks                        # task history
 GET    /api/v1/tasks/{id}
+GET    /api/v1/tasks/{id}/trace             # span waterfall (when tracing is enabled)
+GET    /api/v1/tasks/{id}/trace/summary
 POST   /api/v1/tasks/{id}/cancel
 POST   /api/v1/tasks/{id}/answer            # human-in-the-loop answer
+DELETE /api/v1/tasks/{id}
 WS     /api/v1/tasks/{id}/stream            # live task stream
 
 # Billing & subscriptions
 GET    /api/v1/billing/plans                # plan list with prices and quotas
+GET    /api/v1/billing/plans/public         # anonymous pricing for marketing pages
 GET    /api/v1/billing/subscription         # plan, status + live quota usage
+GET    /api/v1/billing/payment-method       # brand + last4 + expiry only
 POST   /api/v1/billing/subscribe            # take card, charge first period, activate
 POST   /api/v1/billing/cancel               # stop renewal (usable until period end)
 
 # Documents (RAG)
 POST   /api/v1/documents
 GET    /api/v1/documents
+DELETE /api/v1/documents/{id}
 
 # Dashboard & metrics
 GET    /api/v1/dashboard/metrics
 GET    /api/v1/dashboard/token-usage
 GET    /api/v1/dashboard/cost-summary
+GET    /api/v1/dashboard/costs              # trace-derived costs by day / model / domain
 
 # Marketplace
-GET    /api/v1/marketplace
+GET    /api/v1/marketplace                  # includes ratings + install trends
+GET    /api/v1/marketplace/showcase         # anonymous landing showcase
+GET    /api/v1/marketplace/{id}
 POST   /api/v1/marketplace
 POST   /api/v1/marketplace/{id}/install
 GET    /api/v1/marketplace/{id}/reviews
+POST   /api/v1/marketplace/{id}/reviews     # one review per user (upsert)
+POST   /api/v1/marketplace/{id}/report
+POST   /api/v1/marketplace/reviews/{review_id}/report
+
+# Admin & moderation (role-gated)
+GET    /api/v1/admin/overview
+GET    /api/v1/admin/users                  # + /{id}, /{id}/suspend, /{id}/unsuspend, /{id}/role
+GET    /api/v1/admin/marketplace/items      # + /{id}/status, /{id}/reviews, review hide
+DELETE /api/v1/admin/agents/{id}            # custom-agent takedown
+GET    /api/v1/admin/reports                # + /{id}/resolve
+GET    /api/v1/admin/audit
 
 # Architect (live view)
 WS     /api/v1/architect/live
@@ -501,11 +566,14 @@ WS     /api/v1/architect/live
 
 ## Database Schemas
 
-- **PostgreSQL** — relational data: `users`, `api_keys` (encrypted), `subscriptions`,
-  `payment_methods` (brand + last4 + expiry only — raw PAN is never stored), and the
-  append-only `usage_records` quota ledger.
-- **MongoDB** — dynamic data: `agent_logs`, `marketplace_items`, `task_sessions`,
-  `agent_configurations`.
+- **PostgreSQL** — relational data: `users`, `api_keys` (encrypted), `refresh_tokens`
+  (session families), `email_tokens`, `recovery_codes` (2FA), `subscriptions`,
+  `payment_methods` (brand + last4 + expiry only — raw PAN is never stored), the
+  append-only `usage_records` quota ledger, and the durable task engine tables
+  `task_runs` / `task_checkpoints` / `task_questions`.
+- **MongoDB** — dynamic data: `agent_logs`, `marketplace_items` plus reviews,
+  moderation reports and the admin audit log, `task_sessions`, `agent_configurations`,
+  `trace_spans` (TTL-bound).
 - **Qdrant** — vector data: `conversation_memories`, `document_chunks`.
 
 See [`CLAUDE.md`](./CLAUDE.md) §6 for column-level detail.
@@ -529,6 +597,13 @@ See [`CLAUDE.md`](./CLAUDE.md) §6 for column-level detail.
   through automatic security scanning (`backend/app/utils/prompt_guard.py`). Marketplace
   agents cannot reach the installing user's keys directly; all calls go through a
   sandboxed service layer.
+- **Account security:** optional TOTP two-factor auth (encrypted secret, Argon2-hashed
+  single-use recovery codes) and rotating refresh tokens with reuse detection — replaying
+  a rotated token revokes the entire session family. Active sessions can be listed and
+  revoked individually. Email verification soft-gates task start and API-key creation.
+- **Moderation:** a role-gated admin surface handles user suspension, marketplace item
+  and review moderation, and a user-facing report queue; every admin action is written
+  to an audit log.
 - **Isolation:** RAG memory and all user data are partitioned per user. Every WebSocket
   connection is authenticated before `accept()` and subject to the same rate limiter as
   HTTP routes.
@@ -545,8 +620,9 @@ See [`CLAUDE.md`](./CLAUDE.md) §9 for the full policy. To report a vulnerabilit
 
 ## Development & Verification
 
-CI runs on every push and PR to `main`: backend (ruff lint + format check + pytest) and
-frontend (ESLint + type-check + production build). See
+CI runs on every push and PR to `main`: backend (ruff lint + format check + pytest +
+dependency-lock freshness check) and frontend (ESLint + type-check + production build);
+non-draft PRs additionally build-verify both Docker images. See
 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
 
 ```bash
@@ -573,7 +649,9 @@ shared base and are a few lines each). The same pattern applies to payment provi
 Maestro ships as a single Docker Compose stack: Postgres, MongoDB, Qdrant, Redis, an
 Ollama embedding service, the API, the web app, and Caddy for automatic TLS. Caddy is the
 only service that opens a port and serves the app and API from one origin, so there is no
-CORS and no domain baked into any image. A 4 GB VM is sufficient.
+CORS and no domain baked into any image. A 4 GB VM is sufficient. An optional
+self-hosted Umami analytics service ships behind a Compose profile
+(`COMPOSE_PROFILES=analytics`).
 
 ```bash
 # on the host, alongside docker-compose.prod.yml and Caddyfile
@@ -599,9 +677,16 @@ end-to-end flow at a time.
 - **Round 5** — Containerization, single-origin Caddy stack, GHCR + SSH deployment.
 - **Round 6** — Redis-backed rate limiting across every route and WebSocket.
 - **Round 7** — SEO surface (sitemap, robots, OG images, JSON-LD).
-- **Next** — real payment processor, Marketplace ratings, dynamic agents in the task flow,
-  refresh-token rotation, transactional email, i18n, GraphQL (if needed), broader test
-  coverage.
+- **Rounds 8–13** — Backend v2: durable execution engine (Postgres checkpoints,
+  crash-safe resume), distributed runtime (Redis event bus, multi-worker), LLM layer v2
+  (streaming, native tool calls, per-role model routing), dynamic agent registry, span
+  tracing + cost observability, quality layer (weighted review rubric, effort scaling,
+  token budgets).
+- **Since then** — email verification + transactional email, TOTP two-factor auth,
+  session management with refresh-token rotation, marketplace reviews & ratings, the
+  admin / moderation surface, off-site backups, fully pinned dependency lockfiles.
+- **Next** — real payment processor, pre-purge reminder email, i18n (starting with the
+  Turkish KVKK notice), GraphQL (if REST performance requires it).
 
 See [`CLAUDE.md`](./CLAUDE.md) §16 for the full breakdown.
 
