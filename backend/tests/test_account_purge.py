@@ -23,7 +23,7 @@ from app.core.constants import (
 )
 from app.models.user import User
 from app.scripts.purge_deleted_accounts import purge_due_accounts
-from app.services import memory_service, user_service
+from app.services import marketplace_service, memory_service, user_service
 
 _USER_ID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 _OTHER_ID = uuid.UUID("22222222-2222-2222-2222-222222222222")
@@ -41,6 +41,9 @@ def _matches(document: dict[str, Any], criteria: dict[str, Any]) -> bool:
                 return False
         elif isinstance(expected, dict) and "$in" in expected:
             if document.get(key) not in expected["$in"]:
+                return False
+        elif isinstance(expected, dict) and "$ne" in expected:
+            if document.get(key) == expected["$ne"]:
                 return False
         elif document.get(key) != expected:
             return False
@@ -68,6 +71,29 @@ class FakeCollection:
             for field in update.get("$unset", {}):
                 doc.pop(field, None)
             doc.update(update.get("$set", {}))
+
+    async def update_one(
+        self, criteria: dict[str, Any], update: dict[str, Any]
+    ) -> None:
+        for doc in self.documents:
+            if _matches(doc, criteria):
+                doc.update(update.get("$set", {}))
+                return
+
+    def aggregate(self, pipeline: list[dict[str, Any]]):
+        # Supports the recompute_rating pipeline: $match then $group avg/count.
+        matched = [d for d in self.documents if _matches(d, pipeline[0]["$match"])]
+
+        async def _rows():
+            if matched:
+                ratings = [d["rating"] for d in matched]
+                yield {
+                    "_id": None,
+                    "avg": sum(ratings) / len(ratings),
+                    "count": len(ratings),
+                }
+
+        return _rows()
 
 
 class FakeMongo:
@@ -122,16 +148,25 @@ def _seed_mongo() -> FakeMongo:
                 {"id": "m1", "author_id": str(_USER_ID), "author_label": "whoever"},
                 {"id": "m2", "author_id": str(_OTHER_ID), "author_label": "whoever"},
             ],
+            MongoCollection.MARKETPLACE_REVIEWS.value: [
+                {"id": "r1", "item_id": "m2", "user_id": str(_USER_ID), "rating": 5},
+                {"id": "r2", "item_id": "m2", "user_id": str(_OTHER_ID), "rating": 3},
+            ],
         }
     )
 
 
 @pytest.fixture
 def stores(monkeypatch):
-    """Wire the purge path to in-memory Mongo + Qdrant doubles."""
+    """Wire the purge path to in-memory Mongo + Qdrant doubles.
+
+    marketplace_service is patched too: the review purge (delete + aggregate
+    recompute) runs through its collection helpers, not user_service's handle.
+    """
     mongo = _seed_mongo()
     qdrant = FakeQdrant()
     monkeypatch.setattr(user_service, "get_mongo_db", lambda: mongo)
+    monkeypatch.setattr(marketplace_service, "get_mongo_db", lambda: mongo)
     monkeypatch.setattr(memory_service, "get_qdrant_client", lambda: qdrant)
     return mongo, qdrant
 
@@ -179,6 +214,23 @@ async def test_purge_anonymizes_marketplace_items_instead_of_deleting_them(store
     assert items["m2"]["author_id"] == str(_OTHER_ID), "Bystander item untouched"
 
 
+async def test_purge_deletes_reviews_and_recomputes_aggregates(stores):
+    mongo, _ = stores
+    await user_service.purge_user_data(_USER_ID)
+
+    remaining = mongo.documents(MongoCollection.MARKETPLACE_REVIEWS)
+    assert remaining == [
+        {"id": "r2", "item_id": "m2", "user_id": str(_OTHER_ID), "rating": 3}
+    ], f"Only the bystander's review may survive, got {remaining}"
+    items = {
+        doc["id"]: doc for doc in mongo.documents(MongoCollection.MARKETPLACE_ITEMS)
+    }
+    assert items["m2"]["rating_avg"] == 3.0, (
+        f"Aggregates must be recomputed after the purge, got {items['m2']}"
+    )
+    assert items["m2"]["rating_count"] == 1, items["m2"]
+
+
 async def test_purge_deletes_vectors_from_both_qdrant_collections(stores):
     _, qdrant = stores
     await user_service.purge_user_data(_USER_ID)
@@ -189,7 +241,9 @@ async def test_purge_deletes_vectors_from_both_qdrant_collections(stores):
 
 
 async def test_purge_raises_when_a_store_is_unreachable(monkeypatch):
-    monkeypatch.setattr(user_service, "get_mongo_db", _seed_mongo)
+    mongo = _seed_mongo()
+    monkeypatch.setattr(user_service, "get_mongo_db", lambda: mongo)
+    monkeypatch.setattr(marketplace_service, "get_mongo_db", lambda: mongo)
     monkeypatch.setattr(memory_service, "get_qdrant_client", BrokenQdrant)
 
     with pytest.raises(ConnectionError):
