@@ -52,6 +52,10 @@ class Settings(BaseSettings):
 
     # --- App ---
     environment: str = "development"
+    # Mirrors the Dockerfile's `--workers ${WEB_CONCURRENCY:-1}`. The app reads
+    # it only to validate the topology (see _guard_multi_worker_redis); uvicorn
+    # does the actual scaling.
+    web_concurrency: int = Field(default=1, ge=1)
     log_level: str = "INFO"
     # "text" (default) keeps the human-readable basicConfig format for local dev;
     # "json" emits one JSON object per line for log aggregation in production.
@@ -255,6 +259,26 @@ class Settings(BaseSettings):
         if problems:
             raise ValueError(
                 "Insecure production configuration: " + "; ".join(problems)
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _guard_multi_worker_redis(self) -> Settings:
+        """Refuse to boot multi-worker without Redis, in every environment.
+
+        The event bus, the HITL/cancel control channel and the rate limiter all
+        coordinate across workers over Redis. Without REDIS_URL they silently
+        fall back to process-local state, so a multi-worker deploy degrades
+        invisibly: cancel/answer requests landing on a different worker than
+        the task never arrive. Not gated on ENVIRONMENT — WEB_CONCURRENCY>1 is
+        explicit opt-in and broken without Redis everywhere.
+        """
+        if self.web_concurrency > 1 and not self.redis_url:
+            raise ValueError(
+                "WEB_CONCURRENCY>1 requires REDIS_URL: the event bus, "
+                "HITL/cancel control channel, and rate limiter coordinate "
+                "across workers over Redis; without it they silently fall "
+                "back to process-local state."
             )
         return self
 
