@@ -195,13 +195,20 @@ class RedisEventBus:
 
 
 def _build_event_bus() -> EventBus | RedisEventBus:
-    """Pick the Redis bus when configured, else the in-process bus."""
+    """Pick the Redis bus when configured, else the in-process bus.
+
+    The config guard already blocks WEB_CONCURRENCY>1 without REDIS_URL; the
+    log below covers the remaining unenforceable path (a hand-typed
+    ``uvicorn --workers N`` that bypasses WEB_CONCURRENCY).
+    """
     if settings.redis_url:
         from app.core.database import get_redis_client
 
         client = get_redis_client()
         if client is not None:
+            logger.info("event bus: redis (cross-worker)")
             return RedisEventBus(client)
+    logger.info("event bus: in-process (single worker only)")
     return EventBus()
 
 
