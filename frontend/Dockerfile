@@ -5,7 +5,7 @@
 # when the API lives on a different host than the app.
 # =========================================================================
 
-FROM node:20-bookworm-slim AS builder
+FROM node:20.20.2-bookworm-slim AS builder
 
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -25,7 +25,7 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
 RUN npm run build
 
 
-FROM node:20-bookworm-slim AS runner
+FROM node:20.20.2-bookworm-slim AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production \
