@@ -41,17 +41,47 @@ docker compose version
 
 Point a DNS `A` record at the host and open ports 80 and 443.
 
+#### Oracle Cloud (Always Free Ampere) specifics
+
+The reference free host is a `VM.Standard.A1.Flex` instance (4 OCPU / 24 GB,
+arm64). Three things bite on Oracle that don't elsewhere:
+
+- **Ingress is blocked at two layers.** Add an ingress rule for TCP 80 and 443
+  in the VCN **Security List** (or NSG) *and* open the host firewall — Oracle's
+  Ubuntu images ship iptables rules that REJECT everything but SSH, and `ufw`
+  does not remove them:
+
+  ```bash
+  sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
+  sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+  sudo netfilter-persistent save
+  ```
+
+- **A1 capacity is scarce.** "Out of capacity" on launch is normal for Always
+  Free accounts: retry, try another availability domain, or upgrade the account
+  to Pay As You Go — Always Free resources stay free, but provisioning gets
+  priority.
+- **Use a release tag, not `latest`.** arm64 app images are only built on `v*`
+  release tags; pushes to `main` publish amd64 only. On an Ampere host,
+  `IMAGE_TAG` in `.env.prod` must always be a release version or the pull will
+  fail (or run nothing) for lack of an arm64 manifest.
+
 ### 2. Place the deployment files
 
-Only three files live on the server, and one of them holds every secret you
+Only four files live on the server, and one of them holds every secret you
 have. None of them come from a `git clone`:
 
 ```bash
 sudo mkdir -p /opt/maestro && cd /opt/maestro
-# copy docker-compose.prod.yml, Caddyfile and .env.prod.example from the repo
+# copy docker-compose.prod.yml, Caddyfile, scripts/backup.sh and
+# .env.prod.example from the repo
 cp .env.prod.example .env.prod
 chmod 600 .env.prod
+chmod +x backup.sh
 ```
+
+After the first placement, `deploy.yml` keeps `backup.sh` in sync with the
+repo on every tagged rollout; the other three files are host-managed only.
 
 ### 3. Fill in `.env.prod`
 
@@ -105,6 +135,11 @@ has to do the purging. Compose has no scheduler, so use the host's:
 The script takes a Postgres advisory lock and is idempotent, so an overlapping
 run is harmless.
 
+### 7. Schedule the backups
+
+See [Backups](#backups) below for what gets backed up and how restore works;
+the cron line lives there next to the rest of the backup documentation.
+
 ---
 
 ## Continuous deployment
@@ -112,6 +147,14 @@ run is harmless.
 Pushing a `v*` tag triggers `.github/workflows/deploy.yml`, which SSHes to the
 host and runs `docker compose pull && up -d`. Migrations are part of the stack,
 not a separate step.
+
+After `up -d` the workflow **gates on health**: it polls the backend's
+`/health/ready` and the frontend's `/` from inside the containers for up to
+~3 minutes. If the gate fails, it dumps the last container logs into the
+Actions output, **rolls back automatically** to the image tag that was serving
+before the rollout, and fails the job. A release that starts but cannot serve
+never stays up just because `docker compose up -d` exited 0. (On a first
+deploy there is nothing to roll back to; the job just fails loudly.)
 
 Repository secrets:
 
@@ -131,12 +174,20 @@ release tag (amd64 + arm64). If you keep the packages private, run
 
 ### Rolling back
 
-Images are immutable per tag, so a rollback is a re-deploy of the previous one:
+A rollout whose health gate fails is rolled back automatically (see above).
+For a manual rollback — images are immutable per tag, so it is a re-deploy of
+the previous one:
 
 ```bash
 cd /opt/maestro
-IMAGE_TAG=1.2.2 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+IMAGE_TAG=1.2.2 docker compose -f docker-compose.prod.yml --env-file .env.prod \
+  up -d --no-deps backend frontend
 ```
+
+`--no-deps` matters: a plain `up -d` re-runs the `migrate` one-shot with the
+*old* image, whose alembic cannot resolve a head revision created by the newer
+release — the migration fails and `backend` (which waits on it) never starts.
+Skipping `migrate` leaves the schema where it is.
 
 Note that this does **not** roll back the database. Migrations must be
 backward-compatible with the release before them, or a rollback needs
@@ -151,29 +202,69 @@ document upload call it no matter which chat provider a user picked, so without
 it document upload fails and memory retrieval silently degrades. It pulls only
 `nomic-embed-text` (~275 MB), which is fast on CPU.
 
-**No chat model is served by default.** Users bring their own key (Gemini,
-OpenAI, Anthropic). To offer the free local tier as well, and only if the host
-has several GB of RAM to spare:
-
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod exec ollama ollama pull qwen3.5:9b
-```
+**No chat model is served.** Users bring their own key (Gemini, OpenAI,
+Anthropic). `.env.prod` sets `OLLAMA_CHAT_ENABLED=false`, so picking the free
+local model rejects the task start with an explicit 400 telling the user to
+connect a key or self-host — instead of spawning a task whose every subtask
+fails with `ollama chat failed` and still reports `completed`. The UI shows the
+same guidance next to the provider selector.
 
 > A user's own Ollama, running on their laptop, **cannot** be used by a hosted
 > instance. Every LLM call is made by the backend, so `localhost:11434` is the
-> server, not the visitor's machine. The `ollama` provider only works when the
-> operator has pulled a chat model into the container above, or when the whole
-> stack is running on the user's own machine.
->
-> Until a chat model is pulled, picking the `ollama` provider does not raise a
-> visible error: every subtask fails with `ollama chat failed`, and the task
-> still reports `completed` with the answer `"No successful subtask output."`
-> Consider hiding the provider until you have pulled a model.
->
-> If you want to point the backend at an Ollama on the host rather than in a
-> container, set `FREE_MODEL_ENDPOINT=http://host.docker.internal:11434/v1` and
-> start that Ollama with `OLLAMA_HOST=0.0.0.0` — bound to loopback it will
-> refuse the connection.
+> server, not the visitor's machine. The free tier only works when the whole
+> stack runs on the user's own machine — or if you, the operator, opt in below.
+
+To actually offer the free chat tier from the server, all three steps are
+required:
+
+1. Raise the `ollama` service memory limit in `docker-compose.prod.yml` well
+   above its default `2g` (a 9B model needs roughly 8 GB to load; the limit
+   exists for the embedding-only default and the model will be OOM-killed
+   inside it).
+2. Pull a chat model:
+   ```bash
+   docker compose -f docker-compose.prod.yml --env-file .env.prod exec ollama ollama pull qwen3.5:9b
+   ```
+3. Set `OLLAMA_CHAT_ENABLED=true` in `.env.prod` and `up -d backend`.
+
+If you want to point the backend at an Ollama on the host rather than in a
+container, set `FREE_MODEL_ENDPOINT=http://host.docker.internal:11434/v1` and
+start that Ollama with `OLLAMA_HOST=0.0.0.0` — bound to loopback it will
+refuse the connection.
+
+---
+
+## Scaling to multiple workers
+
+The backend defaults to a single uvicorn worker. To run more, set
+`WEB_CONCURRENCY` (the Dockerfile passes it to `uvicorn --workers`):
+
+```env
+WEB_CONCURRENCY=4
+```
+
+**Multi-worker (>1) requires `REDIS_URL` to be set — enforced at boot.** The
+backend refuses to start (clear config error in the logs) when
+`WEB_CONCURRENCY>1` and `REDIS_URL` is empty, instead of silently degrading to
+process-local state. With more than one worker,
+task execution, the live event stream, human-in-the-loop answers, and task
+cancellation must coordinate across processes; they do so over Redis:
+
+- **Event bus** — an event emitted by the worker running a task is published on
+  `maestro:events:{task_id}` so a WebSocket subscribed on any worker receives it.
+  With no `REDIS_URL`, the bus is in-process and a client connected to a
+  different worker sees no live updates.
+- **Control channel** — cancel and HITL answers are routed on
+  `maestro:ctrl:{task_id}` to whichever worker owns the task.
+- **Reconciliation** — every worker sweeps for tasks orphaned by a crashed peer
+  and atomically re-claims them (a single conditional `UPDATE` guarantees exactly
+  one winner), so a mid-run crash never leaves a task stuck at `running`.
+
+Durable state (Postgres `task_runs`/checkpoints, Mongo `agent_logs`) is always
+authoritative, so a Redis outage degrades liveness (missed live ticks, slower
+cancel) but never correctness — clients recover on reconnect via the
+`?after_seq=` snapshot cursor. Leave `WEB_CONCURRENCY` unset (single worker) if
+you are not running Redis.
 
 ---
 
@@ -187,8 +278,28 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod exec ollama ollam
 - **`PAYMENT_PROVIDER=mock`.** No real money moves, and no real card should ever
   be entered: `payment_methods` would fall under PCI scope. Ship a real
   processor adapter before advertising billing.
+- **Transactional email.** Five variables in `.env.prod`: `EMAIL_PROVIDER`,
+  `RESEND_API_KEY`, `EMAIL_FROM`, `SITE_URL`, `EMAIL_VERIFICATION_REQUIRED`.
+  A hosted instance sets `EMAIL_PROVIDER=resend`, a real `RESEND_API_KEY`, and
+  `SITE_URL=https://<your-domain>` (the base for verification/reset links in
+  emails). The default `EMAIL_PROVIDER=console` only logs messages, so
+  verification and password-reset links would never reach users. The backend
+  reads these via `env_file: .env.prod`, so no compose change is needed.
 - FastAPI's Swagger UI, ReDoc and `/openapi.json` are disabled when
   `ENVIRONMENT=production`.
+- **Security headers come from Caddy** (`header` blocks in the `Caddyfile`),
+  on every response — app, API and Umami alike: HSTS (one year,
+  `includeSubDomains`, no `preload`), a Content-Security-Policy,
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy` and `Permissions-Policy`; `Server` and `X-Powered-By` are
+  stripped. The CSP is pragmatic rather than strict: `script-src` and
+  `style-src` keep `'unsafe-inline'` because Next.js hydration scripts, the
+  JSON-LD block in the root layout and React style attributes all break
+  without nonces. The only external origin allowed is `https://*.sentry.io`
+  in `connect-src` — if you point `FRONTEND_SENTRY_DSN` at a self-hosted
+  Sentry, edit that line to match its host. Header changes take effect with
+  the zero-downtime reload documented under "Enabling on an existing
+  deployment" (`exec caddy caddy reload`).
 - Datastores publish no ports. They are reachable only from the compose network.
 - `.env.prod` holds `API_KEY_MASTER_KEY`, which decrypts every user's stored
   provider keys. Losing it means losing them; leaking it means leaking them.
@@ -224,7 +335,9 @@ unreachable" — a state `/health` alone would miss.
 
 ### Error tracking (Sentry)
 
-Optional and off by default. To enable:
+Optional and off by default, on both sides of the stack.
+
+**Backend** — to enable:
 
 1. Create a project at [sentry.io](https://sentry.io) (free tier is enough) and
    copy its DSN.
@@ -239,11 +352,48 @@ scrubbed before events leave the process: `send_default_pii=False` plus a
 API keys, prompts and card data are never sent. With `SENTRY_DSN` empty, Sentry
 is a no-op and the app makes no external calls.
 
+**Frontend** — a *second* Sentry project (platform: Next.js), because backend
+and frontend events need separate DSNs and dashboards:
+
+1. Create the project and copy its DSN.
+2. Set `FRONTEND_SENTRY_DSN=<dsn>` in `.env.prod` and
+   `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d frontend`.
+
+The DSN is read at runtime (server-side, like `SITE_URL`), so the image stays
+domain-agnostic. Server-side render errors are captured via `onRequestError`;
+browser errors are captured by the error boundaries once the lazily-loaded SDK
+initializes. With the variable empty, no Sentry chunk is ever served to
+browsers and the app makes zero requests to any ingest host.
+
+Deliberate trade-offs (all cheap to revisit): no source-map upload (client
+stack traces are minified; enabling it would need `withSentryConfig` plus a CI
+auth token), no tunnel route (ad-blockers may drop *browser* events; server
+capture is unaffected), no session replay (bundle size + PII surface).
+
 ### Logs
 
 `LOG_FORMAT=json` (the production default in `.env.prod.example`) emits one JSON
 object per line — pipe `docker compose logs` into any aggregator. `LOG_FORMAT=text`
 keeps the readable format for local debugging.
+
+Every HTTP response carries an `X-Request-ID` header, and each request emits one
+`maestro.access` log line with `request_id`, `method`, `path`, `status` and
+`duration_ms` (health probes excluded to keep the noise down). The same id is
+attached to error logs and Sentry events, so a user-reported failure correlates
+directly:
+
+```bash
+docker compose -f docker-compose.prod.yml logs backend | grep <request-id>
+```
+
+Caddy writes JSON access logs to stdout (`log` directive in the `Caddyfile`),
+giving request-level visibility in front of both apps — including uptime-monitor
+hits on `/health*`, which are not filtered at the proxy.
+
+Container logs are rotated by the `json-file` caps in `docker-compose.prod.yml`
+(`max-size: 10m`, `max-file: 5` per service — roughly 550 MB worst case for the
+whole stack). Changing the caps requires recreating the containers; `up -d`
+does that and drops the old log files.
 
 ---
 
@@ -311,27 +461,137 @@ Set `COMPOSE_PROFILES=` and `UMAMI_WEBSITE_ID=` back to empty and `up -d
 
 ## Backups
 
-Everything durable lives in named volumes: `pgdata`, `mongodata`, `qdrantdata`.
-Postgres is the one that matters most — it holds accounts, subscriptions and the
-quota ledger.
+`backup.sh` (from `scripts/backup.sh` in the repo, kept in sync by `deploy.yml`)
+dumps every durable store into `/opt/maestro/backups`, applies retention and
+optionally pushes the files offsite. It is scheduled from the host crontab,
+exactly like the purge job.
 
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod \
-  exec -T postgres pg_dump -U maestro maestro | gzip > "maestro-$(date +%F).sql.gz"
+### What is backed up
+
+| Store | What | File |
+|---|---|---|
+| Postgres | `maestro` DB — accounts, subscriptions, quota ledger; the one that matters most | `maestro-pg-<ts>.sql.gz` (`pg_dump --clean --if-exists`) |
+| Postgres | `umami` DB — only when the `analytics` profile is active in `.env.prod` | `maestro-umami-<ts>.sql.gz` |
+| MongoDB | `maestro` DB — agent logs, task sessions, marketplace, agent configs | `maestro-mongo-<ts>.archive.gz` (`mongodump --archive --gzip`) |
+| Qdrant | every collection, enumerated dynamically — per-collection snapshots over the HTTP API | `maestro-qdrant-<collection>-<ts>.snapshot` |
+
+Qdrant is distroless and publishes no ports, so the script talks to it through
+a one-shot `curlimages/curl` container joined to the compose network; each
+snapshot is downloaded over HTTP and then deleted server-side so nothing
+accumulates inside the `qdrantdata` volume.
+
+> **Qdrant snapshots require named-volume storage.** On the production
+> stack (`qdrantdata` named volume) a snapshot of a near-empty collection is
+> ~140 KB and restores cleanly. On a Windows Docker Desktop **bind mount**
+> (the dev stack's `./.data/qdrant`) the same snapshot balloons to ~400 MB
+> (sparse WAL files get materialized) and its `wal/first-index` is zeroed,
+> so the restore fails with a WAL deserialize error. This is a dev-only
+> filesystem artifact — verified 2026-07-13 against `v1.18.2` both ways —
+> not a production risk.
+
+**Deliberately not backed up:** `redis` (ephemeral rate-limit buckets,
+persistence is disabled on purpose), `ollamadata` (models are re-pulled by
+`ollama-pull`), `caddydata` (TLS certificates re-issue automatically on the
+first request after a rebuild).
+
+**`.env.prod` is never touched by the script.** Back it up manually,
+encrypted (e.g. in a password manager) — losing `API_KEY_MASTER_KEY` makes
+every BYOK key in a Postgres dump permanently undecryptable, and leaking it
+decrypts all of them. The script pushes only the backups directory offsite,
+so secrets structurally cannot leave the host through it.
+
+### Schedule and retention
+
+Daily at 03:30 (offset from the 03:00 purge), guarded by `flock` so an
+overlapping run exits instead of stacking:
+
+```cron
+30 3 * * * cd /opt/maestro && RCLONE_REMOTE=oci:maestro-backups flock -n /opt/maestro/backup.lock ./backup.sh >> /opt/maestro/backup.log 2>&1
 ```
 
-If analytics is enabled, the `umami` database lives in the same instance but is
-owned by the `umami` role, so it needs its own dump line (or accept the loss of
-anonymous view counts and skip it — nothing else depends on them):
+Retention is applied by the script itself, locally and remotely: `daily/`
+keeps 7 days, `weekly/` (a copy made every Sunday) keeps 28 days. Pruning is
+scoped to the `maestro-*` naming pattern and never deletes anything else.
+Run the script once by hand over SSH before trusting the cron line, and note
+`backup.log` grows about a line per day — truncate it ad hoc.
+
+### Offsite copy (Oracle Object Storage via rclone)
+
+The offsite push is env-gated: leave `RCLONE_REMOTE` unset (drop it from the
+cron line) and the script stays local-only. To enable it:
+
+1. In the OCI console create a **private** bucket, e.g. `maestro-backups`
+   (Always Free includes 20 GB of Object Storage).
+2. Create a **Customer Secret Key** for a least-privilege IAM user (Identity →
+   Users → Customer Secret Keys) — this is OCI's S3-compatible credential.
+3. Install rclone on the host (`sudo apt install rclone` or the arm64 static
+   binary) and configure `~/.config/rclone/rclone.conf`:
+
+   ```ini
+   [oci]
+   type = s3
+   provider = Other
+   access_key_id = <customer secret key id>
+   secret_access_key = <customer secret key>
+   endpoint = https://<namespace>.compat.objectstorage.<region>.oraclecloud.com
+   region = <region>
+   ```
+
+4. Set `RCLONE_REMOTE=oci:maestro-backups` in the cron line.
+
+The script uses `rclone copy` (additive), deliberately not `sync`: syncing
+from a freshly rebuilt host with an empty backups directory would delete
+every offsite backup — exactly the disaster the offsite copy exists to
+survive. Remote retention is pruned separately with `rclone delete --min-age`.
+
+### Restore runbook
+
+All commands run from `/opt/maestro`. Define the compose prefix once:
 
 ```bash
-docker compose -f docker-compose.prod.yml --env-file .env.prod \
-  exec -T -e PGPASSWORD="$UMAMI_DB_PASSWORD" postgres \
-  pg_dump -U umami umami | gzip > "umami-$(date +%F).sql.gz"
+DC="docker compose -f docker-compose.prod.yml --env-file .env.prod"
 ```
 
-Back up `.env.prod` separately and somewhere else. A Postgres dump without
-`API_KEY_MASTER_KEY` cannot decrypt any BYOK key it contains.
+**Postgres** — the dump carries `--clean --if-exists`, so piping it in
+drops and recreates every object:
+
+```bash
+$DC stop backend
+gunzip -c maestro-pg-<ts>.sql.gz | $DC exec -T postgres psql -U maestro -d maestro
+$DC up -d backend
+```
+
+Umami restores the same way into `-d umami`. For a cheap drill without
+touching live data, restore into a scratch DB first:
+`$DC exec -T postgres createdb -U maestro scratch` then `psql ... -d scratch`.
+
+**MongoDB** — `--drop` replaces each collection in place:
+
+```bash
+$DC exec -T mongo mongorestore --archive --gzip --drop --nsInclude 'maestro.*' \
+  -u "$MONGO_USER" -p "$MONGO_PASSWORD" --authenticationDatabase admin \
+  < maestro-mongo-<ts>.archive.gz
+```
+
+**Qdrant** — upload the snapshot per collection; the upload recreates the
+collection even if it no longer exists (read `QDRANT_API_KEY` from `.env.prod`
+rather than exporting it into shell history):
+
+```bash
+cat maestro-qdrant-<collection>-<ts>.snapshot | docker run --rm -i \
+  --network maestro_default curlimages/curl:8.11.1 -fsS \
+  -H "api-key: $QDRANT_API_KEY" \
+  -F "snapshot=@-;filename=restore.snapshot" \
+  "http://qdrant:6333/collections/<collection>/snapshots/upload?priority=snapshot"
+```
+
+**Full disaster recovery**, in order: provision a fresh host → place the four
+files (compose, Caddyfile, `.env.prod` from your encrypted copy, `backup.sh`)
+→ `up -d` (this runs `migrate` against the empty database) → restore Postgres,
+Mongo, then Qdrant from the offsite bucket (`rclone copy oci:maestro-backups/daily .`)
+→ `$DC restart backend`. If the dump predates the current migration head,
+restoring it rewinds the schema to the dump's state; run
+`$DC up -d migrate` afterwards to bring it forward again.
 
 ---
 
@@ -345,6 +605,20 @@ serve plain HTTP and skip certificate provisioning.
 cp .env.prod.example .env.prod    # DOMAIN=http://localhost, fill the secrets
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
+
+> **Keep real secrets out of the repo tree.** A `.env.prod` filled with
+> production values (notably `API_KEY_MASTER_KEY`, which decrypts every stored
+> BYOK key) must not sit inside the working tree — it is `.gitignore`d, but one
+> `git add -f` away from being committed. Keep the real file outside the repo
+> (e.g. `~/.maestro/.env.prod`, locked to your user) and pass its absolute path
+> to `--env-file`. On the production host the file already lives beside the
+> compose file at `/opt/maestro/.env.prod`, so the relative form is correct
+> there; only local runs off an out-of-tree copy need the absolute path:
+>
+> ```bash
+> docker compose -f docker-compose.prod.yml \
+>   --env-file /absolute/path/to/.env.prod up -d --build
+> ```
 
 Then check, in order:
 
