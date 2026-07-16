@@ -69,22 +69,16 @@ class PaymentMethodPublic(BaseModel):
 
 
 class PlanPublic(BaseModel):
-    """A plan on the pricing page, priced for this particular user."""
+    """A paid plan shown to a signed-in user at list price."""
 
     plan: SubscriptionPlan
     price_cents: int
-    discounted_price_cents: int
-    discount_eligible: bool
     quota_tokens: int
     currency: str
 
 
 class PlanPublicListing(BaseModel):
-    """A plan on the anonymous pricing page: list price, no personal discount.
-
-    First-month eligibility hangs off ``users.first_discount_used``, which has
-    no meaning before sign-up, so it is omitted rather than guessed at.
-    """
+    """A paid plan on the anonymous pricing page, at list price."""
 
     plan: SubscriptionPlan
     price_cents: int
@@ -99,9 +93,7 @@ class SubscriptionPublic(BaseModel):
     status: SubscriptionStatus
     current_period_start: datetime
     current_period_end: datetime
-    trial_end: datetime | None
     cancel_at_period_end: bool
     used_tokens: int
     quota_tokens: int
-    first_discount_available: bool
     payment_method: PaymentMethodPublic | None
