@@ -2,7 +2,7 @@
 
 Two responsibilities:
 
-1. Subscription lifecycle -- trials, subscribing, cancelling -- backed by
+1. Subscription lifecycle -- subscribing, cancelling -- backed by
    PostgreSQL and a pluggable ``PaymentProvider``.
 2. Dashboard analytics -- token usage, success rates, estimated cost -- read
    from the MongoDB ``task_sessions`` collection (CLAUDE.md §8).
@@ -22,12 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
     ACTIVE_SUBSCRIPTION_STATUSES,
-    FIRST_MONTH_DISCOUNT_RATE,
+    BILLING_PERIOD_DAYS,
     PLAN_MONTHLY_TOKEN_QUOTA,
     PLAN_PRICE_USD_CENTS,
     PROVIDER_COST_PER_1K_TOKENS,
-    TRIAL_DURATION_DAYS,
-    TRIAL_PLAN,
+    TREND_WINDOW_DAYS,
     LLMProvider,
     MongoCollection,
     SubscriptionPlan,
@@ -39,6 +38,7 @@ from app.models.payment_method import PaymentMethod
 from app.models.subscription import Subscription
 from app.models.user import User
 from app.services.payment import CardDetails, get_payment_provider
+from app.utils.timeseries import as_utc, day_index, utc_day_window
 
 _TERMINAL = {
     TaskStatus.COMPLETED.value,
@@ -46,6 +46,9 @@ _TERMINAL = {
     TaskStatus.CANCELLED.value,
     TaskStatus.TIMEOUT.value,
 }
+
+# The dashboard's "failed" bucket: a timeout is a failure the user experienced.
+_FAILED = {TaskStatus.FAILED.value, TaskStatus.TIMEOUT.value}
 
 
 def _tokens_of(doc: dict[str, Any]) -> int:
@@ -58,7 +61,7 @@ async def _fetch_sessions(user_id: uuid.UUID) -> list[dict[str, Any]]:
     """Load all task sessions owned by a user (metadata fields only)."""
     cursor = get_mongo_db()[MongoCollection.TASK_SESSIONS.value].find(
         {"user_id": str(user_id)},
-        {"_id": 0, "status": 1, "provider": 1, "metadata": 1},
+        {"_id": 0, "status": 1, "provider": 1, "metadata": 1, "created_at": 1},
     )
     return [doc async for doc in cursor]
 
@@ -88,11 +91,7 @@ def aggregate_metrics(docs: list[dict[str, Any]]) -> dict[str, Any]:
     usage = aggregate_usage(docs)
     running = sum(1 for d in docs if d.get("status") == TaskStatus.RUNNING.value)
     completed = sum(1 for d in docs if d.get("status") == TaskStatus.COMPLETED.value)
-    failed = sum(
-        1
-        for d in docs
-        if d.get("status") in {TaskStatus.FAILED.value, TaskStatus.TIMEOUT.value}
-    )
+    failed = sum(1 for d in docs if d.get("status") in _FAILED)
     avg_tokens = round(usage["total_tokens"] / usage["total_tasks"]) if docs else 0
     return {
         "total_tasks": usage["total_tasks"],
@@ -102,6 +101,64 @@ def aggregate_metrics(docs: list[dict[str, Any]]) -> dict[str, Any]:
         "success_rate": usage["success_rate"],
         "total_tokens": usage["total_tokens"],
         "avg_tokens_per_task": avg_tokens,
+    }
+
+
+def aggregate_trends(
+    docs: list[dict[str, Any]],
+    *,
+    now: datetime,
+    days: int = TREND_WINDOW_DAYS,
+) -> dict[str, Any]:
+    """Per-UTC-day series feeding the dashboard sparklines (last ``days`` days).
+
+    Tasks are attributed to the day they were created. Days with no terminal
+    tasks report ``success_rate = None`` and days with no tasks at all report
+    ``avg_tokens_per_task = None`` — an honest gap, never a fabricated zero.
+    Documents without a ``created_at`` (legacy) or outside the window are
+    skipped.
+    """
+    window = utc_day_window(now, days)
+    size = len(window)
+    tasks = [0] * size
+    completed = [0] * size
+    failed = [0] * size
+    terminal = [0] * size
+    tokens = [0] * size
+
+    for doc in docs:
+        created_at = doc.get("created_at")
+        if not isinstance(created_at, datetime):
+            continue
+        index = day_index(created_at, window)
+        if index is None:
+            continue
+        status = doc.get("status")
+        tasks[index] += 1
+        tokens[index] += _tokens_of(doc)
+        if status == TaskStatus.COMPLETED.value:
+            completed[index] += 1
+        if status in _FAILED:
+            failed[index] += 1
+        if status in _TERMINAL:
+            terminal[index] += 1
+
+    success_rate = [
+        round(completed[i] / terminal[i], 4) if terminal[i] else None
+        for i in range(size)
+    ]
+    avg_tokens_per_task = [
+        round(tokens[i] / tasks[i]) if tasks[i] else None for i in range(size)
+    ]
+    return {
+        "window_days": days,
+        "days": [day.isoformat() for day in window],
+        "tasks": tasks,
+        "completed": completed,
+        "failed": failed,
+        "tokens": tokens,
+        "success_rate": success_rate,
+        "avg_tokens_per_task": avg_tokens_per_task,
     }
 
 
@@ -127,9 +184,12 @@ async def usage_summary(user_id: uuid.UUID) -> dict[str, Any]:
 
 
 async def metrics_summary(user_id: uuid.UUID) -> dict[str, Any]:
-    """High-level metrics for the dashboard."""
+    """High-level metrics plus the daily trend series for the dashboard."""
     docs = await _fetch_sessions(user_id)
-    return aggregate_metrics(docs)
+    return {
+        **aggregate_metrics(docs),
+        "trends": aggregate_trends(docs, now=datetime.now(UTC)),
+    }
 
 
 async def cost_summary(user_id: uuid.UUID) -> dict[str, Any]:
@@ -146,25 +206,12 @@ def plan_quota(plan: str) -> int:
     return PLAN_MONTHLY_TOKEN_QUOTA[plan]
 
 
-def first_month_price_cents(plan: str, *, discount_eligible: bool) -> int:
-    """Price of the first period, applying the once-per-user discount."""
-    base = PLAN_PRICE_USD_CENTS[plan]
-    if not discount_eligible:
-        return base
-    return round(base * (1 - FIRST_MONTH_DISCOUNT_RATE))
-
-
-def _as_utc(value: datetime) -> datetime:
-    """Timestamps are stored in UTC; SQLite hands them back without a tzinfo."""
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-
-
 def resolve_effective_status(subscription: Subscription | None) -> SubscriptionStatus:
     """The status the subscription *actually* has right now.
 
-    There is no scheduler in this build, so a lapsed trial or a subscription
-    past its cancellation date still carries its old status in the database.
-    Expiry is therefore resolved at read time.
+    There is no scheduler in this build, so a subscription past its cancellation
+    date still carries its old status in the database. Expiry is therefore
+    resolved at read time.
     """
     if subscription is None:
         return SubscriptionStatus.INACTIVE
@@ -172,12 +219,8 @@ def resolve_effective_status(subscription: Subscription | None) -> SubscriptionS
     status = SubscriptionStatus(subscription.status)
     now = datetime.now(UTC)
 
-    if status is SubscriptionStatus.TRIALING:
-        trial_end = subscription.trial_end
-        if trial_end is not None and now > _as_utc(trial_end):
-            return SubscriptionStatus.INACTIVE
-    elif status is SubscriptionStatus.CANCELED:
-        if now > _as_utc(subscription.current_period_end):
+    if status is SubscriptionStatus.CANCELED:
+        if now > as_utc(subscription.current_period_end):
             return SubscriptionStatus.INACTIVE
 
     return status
@@ -186,6 +229,48 @@ def resolve_effective_status(subscription: Subscription | None) -> SubscriptionS
 def is_active(subscription: Subscription | None) -> bool:
     """Whether the subscription may consume quota."""
     return resolve_effective_status(subscription) in ACTIVE_SUBSCRIPTION_STATUSES
+
+
+async def sync_billing_period(
+    db: AsyncSession, subscription: Subscription | None
+) -> Subscription | None:
+    """Roll an ACTIVE subscription's window forward to cover ``now``.
+
+    There is no billing scheduler in this build, so period renewal is resolved
+    lazily at read time -- the same pattern as ``resolve_effective_status``.
+    Because usage is summed by exact ``period_start`` equality
+    (``usage_service.used_tokens_this_period``), advancing the window alone
+    resets the monthly quota; no ledger rewrite is needed.
+
+    Only ACTIVE subscriptions renew. A canceled plan past its end resolves to
+    INACTIVE and must NOT roll forward. With a real payment processor this is
+    where a successful recurring charge would gate the advance; the mock
+    provider charges nothing, so the window advances unconditionally.
+    """
+    if subscription is None:
+        return None
+    if resolve_effective_status(subscription) is not SubscriptionStatus.ACTIVE:
+        return subscription
+
+    now = datetime.now(UTC)
+    end = as_utc(subscription.current_period_end)
+    if now <= end:
+        return subscription
+
+    start = as_utc(subscription.current_period_start)
+    period = timedelta(days=BILLING_PERIOD_DAYS)
+    # Roll whole periods forward, keeping windows contiguous and aligned to the
+    # original anchor, until ``now`` lands inside the current window. Bounded and
+    # deterministic, so concurrent callers compute the identical target window.
+    while now > end:
+        start = end
+        end = end + period
+
+    subscription.current_period_start = start
+    subscription.current_period_end = end
+    await db.commit()
+    await db.refresh(subscription)
+    return subscription
 
 
 async def get_subscription(db: AsyncSession, user_id: uuid.UUID) -> Subscription | None:
@@ -202,26 +287,6 @@ async def get_payment_method(
     )
 
 
-async def start_trial(db: AsyncSession, user: User) -> Subscription:
-    """Put a newly registered user on a Starter-quota trial.
-
-    Committed by the caller alongside whatever else it is doing.
-    """
-    now = datetime.now(UTC)
-    trial_end = now + timedelta(days=TRIAL_DURATION_DAYS)
-    subscription = Subscription(
-        user_id=user.id,
-        plan=TRIAL_PLAN.value,
-        status=SubscriptionStatus.TRIALING.value,
-        current_period_start=now,
-        current_period_end=trial_end,
-        trial_end=trial_end,
-    )
-    user.subscription_tier = TRIAL_PLAN.value
-    db.add(subscription)
-    return subscription
-
-
 async def subscribe(
     db: AsyncSession,
     user: User,
@@ -232,26 +297,22 @@ async def subscribe(
     """Tokenize the card, charge the first period and activate the plan.
 
     The card number reaches the provider and nothing else. Everything below --
-    the payment method, the subscription, the discount flag and the denormalized
-    tier on ``users`` -- lands in one transaction, so the 50% first-month
-    discount can never be claimed twice even under concurrent requests.
+    the payment method, the subscription and the denormalized tier on ``users``
+    -- lands in one transaction. Every period is charged at the plan's full
+    price; there is no trial and no first-month discount.
 
     Raises ``PaymentError`` if the provider refuses the card.
     """
     provider = get_payment_provider()
     token = await provider.create_payment_method(card)
 
-    discount_eligible = not user.first_discount_used
     base_cents = PLAN_PRICE_USD_CENTS[plan.value]
-    first_cents = first_month_price_cents(
-        plan.value, discount_eligible=discount_eligible
-    )
 
     now = datetime.now(UTC)
     result = await provider.create_subscription(
         plan=plan.value,
         payment_method_id=token.provider_payment_method_id,
-        first_amount_cents=first_cents,
+        first_amount_cents=base_cents,
         recurring_amount_cents=base_cents,
         idempotency_key=f"sub:{user.id}:{plan.value}:{int(now.timestamp())}",
     )
@@ -282,8 +343,6 @@ async def subscribe(
     subscription.trial_end = None
     subscription.cancel_at_period_end = False
 
-    if discount_eligible:
-        user.first_discount_used = True
     user.subscription_tier = plan.value
 
     await db.commit()
@@ -303,6 +362,8 @@ async def cancel(db: AsyncSession, user: User) -> Subscription | None:
 
     subscription.cancel_at_period_end = True
     subscription.status = SubscriptionStatus.CANCELED.value
+    # user.subscription_tier is deliberately left set: the plan stays visible
+    # until the period ends. Post-expiry sync is future scheduler work.
     await db.commit()
     await db.refresh(subscription)
     return subscription
