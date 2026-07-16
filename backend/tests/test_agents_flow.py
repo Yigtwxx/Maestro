@@ -51,7 +51,9 @@ class FakeAdapter(LLMAdapter):
                 }
             )
         elif "specialist subagent" in system:
-            content = "Here is the requested output."
+            # A realistic deliverable: long enough and with a fenced code block,
+            # so the software domain's deterministic pre-review validators pass.
+            content = "Here is the requested output:\n```python\nx = 1\n```"
         elif "You are the Reviewer" in system:
             content = '{"approved": true, "issues": [], "retry_hints": []}'
         else:  # synthesis
