@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.core.constants import PLAN_MONTHLY_TOKEN_QUOTA, SubscriptionPlan
+from app.core.constants import PLAN_MONTHLY_TOKEN_QUOTA
 
 _EMAIL = "billing@user.com"
 _PASSWORD = "supersecret"
@@ -11,8 +11,7 @@ _VISA = "4242 4242 4242 4242"
 _MASTERCARD = "5555555555554444"
 _DECLINED = "4000000000000002"
 
-_STARTER_PRICE = 1500
-_STARTER_DISCOUNTED = 750
+_STARTER_PRICE = 500
 
 
 def _card(number: str = _VISA) -> dict[str, object]:
@@ -45,25 +44,20 @@ async def _subscribe(client, headers, plan: str = "starter", number: str = _VISA
     )
 
 
-async def test_register_starts_a_starter_trial(client) -> None:
+async def test_register_creates_no_subscription(client) -> None:
     headers = await _register_and_login(client)
     resp = await client.get("/api/v1/billing/subscription", headers=headers)
 
-    assert resp.status_code == 200, f"Got {resp.text}"
-    body = resp.json()
-    assert body["status"] == "trialing", f"Got status {body['status']}"
-    assert body["plan"] == SubscriptionPlan.STARTER.value, f"Got plan {body['plan']}"
-    assert body["quota_tokens"] == PLAN_MONTHLY_TOKEN_QUOTA["starter"]
-    assert body["used_tokens"] == 0
-    assert body["trial_end"] is not None, "A trial must have an end date"
-    assert body["payment_method"] is None
+    assert resp.status_code == 404, (
+        f"A fresh account must hold no subscription, got {resp.status_code}"
+    )
 
 
 async def test_billing_endpoints_require_auth(client) -> None:
     assert (await client.get("/api/v1/billing/subscription")).status_code == 401
 
 
-async def test_plans_are_discounted_before_the_first_purchase(client) -> None:
+async def test_plans_are_listed_at_full_price(client) -> None:
     headers = await _register_and_login(client)
     resp = await client.get("/api/v1/billing/plans", headers=headers)
 
@@ -71,9 +65,9 @@ async def test_plans_are_discounted_before_the_first_purchase(client) -> None:
     plans = {p["plan"]: p for p in resp.json()}
     assert len(plans) == 3, f"Expected 3 plans, got {list(plans)}"
     starter = plans["starter"]
-    assert starter["price_cents"] == _STARTER_PRICE
-    assert starter["discounted_price_cents"] == _STARTER_DISCOUNTED
-    assert starter["discount_eligible"] is True
+    assert starter["price_cents"] == _STARTER_PRICE, f"Got {starter['price_cents']}"
+    assert "discounted_price_cents" not in starter, "No discount field should remain"
+    assert "discount_eligible" not in starter, "No discount field should remain"
 
 
 async def test_subscribe_activates_the_plan_and_stores_only_safe_card_data(
@@ -86,7 +80,6 @@ async def test_subscribe_activates_the_plan_and_stores_only_safe_card_data(
     body = resp.json()
     assert body["status"] == "active", f"Got status {body['status']}"
     assert body["plan"] == "starter"
-    assert body["trial_end"] is None, "Subscribing must end the trial"
     assert body["payment_method"] == {
         "brand": "visa",
         "last4": "4242",
@@ -103,35 +96,6 @@ async def test_subscribe_accepts_mastercard(client) -> None:
 
     assert resp.status_code == 200, f"Got {resp.text}"
     assert resp.json()["payment_method"]["brand"] == "mastercard"
-
-
-async def test_first_discount_is_consumed_once(client) -> None:
-    headers = await _register_and_login(client)
-
-    first = await _subscribe(client, headers)
-    assert first.status_code == 200, f"Got {first.text}"
-    assert first.json()["first_discount_available"] is False, (
-        "The discount was not consumed"
-    )
-
-    plans = await client.get("/api/v1/billing/plans", headers=headers)
-    starter = next(p for p in plans.json() if p["plan"] == "starter")
-    assert starter["discount_eligible"] is False
-    assert starter["discounted_price_cents"] == _STARTER_PRICE, (
-        "The discount was offered a second time"
-    )
-
-
-async def test_discount_is_not_reclaimed_by_resubscribing(client) -> None:
-    headers = await _register_and_login(client)
-    await _subscribe(client, headers)
-    await client.post("/api/v1/billing/cancel", headers=headers)
-
-    resp = await _subscribe(client, headers, plan="pro")
-    assert resp.status_code == 200, f"Got {resp.text}"
-    assert resp.json()["first_discount_available"] is False, (
-        "Cancelling and resubscribing reclaimed the first-month discount"
-    )
 
 
 async def test_subscribe_rejects_a_declined_card(client) -> None:
@@ -175,6 +139,10 @@ async def test_cancel_marks_the_subscription_for_non_renewal(client) -> None:
     body = resp.json()
     assert body["cancel_at_period_end"] is True
     assert body["status"] == "canceled", f"Got status {body['status']}"
+
+    # The tier cache deliberately keeps the plan until the period ends.
+    me = await client.get("/api/v1/users/me", headers=headers)
+    assert me.json()["subscription_tier"] == "starter", "cancel must not clear tier"
 
 
 async def test_payment_method_is_absent_before_subscribing(client) -> None:
