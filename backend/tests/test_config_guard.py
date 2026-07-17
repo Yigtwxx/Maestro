@@ -77,3 +77,20 @@ def test_development_allows_defaults() -> None:
         api_key_master_key="change-me-32-byte-base64-master-key",
     )
     assert settings.jwt_secret == "change-me"
+
+
+def test_multi_worker_without_redis_rejected_in_any_environment() -> None:
+    # Not gated on ENVIRONMENT=production: multi-worker without Redis is
+    # broken everywhere (event bus / HITL / cancel go process-local).
+    with pytest.raises(ValidationError):
+        _make(environment="development", web_concurrency=4, redis_url="")
+
+
+def test_multi_worker_with_redis_accepted() -> None:
+    settings = _make(web_concurrency=4, redis_url="redis://localhost:6379/0")
+    assert settings.web_concurrency == 4
+
+
+def test_single_worker_without_redis_accepted() -> None:
+    settings = _make(web_concurrency=1, redis_url="")
+    assert settings.web_concurrency == 1
