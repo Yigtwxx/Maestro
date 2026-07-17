@@ -7,6 +7,7 @@ import pytest
 
 from app.core.constants import DATA_FETCH_MAX_CHARS, DATA_FETCH_RESULT_OPEN
 from app.services import data_fetch_service
+from app.utils import url_guard
 
 PUBLIC_IPS = [("93.184.216.34", 0)]
 
@@ -141,10 +142,12 @@ async def test_fetch_network_error_returns_notice(monkeypatch, public_dns):
     ],
 )
 def test_resolve_is_public_classifies_addresses(monkeypatch, address, expected):
+    # The guard now lives in the shared url_guard module (reused by the custom
+    # LLM endpoint); data_fetch imports it under the same private name.
     monkeypatch.setattr(
-        data_fetch_service.socket,
+        url_guard.socket,
         "getaddrinfo",
         lambda *args, **kwargs: [(None, None, None, None, (address, 0))],
     )
-    result = data_fetch_service._resolve_is_public("host.example")
+    result = url_guard.resolve_is_public("host.example")
     assert result is expected, f"{address}: expected {expected}, got {result}"
