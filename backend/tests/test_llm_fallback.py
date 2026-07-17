@@ -5,9 +5,15 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.core.constants import GEMINI_API_BASE_URL, LLMProvider
+from app.core.constants import (
+    GEMINI_API_BASE_URL,
+    LLM_CHAT_PROVIDERS,
+    LLMProvider,
+)
 from app.services.llm_service import (
+    _ADAPTERS,
     ChatMessage,
+    CustomOpenAICompatAdapter,
     FallbackLLMAdapter,
     GeminiAdapter,
     LLMAdapter,
@@ -49,6 +55,78 @@ def test_get_adapter_gemini_returns_gemini_adapter():
     assert isinstance(adapter, GeminiAdapter)
     assert adapter.base_url == GEMINI_API_BASE_URL
     assert adapter.default_model, "GeminiAdapter must have a default model"
+
+
+async def test_chat_non_ascii_api_key_raises_clear_llm_error():
+    """A mis-pasted key with a non-ASCII character must fail with a clear
+    LLMError, not a raw httpx UnicodeEncodeError (which the agent layer would
+    otherwise surface to the user as an opaque "all subtasks failed")."""
+    # 'ı' (U+0131) mid-key: httpx cannot ASCII-encode the Authorization header.
+    # NOTE: deliberately not a real Google key shape (no "AIza" prefix) so
+    # secret scanners don't flag this fixture.
+    adapter = get_adapter(
+        LLMProvider.GEMINI, api_key="fake-gemini-key-ABCDEFGHIJKLMNOPQRSTUVWıXYZ"
+    )
+    with pytest.raises(LLMError):
+        await adapter.chat([ChatMessage("user", "merhaba")])
+
+
+async def test_anthropic_non_ascii_api_key_raises_clear_llm_error():
+    """Same guard on the Anthropic ``x-api-key`` header path."""
+    # Not a real Anthropic key shape (avoids secret scanners); the 'ı' is
+    # the only thing under test.
+    adapter = get_adapter(LLMProvider.ANTHROPIC, api_key="fake-anthropic-key-ıllegal")
+    with pytest.raises(LLMError):
+        await adapter.chat([ChatMessage("user", "merhaba")])
+
+
+# --- Provider registry / new OpenAI-compatible brains -----------------------
+
+
+def test_every_chat_provider_has_an_adapter():
+    """LLM_CHAT_PROVIDERS and the adapter registry must never drift apart."""
+    missing = LLM_CHAT_PROVIDERS - set(_ADAPTERS)
+    assert not missing, f"chat providers without adapters: {missing}"
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        LLMProvider.GROQ,
+        LLMProvider.DEEPSEEK,
+        LLMProvider.MISTRAL,
+        LLMProvider.XAI,
+        LLMProvider.OPENROUTER,
+        LLMProvider.TOGETHER,
+        LLMProvider.PERPLEXITY,
+    ],
+)
+def test_get_adapter_named_openai_compat_has_endpoint_and_model(provider: LLMProvider):
+    adapter = get_adapter(provider, api_key="k")
+    assert adapter.provider is provider
+    assert adapter.base_url.startswith("https://"), f"{provider} needs a base URL"
+    assert adapter.default_model, f"{provider} needs a default model"
+
+
+# --- Custom OpenAI-compatible provider --------------------------------------
+
+
+def test_get_adapter_custom_uses_supplied_endpoint_and_model():
+    adapter = get_adapter(
+        LLMProvider.CUSTOM,
+        api_key="k",
+        base_url="https://my-host/v1",
+        model="llama-3.1-8b",
+    )
+    assert isinstance(adapter, CustomOpenAICompatAdapter)
+    assert adapter.base_url == "https://my-host/v1"
+    assert adapter.model == "llama-3.1-8b"
+
+
+def test_get_adapter_named_provider_ignores_base_url_override():
+    """A base_url passed for a named provider must not shadow its endpoint."""
+    adapter = get_adapter(LLMProvider.GEMINI, api_key="k", base_url="https://evil/v1")
+    assert adapter.base_url == GEMINI_API_BASE_URL
 
 
 # --- FallbackLLMAdapter -----------------------------------------------------
