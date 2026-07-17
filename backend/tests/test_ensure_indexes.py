@@ -10,6 +10,7 @@ from pymongo.errors import OperationFailure
 
 from app.core import database
 from app.core.config import settings
+from app.core.constants import MARKETPLACE_INSTALL_RETENTION_DAYS
 
 _SECONDS_PER_DAY = 86_400
 
@@ -56,12 +57,40 @@ async def test_ensure_indexes_creates_ttl_from_retention_setting(fake_db):
         assert calls[0].kwargs["expireAfterSeconds"] == expected, calls[0]
 
 
+async def test_ensure_indexes_gives_install_events_their_own_ttl(fake_db):
+    await database.ensure_indexes()
+
+    calls = _ttl_calls(fake_db["marketplace_installs"])
+    expected = MARKETPLACE_INSTALL_RETENTION_DAYS * _SECONDS_PER_DAY
+    assert len(calls) == 1, calls
+    assert calls[0].kwargs["expireAfterSeconds"] == expected, calls[0]
+
+
 async def test_ensure_indexes_creates_owner_recency_index(fake_db):
     await database.ensure_indexes()
 
     keys = [c.args[0] for c in fake_db["task_sessions"].create_index.call_args_list]
     assert [("user_id", 1), ("created_at", -1)] in keys, keys
     assert [("task_id", 1)] in keys, keys
+
+
+async def test_ensure_indexes_creates_install_event_recency_index(fake_db):
+    await database.ensure_indexes()
+
+    calls = fake_db["marketplace_installs"].create_index.call_args_list
+    keys = [c.args[0] for c in calls if "expireAfterSeconds" not in c.kwargs]
+    assert [("created_at", -1)] in keys, keys
+
+
+async def test_ensure_indexes_creates_review_indexes(fake_db):
+    await database.ensure_indexes()
+
+    calls = fake_db["marketplace_reviews"].create_index.call_args_list
+    keys = [c.args[0] for c in calls]
+    assert [("item_id", 1), ("updated_at", -1)] in keys, keys
+    unique_calls = [c for c in calls if c.kwargs.get("unique")]
+    assert len(unique_calls) == 1, f"One-per-user backstop missing: {calls}"
+    assert unique_calls[0].args[0] == [("item_id", 1), ("user_id", 1)], unique_calls
 
 
 async def test_ensure_indexes_retunes_ttl_via_collmod_on_conflict(fake_db):
