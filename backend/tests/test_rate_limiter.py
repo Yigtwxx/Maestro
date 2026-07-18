@@ -29,9 +29,10 @@ from app.utils.rate_limiter import (
 
 PUBLIC_PLANS_URL = "/api/v1/billing/plans/public"
 
-# `/health` is a liveness probe: an orchestrator hits it every 15s from a fixed
-# address and must never be throttled off.
-UNTHROTTLED_PATHS = frozenset({"/health"})
+# `/health` (liveness) and `/health/ready` (readiness) are probes: an
+# orchestrator and an external uptime monitor hit them on a fixed interval from
+# a fixed address and must never be throttled off.
+UNTHROTTLED_PATHS = frozenset({"/health", "/health/ready"})
 
 # WebSocket routes cannot carry a `Depends` throttle (the handshake happens
 # before dependencies resolve), so they call `check_websocket` by hand inside
