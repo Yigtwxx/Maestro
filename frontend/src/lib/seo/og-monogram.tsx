@@ -29,7 +29,7 @@ export function Monogram({ size, radius }: MonogramProps) {
         width: size,
         height: size,
         borderRadius: radius,
-        background: BRAND.lime,
+        background: BRAND.primary,
       }}
     >
       <svg
@@ -37,7 +37,7 @@ export function Monogram({ size, radius }: MonogramProps) {
         height={glyph}
         viewBox={MONOGRAM_VIEWBOX}
         fill="none"
-        stroke={BRAND.black}
+        stroke={BRAND.navy}
         strokeWidth={MONOGRAM_STROKE_WIDTH}
         strokeLinecap="round"
         strokeLinejoin="round"
