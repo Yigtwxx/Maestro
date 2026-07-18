@@ -16,15 +16,23 @@ from app.models.subscription import Subscription
 from app.models.usage_record import UsageRecord
 from app.models.user import User
 from app.services import billing_service, quota_service, usage_service
+from app.utils.timeseries import as_utc
 
 _STARTER_QUOTA = PLAN_MONTHLY_TOKEN_QUOTA[SubscriptionPlan.STARTER.value]
 
 
 async def _make_user(
-    db_session, status: SubscriptionStatus = SubscriptionStatus.ACTIVE
+    db_session,
+    status: SubscriptionStatus = SubscriptionStatus.ACTIVE,
+    *,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
 ) -> User:
     now = datetime.now(UTC)
-    user = User(email=f"{status.value}@quota.test", hashed_password="x")
+    start = period_start if period_start is not None else now
+    end = period_end if period_end is not None else now + timedelta(days=30)
+    email = f"{status.value}-{start.isoformat()}@quota.test"
+    user = User(email=email, hashed_password="x")
     db_session.add(user)
     await db_session.flush()
     db_session.add(
@@ -32,11 +40,9 @@ async def _make_user(
             user_id=user.id,
             plan=SubscriptionPlan.STARTER.value,
             status=status.value,
-            current_period_start=now,
-            current_period_end=now + timedelta(days=30),
-            trial_end=now + timedelta(days=14)
-            if status is SubscriptionStatus.TRIALING
-            else None,
+            current_period_start=start,
+            current_period_end=end,
+            trial_end=None,
         )
     )
     await db_session.commit()
@@ -87,11 +93,6 @@ async def test_enforce_allows_an_active_user_under_quota(db_session) -> None:
     await quota_service.enforce_can_start_task(db_session, user)
 
 
-async def test_enforce_allows_a_trialing_user(db_session) -> None:
-    user = await _make_user(db_session, SubscriptionStatus.TRIALING)
-    await quota_service.enforce_can_start_task(db_session, user)
-
-
 async def test_enforce_rejects_an_inactive_user(db_session) -> None:
     user = await _make_user(db_session, SubscriptionStatus.INACTIVE)
     with pytest.raises(HTTPException) as exc:
@@ -127,3 +128,74 @@ async def test_quota_snapshot_reports_plan_allowance(db_session) -> None:
     snapshot = await quota_service.get_quota_snapshot(db_session, user)
     assert snapshot.used_tokens == 4242, f"Got {snapshot.used_tokens}"
     assert snapshot.quota_tokens == _STARTER_QUOTA, f"Got {snapshot.quota_tokens}"
+
+
+async def test_expired_period_advances_and_resets_quota(db_session) -> None:
+    now = datetime.now(UTC)
+    # An ACTIVE plan whose window ended yesterday, with the previous period
+    # exhausted to the quota cap.
+    user = await _make_user(
+        db_session,
+        period_start=now - timedelta(days=31),
+        period_end=now - timedelta(days=1),
+    )
+    await _add_usage(db_session, user, _STARTER_QUOTA, "task-old")
+
+    # The elapsed period must renew: enforcement passes and usage reads zero.
+    await quota_service.enforce_can_start_task(db_session, user)
+    snapshot = await quota_service.get_quota_snapshot(db_session, user)
+    assert snapshot.used_tokens == 0, f"Expected reset, got {snapshot.used_tokens}"
+
+    subscription = await billing_service.get_subscription(db_session, user.id)
+    start = as_utc(subscription.current_period_start)
+    end = as_utc(subscription.current_period_end)
+    assert start > now - timedelta(days=31), f"Window did not advance: {start}"
+    assert start <= now < end, f"now not inside renewed window [{start}, {end})"
+
+
+async def test_multiple_elapsed_periods_roll_forward(db_session) -> None:
+    now = datetime.now(UTC)
+    # Gone for ~75 days: several whole periods have elapsed.
+    user = await _make_user(
+        db_session,
+        period_start=now - timedelta(days=105),
+        period_end=now - timedelta(days=75),
+    )
+
+    subscription = await billing_service.get_subscription(db_session, user.id)
+    subscription = await billing_service.sync_billing_period(db_session, subscription)
+    start = as_utc(subscription.current_period_start)
+    end = as_utc(subscription.current_period_end)
+    assert start <= now < end, f"now not inside window [{start}, {end})"
+
+
+async def test_active_within_period_is_unchanged(db_session) -> None:
+    user = await _make_user(db_session)
+    subscription = await billing_service.get_subscription(db_session, user.id)
+    original_start = subscription.current_period_start
+
+    subscription = await billing_service.sync_billing_period(db_session, subscription)
+    assert subscription.current_period_start == original_start, (
+        f"Fresh window should not move: {subscription.current_period_start}"
+    )
+
+
+async def test_canceled_expired_does_not_renew(db_session) -> None:
+    now = datetime.now(UTC)
+    user = await _make_user(
+        db_session,
+        SubscriptionStatus.CANCELED,
+        period_start=now - timedelta(days=31),
+        period_end=now - timedelta(days=1),
+    )
+    subscription = await billing_service.get_subscription(db_session, user.id)
+    original_end = subscription.current_period_end
+
+    subscription = await billing_service.sync_billing_period(db_session, subscription)
+    assert subscription.current_period_end == original_end, (
+        "Canceled plan past its end must not roll forward"
+    )
+    # And it resolves to inactive, so a task is still refused.
+    with pytest.raises(HTTPException) as exc:
+        await quota_service.enforce_can_start_task(db_session, user)
+    assert exc.value.status_code == 402, f"Got {exc.value.status_code}"
