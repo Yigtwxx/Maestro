@@ -49,3 +49,14 @@ def test_jwt_roundtrip_and_type_check():
     assert payload["sub"] == "user-123"
     with pytest.raises(jwt.InvalidTokenError):
         decode_token(token, expected_type="refresh")
+
+
+def test_jwt_extra_claims_roundtrip():
+    """Rotation rides on jti/fam claims carried through ``extra_claims``."""
+    token = create_token(
+        "user-123", "refresh", extra_claims={"jti": "abc", "fam": "xyz"}
+    )
+    payload = decode_token(token, expected_type="refresh")
+    assert payload["sub"] == "user-123"
+    assert payload["jti"] == "abc"
+    assert payload["fam"] == "xyz"
