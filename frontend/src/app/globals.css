@@ -34,7 +34,7 @@ body {
 
 @layer utilities {
   /* Faint grid backdrop, tintable per module via `--grid-rgb` (inline style).
-     Defaults to neutral slate; auth/landing set lime, architect sets violet. */
+     Defaults to neutral slate; auth/landing set periwinkle, architect sets violet. */
   .bg-grid {
     background-image:
       linear-gradient(to right, rgb(var(--grid-rgb, 148 163 184) / 0.05) 1px, transparent 1px),
@@ -59,13 +59,6 @@ body {
     animation: spotlight-breathe var(--beam-dur, 8s) ease-in-out infinite;
   }
 
-  /* Wordmark lit by the beams: its multi-hue gradient drifts slowly, as if the
-     overhead light were shifting across the letters. */
-  .lit-text {
-    background-size: 200% 100%;
-    animation: spotlight-text-shift 12s ease-in-out infinite;
-  }
-
   /* Uppercase micro-label used for stat labels and section eyebrows. */
   .text-micro {
     @apply text-[10px] font-semibold uppercase tracking-micro;
@@ -80,9 +73,9 @@ body {
       linear-gradient(#12121c, #12121c) padding-box,
       linear-gradient(
           90deg,
-          rgb(var(--gb-rgb, 163 230 53) / 0.7),
-          rgb(var(--gb-rgb, 163 230 53) / 0.1) 40%,
-          rgb(var(--gb-rgb, 163 230 53) / 0.7)
+          rgb(var(--gb-rgb, 211 203 192) / 0.7),
+          rgb(var(--gb-rgb, 211 203 192) / 0.1) 40%,
+          rgb(var(--gb-rgb, 211 203 192) / 0.7)
         )
         border-box;
     background-size:
@@ -122,11 +115,11 @@ body {
     background: linear-gradient(
       90deg,
       transparent,
-      rgb(var(--pt-rgb, 163 230 53) / 0.9) 30%,
-      rgb(var(--pt-rgb, 163 230 53) / 0.9) 70%,
+      rgb(var(--pt-rgb, 211 203 192) / 0.9) 30%,
+      rgb(var(--pt-rgb, 211 203 192) / 0.9) 70%,
       transparent
     );
-    box-shadow: 0 0 12px 1px rgb(var(--pt-rgb, 163 230 53) / 0.55);
+    box-shadow: 0 0 12px 1px rgb(var(--pt-rgb, 211 203 192) / 0.55);
     animation: scanline 0.35s ease-in both;
   }
 
@@ -170,7 +163,7 @@ body {
     background: linear-gradient(
       90deg,
       transparent,
-      rgb(var(--tb-rgb, 163 230 53) / 0.8),
+      rgb(var(--tb-rgb, 211 203 192) / 0.8),
       transparent
     );
     background-size: 40% 100%;
@@ -182,20 +175,6 @@ body {
   .bar-grow {
     transform-origin: left;
     animation: bar-grow 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
-  /* Rotating radar cone over the architect canvas while a task runs — tint
-     via `--rd-rgb`. Oversized so the cone reaches every panel corner. */
-  .radar-layer {
-    position: absolute;
-    inset: -60%;
-    pointer-events: none;
-    background: conic-gradient(
-      from 0deg,
-      rgb(var(--rd-rgb, 167 139 250) / 0.08),
-      transparent 70deg
-    );
-    animation: radar-sweep 6s linear infinite;
   }
 
   /* Power-on line sweeping down a panel once per task start — `--ps-rgb`. */
@@ -238,6 +217,15 @@ body {
     animation: toast-in 0.22s ease-out both;
   }
 
+  /* Sponsor like-burst — a particle flies out along its own `--tx`/`--ty`. */
+  .like-particle {
+    animation: like-particle-fly 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  /* Sponsor like-burst — the filled heart pops, then fades to the outline. */
+  .like-heart-pop {
+    animation: like-heart-pop 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .gradient-border,
     .shimmer-hover:hover::after,
@@ -247,17 +235,17 @@ body {
     .topbar-pan,
     .bar-grow,
     .log-flash,
-    .toast-in {
+    .toast-in,
+    .like-particle,
+    .like-heart-pop {
       animation: none;
     }
     .spotlight-beam,
     .spotlight-source,
-    .spotlight-core,
-    .lit-text {
+    .spotlight-core {
       animation: none;
     }
     .page-scanline,
-    .radar-layer,
     .panel-scan {
       display: none;
     }
@@ -284,16 +272,6 @@ body {
   }
 }
 
-@keyframes spotlight-text-shift {
-  0%,
-  100% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-}
-
 @keyframes spark-grow {
   from {
     transform: scaleY(0);
@@ -304,6 +282,39 @@ body {
   from {
     opacity: 0;
     transform: translateX(12px);
+  }
+}
+
+@keyframes like-particle-fly {
+  from {
+    transform: translate(-50%, -50%) scale(0.2);
+    opacity: 1;
+  }
+  60% {
+    opacity: 1;
+  }
+  to {
+    transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(0.5);
+    opacity: 0;
+  }
+}
+
+@keyframes like-heart-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  40% {
+    transform: scale(1.35);
+    opacity: 1;
+  }
+  70% {
+    transform: scale(0.95);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
   }
 }
 
@@ -347,15 +358,6 @@ body {
   to {
     transform: translateY(100vh);
     opacity: 0;
-  }
-}
-
-@keyframes radar-sweep {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
   }
 }
 
