@@ -6,7 +6,7 @@ const config: Config = {
     extend: {
       colors: {
         // Maestro palette — "neon arcade / synthwave" full-spectrum. Near-black
-        // base, electric lime brand + cyan, with a per-domain neon spectrum.
+        // base, warm champagne brand + cyan, with a per-domain neon spectrum.
         background: '#0a0a10',
         surface: '#12121c',
         'surface-2': '#171724',
@@ -15,9 +15,9 @@ const config: Config = {
           bright: '#3d3d5c',
         },
         primary: {
-          DEFAULT: '#a3e635',
-          hover: '#c4f75e',
-          dim: 'rgba(163,230,53,0.10)',
+          DEFAULT: '#d3cbc0',
+          hover: '#e0dbd3',
+          dim: 'rgba(211,203,192,0.10)',
         },
         accent: {
           DEFAULT: '#22d3ee',
@@ -26,6 +26,12 @@ const config: Config = {
         danger: {
           DEFAULT: '#ff4d6d',
           dim: 'rgba(255,77,109,0.10)',
+        },
+        // Orange caution hue — user-initiated stops (cancelled tasks), kept
+        // distinct from danger red. Same hex as domain.data, separate semantic.
+        warning: {
+          DEFAULT: '#ff7a45',
+          dim: 'rgba(255,122,69,0.10)',
         },
         // GitHub Sponsors brand pink — used only by the Sponsor CTA.
         sponsor: {
@@ -61,8 +67,19 @@ const config: Config = {
           architect: '#a78bfa',
           agents: '#3b9dff',
           documents: '#ff7a45',
+          // The three settings sub-sections each own a distinct hue so the
+          // sidebar tabs and per-page chrome no longer share one color.
+          'api-keys': '#2ee6a6',
+          billing: '#ffb02e',
+          profile: '#e879f9',
           settings: '#2ee6a6',
-          brand: '#a3e635',
+          // Moderation/admin chrome — a commanding red that reads as authority,
+          // distinct from the marketplace pink and the danger semantic.
+          admin: '#ff4d5e',
+          // Observability/traces chrome — an indigo neon sitting in the gap
+          // between the agents blue and the architect violet.
+          traces: '#6d7cff',
+          brand: '#d3cbc0',
         },
         // Chart-step hues — the same eight domains stepped down into the dark
         // chart lightness band (OKLCH L 0.48–0.67) for data-viz marks on the
@@ -86,9 +103,10 @@ const config: Config = {
         mono: ['var(--font-mono)', 'ui-monospace', 'monospace'],
       },
       boxShadow: {
-        'glow-primary': '0 0 24px -6px rgba(163,230,53,0.45)',
+        'glow-primary': '0 0 24px -6px rgba(211,203,192,0.45)',
         'glow-cyan': '0 0 24px -6px rgba(34,211,238,0.45)',
         'glow-danger': '0 0 24px -6px rgba(255,77,109,0.45)',
+        'glow-warning': '0 0 24px -6px rgba(255,122,69,0.45)',
         'glow-sponsor': '0 0 24px -6px rgba(219,97,162,0.45)',
         // Per-domain neon glows (mirror the domain.* hues).
         'glow-software': '0 0 24px -6px rgba(59,157,255,0.45)',
@@ -108,8 +126,13 @@ const config: Config = {
         'glow-mod-architect': '0 0 24px -6px rgba(167,139,250,0.45)',
         'glow-mod-agents': '0 0 24px -6px rgba(59,157,255,0.45)',
         'glow-mod-documents': '0 0 24px -6px rgba(255,122,69,0.45)',
+        'glow-mod-api-keys': '0 0 24px -6px rgba(46,230,166,0.45)',
+        'glow-mod-billing': '0 0 24px -6px rgba(255,176,46,0.45)',
+        'glow-mod-profile': '0 0 24px -6px rgba(232,121,249,0.45)',
         'glow-mod-settings': '0 0 24px -6px rgba(46,230,166,0.45)',
-        'glow-mod-brand': '0 0 24px -6px rgba(163,230,53,0.45)',
+        'glow-mod-admin': '0 0 24px -6px rgba(255,77,94,0.45)',
+        'glow-mod-traces': '0 0 24px -6px rgba(109,124,255,0.45)',
+        'glow-mod-brand': '0 0 24px -6px rgba(211,203,192,0.45)',
       },
       letterSpacing: {
         micro: '0.18em',
