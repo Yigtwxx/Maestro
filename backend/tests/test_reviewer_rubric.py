@@ -32,7 +32,13 @@ class CaptureAdapter(LLMAdapter):
 
 
 def _result() -> SubagentResult:
-    return SubagentResult(status=SubagentStatus.SUCCESS, data={"output": "the work"})
+    # A realistic deliverable that clears the deterministic pre-review validators
+    # (non-trivial length + a fenced code block for the software domain), so the
+    # reviewer's LLM path — what these tests exercise — actually runs.
+    return SubagentResult(
+        status=SubagentStatus.SUCCESS,
+        data={"output": "Here is the implementation:\n```python\nprint('done')\n```"},
+    )
 
 
 async def test_review_domain_rubric_injected_into_system_prompt():
