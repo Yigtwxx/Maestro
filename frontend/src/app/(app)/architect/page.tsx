@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AgentGraph,
@@ -31,6 +32,7 @@ import type {
   AssignmentBrief,
   BuiltinAgent,
   LLMProvider,
+  TaskStatus,
 } from '@/types';
 
 // Fold node_update events into the latest state per (role, index) in one pass,
@@ -66,6 +68,17 @@ function nodeStateOf(
   index?: number,
 ): NodeState {
   return states.get(`${role}:${index ?? ''}`) ?? 'idle';
+}
+
+// When the task has stopped, no node may stay "running" — the backend sends no
+// node_update to close in-flight nodes, so freeze lingering running nodes to a
+// terminal look. This halts every running-driven animation at the source
+// (edge pulses, ping ring, dashed edge, indeterminate progress bar).
+function freezeState(state: NodeState, status: TaskStatus | undefined): NodeState {
+  if (state !== 'running' || isTaskRunning(status)) return state;
+  if (status === 'completed') return 'done';
+  if (status === 'cancelled') return 'cancelled';
+  return 'error'; // failed | timeout
 }
 
 const mc = MODULE_COLOR.architect;
@@ -106,7 +119,10 @@ type WizardStep = 'select' | 'configure';
 export default function ArchitectPage() {
   const user = useAuthStore((s) => s.user);
   const [prompt, setPrompt] = useState('');
-  const [provider, setProvider] = useState<LLMProvider>('gemini');
+  // Default to the local model: a fresh user has no keys and default_provider
+  // is null, so any BYOK provider would fail with "no key" on their first task.
+  // The effect below upgrades this to the user's default brain once it loads.
+  const [provider, setProvider] = useState<LLMProvider>('ollama');
   // Pre-select the user's default brain until they change it manually.
   const providerTouched = useRef(false);
   const [agents, setAgents] = useState<BuiltinAgent[]>([]);
@@ -123,6 +139,7 @@ export default function ArchitectPage() {
   const events = useTaskStore((s) => s.events);
   const status = useTaskStore((s) => s.status);
   const answer = useTaskStore((s) => s.answer);
+  const streamingAnswer = useTaskStore((s) => s.streamingAnswer);
   const error = useTaskStore((s) => s.error);
   const question = useTaskStore((s) => s.question);
   const taskId = useTaskStore((s) => s.activeTaskId);
@@ -136,6 +153,7 @@ export default function ArchitectPage() {
   const restoreTask = useTaskStore((s) => s.restore);
   const loadHistory = useTaskStore((s) => s.loadHistory);
   const cancelTask = useTaskStore((s) => s.cancelTask);
+  const deleteTask = useTaskStore((s) => s.deleteTask);
   const replyToQuestion = useTaskStore((s) => s.replyToQuestion);
 
   const running = isTaskRunning(status);
@@ -146,10 +164,25 @@ export default function ArchitectPage() {
     void restoreTask();
   }, [loadHistory, restoreTask]);
 
-  // Reopening or resuming a task means its canvas, not the expert picker.
+  // On (re)entering the page, resume straight to the canvas only if the last
+  // task is still running; a finished (or absent) task leaves the expert picker
+  // in front. Selecting a task from history is handled explicitly in
+  // `onSelectTask`, so a finished task can still be reopened on demand.
   useEffect(() => {
-    if (taskId) setStep('configure');
-  }, [taskId]);
+    if (running) setStep('configure');
+  }, [running]);
+
+  // Seed the reviewer toggle from the user's preference once, before any task
+  // runs. After that the toggle is the user's to flip per task; we never
+  // override an in-flight task's setting.
+  const defaultReviewer = useAuthStore((s) => s.user?.default_reviewer_enabled);
+  const seededReviewer = useRef(false);
+  useEffect(() => {
+    if (!seededReviewer.current && defaultReviewer !== undefined && !running) {
+      setReviewerEnabled(defaultReviewer);
+      seededReviewer.current = true;
+    }
+  }, [defaultReviewer, running, setReviewerEnabled]);
 
   useEffect(() => {
     // Best-effort: without the catalog, automatic mode still works.
@@ -219,13 +252,13 @@ export default function ArchitectPage() {
           ? `User selection: ${domain}`
           : `domain: ${domain}`
         : 'Router',
-      state: nodeStateOf(states, 'orchestrator'),
+      state: freezeState(nodeStateOf(states, 'orchestrator'), status),
     };
     const main: GraphNode = {
       key: 'main',
       label: 'Main Agent',
       sublabel: domain ? `${domain} expert` : 'Expert',
-      state: nodeStateOf(states, 'main'),
+      state: freezeState(nodeStateOf(states, 'main'), status),
     };
     const subagents: GraphNode[] = assignments.map((assignment, i) => ({
       key: `sub-${i}`,
@@ -236,7 +269,7 @@ export default function ArchitectPage() {
         assignment.member_name,
       ),
       sublabel: assignment.brief,
-      state: nodeStateOf(states, 'subagent', i),
+      state: freezeState(nodeStateOf(states, 'subagent', i), status),
       details: {
         brief: assignment.brief,
         activity: subagentActivity.get(i),
@@ -253,11 +286,19 @@ export default function ArchitectPage() {
           key: 'reviewer',
           label: 'Reviewer',
           sublabel: 'Auditor',
-          state: nodeStateOf(states, 'reviewer'),
+          state: freezeState(nodeStateOf(states, 'reviewer'), status),
         }
       : undefined;
     return { orchestrator, main, subagents, reviewer };
-  }, [events, assignments, subagentActivity, domain, routedByUser, reviewerEnabled]);
+  }, [
+    events,
+    status,
+    assignments,
+    subagentActivity,
+    domain,
+    routedByUser,
+    reviewerEnabled,
+  ]);
 
   const onStart = useCallback(() => {
     if (!prompt.trim()) return;
@@ -280,8 +321,17 @@ export default function ArchitectPage() {
   const onCancel = useCallback(() => void cancelTask(), [cancelTask]);
 
   const onSelectTask = useCallback(
-    (id: string) => void openTask(id),
+    (id: string) => {
+      // Explicit: opening any history item (even a finished one) shows its canvas.
+      setStep('configure');
+      void openTask(id);
+    },
     [openTask],
+  );
+
+  const onDeleteTask = useCallback(
+    (id: string) => void deleteTask(id),
+    [deleteTask],
   );
 
   const onReply = useCallback(() => {
@@ -310,6 +360,7 @@ export default function ArchitectPage() {
         loading={historyLoading}
         activeTaskId={taskId}
         onSelect={onSelectTask}
+        onDelete={onDeleteTask}
       />
 
       <div>
@@ -323,12 +374,14 @@ export default function ArchitectPage() {
             Pick an expert before starting the task. If unsure, use the
             Automatic (Orchestrator) option.
           </p>
-          <AgentCatalog
-            agents={agents}
-            selected={selectedDomain}
-            onSelect={handleSelectDomain}
-            disabled={running}
-          />
+          <div data-onboarding="agent-catalog">
+            <AgentCatalog
+              agents={agents}
+              selected={selectedDomain}
+              onSelect={handleSelectDomain}
+              disabled={running}
+            />
+          </div>
         </div>
       ) : (
         /* Step 2 — selected-agent chip + task config, canvas and live log */
@@ -372,18 +425,6 @@ export default function ArchitectPage() {
                   style={{ ['--grid-rgb' as string]: mc.rgb }}
                   aria-hidden
                 />
-                {/* Ambient radar sweep — spins only while the task runs. */}
-                <div
-                  aria-hidden
-                  className={cn(
-                    'radar-layer transition-opacity duration-700',
-                    !running && 'opacity-0',
-                  )}
-                  style={{
-                    ['--rd-rgb' as string]: mc.rgb,
-                    animationPlayState: running ? 'running' : 'paused',
-                  }}
-                />
                 {/* Power-on sweep, replayed per task. */}
                 {running && taskId && (
                   <span
@@ -394,19 +435,35 @@ export default function ArchitectPage() {
                   />
                 )}
                 <div className="relative p-5">
-                  <div className="mb-5 flex items-center justify-between">
-                    <span className={`text-micro ${mc.text}`}>
-                      [ CANVAS: LIVE ]
-                    </span>
-                    {taskId && (
+                  {taskId && (
+                    <div className="mb-5 flex items-center justify-end gap-3">
                       <span className="text-micro text-muted">
                         TASK: {taskId.slice(0, 8)}…
                       </span>
-                    )}
-                  </div>
+                      <Link
+                        href={`/traces?task=${taskId}`}
+                        className="text-micro text-module-traces transition-colors hover:text-white"
+                      >
+                        View trace →
+                      </Link>
+                    </div>
+                  )}
                   <AgentGraph {...graph} domain={domain} />
                 </div>
               </div>
+
+              {/* Live synthesis — the answer streams in via agent_delta chunks
+                  before the final task_completed event lands. Hidden once the
+                  whole answer arrives (it replaces this preview). */}
+              {!answer && running && streamingAnswer && (
+                <div
+                  className="mt-6 rounded-lg border border-module-architect/40 bg-surface p-5"
+                >
+                  <p className={`text-micro mb-2 ${mc.text}`}>[ SYNTHESIZING ]</p>
+                  <Markdown content={streamingAnswer} />
+                  <span className="animate-blink text-module-architect">▊</span>
+                </div>
+              )}
 
               {/* Result — blur-in reveal with the animated gradient frame. */}
               {answer && (
@@ -440,6 +497,7 @@ export default function ArchitectPage() {
                     rows={4}
                     placeholder={promptPlaceholder}
                     module="architect"
+                    data-onboarding="task-prompt"
                   />
                   <Select
                     label="Model / Provider"
@@ -449,11 +507,19 @@ export default function ArchitectPage() {
                       setProvider(e.target.value as LLMProvider);
                     }}
                     options={TASK_PROVIDERS.map((p) => ({
-                      value: p.value,
+                      value: p.id,
                       label: p.label,
                     }))}
                     module="architect"
                   />
+                  {provider === 'ollama' && (
+                    <p className="-mt-2 text-xs text-muted">
+                      The local model needs an Ollama chat model on the
+                      server. On the hosted instance it is unavailable — run
+                      Maestro on your own machine with Ollama, or connect a
+                      provider API key in Settings.
+                    </p>
+                  )}
                   <ToggleRow
                     label="Reviewer (auditor)"
                     checked={reviewerEnabled}
@@ -471,6 +537,7 @@ export default function ArchitectPage() {
                       onClick={onStart}
                       loading={running}
                       className="w-full"
+                      data-onboarding="start-task"
                     >
                       Start Task
                     </Button>
