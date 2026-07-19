@@ -4,8 +4,11 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { AccountLocked } from '@/components/layout/AccountLocked';
 import { Sidebar } from '@/components/layout/Sidebar';
+import { TaskFavicon } from '@/components/layout/TaskFavicon';
 import { TopBar } from '@/components/layout/TopBar';
 import { FooterStatusBar } from '@/components/layout/FooterStatusBar';
+import { VerifyEmailBanner } from '@/components/layout/VerifyEmailBanner';
+import { OnboardingCoachmark } from '@/components/onboarding/OnboardingCoachmark';
 import { ProgressBar } from '@/components/ui/ProgressBar';
 import DecryptedText from '@/components/DecryptedText';
 import { useAuthStore } from '@/stores/auth';
@@ -54,12 +57,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden">
+      <TaskFavicon />
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">
+        <VerifyEmailBanner />
         <TopBar />
         <main className="flex-1 overflow-y-auto">{children}</main>
         <FooterStatusBar />
       </div>
+      <OnboardingCoachmark />
     </div>
   );
 }
