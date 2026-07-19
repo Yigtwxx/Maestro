@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { AgentForm } from '@/components/agents/AgentForm';
+import { PageShell } from '@/components/layout/PageShell';
 import { api, ApiError } from '@/lib/api';
 import type { AgentConfig, ToolCatalogItem } from '@/types';
 
@@ -51,7 +52,7 @@ export default function AgentEditorPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-5 pb-8">
+    <PageShell>
       <AgentForm
         tools={tools}
         initial={{
@@ -66,6 +67,6 @@ export default function AgentEditorPage() {
           router.push('/agents');
         }}
       />
-    </div>
+    </PageShell>
   );
 }
