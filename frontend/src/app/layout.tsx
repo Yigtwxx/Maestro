@@ -1,8 +1,12 @@
 import type { Metadata } from 'next';
 import { connection } from 'next/server';
 import { JetBrains_Mono, Space_Grotesk } from 'next/font/google';
+import { Analytics } from '@/components/analytics/Analytics';
 import { CookieNotice } from '@/components/legal/CookieNotice';
+import { SentryInit } from '@/components/observability/SentryInit';
 import { Toaster } from '@/components/ui/Toaster';
+import { umamiWebsiteId } from '@/lib/analytics/config';
+import { sentryClientConfig } from '@/lib/observability/config';
 import { GITHUB_URL } from '@/lib/constants';
 import {
   OG_LOCALE,
@@ -111,6 +115,11 @@ export default async function RootLayout({
   await connection();
   // Escaped so a future value containing `</script>` cannot close the tag.
   const jsonLd = JSON.stringify(buildJsonLd(siteUrl())).replace(/</g, '\\u003c');
+  // Unset on deployments without analytics: no tracker mounts and the notice
+  // stays informational. Read at request time, like SITE_URL above.
+  const websiteId = umamiWebsiteId();
+  // Same contract for error tracking: DSN unset means no SDK chunk is loaded.
+  const sentry = sentryClientConfig();
 
   return (
     <html
@@ -120,7 +129,11 @@ export default async function RootLayout({
       {/* The route groups share no layout, so the notice mounts once, here. */}
       <body>
         {children}
-        <CookieNotice />
+        <CookieNotice analyticsAvailable={websiteId !== undefined} />
+        {websiteId !== undefined && <Analytics websiteId={websiteId} />}
+        {sentry !== undefined && (
+          <SentryInit dsn={sentry.dsn} environment={sentry.environment} />
+        )}
         <Toaster />
         <script
           type="application/ld+json"
