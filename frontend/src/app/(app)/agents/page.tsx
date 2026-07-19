@@ -10,6 +10,7 @@ import { Card } from '@/components/ui/Card';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { SkeletonList } from '@/components/ui/Skeleton';
 import { Stagger, StaggerItem } from '@/components/effects/Stagger';
+import { PageShell } from '@/components/layout/PageShell';
 import { api, ApiError } from '@/lib/api';
 import { localizeBuiltinAgent } from '@/lib/agent-locale';
 import { domainColor } from '@/lib/agent-colors';
@@ -50,7 +51,7 @@ export default function AgentsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-5 pb-8">
+    <PageShell>
       <div className="mb-4 flex items-center justify-between">
         <p className={`text-micro ${mc.text}`}>[ AGENT REGISTRY ]</p>
         <Button
@@ -138,6 +139,6 @@ export default function AgentsPage() {
           </Stagger>
         )}
       </section>
-    </div>
+    </PageShell>
   );
 }
