@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { reportError } from '@/lib/observability/reporter';
 
 /**
  * Error boundary for the authenticated app segment. It renders inside
@@ -19,6 +20,7 @@ export default function AppError({
 }) {
   useEffect(() => {
     console.error(error);
+    reportError(error);
   }, [error]);
 
   return (
