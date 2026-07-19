@@ -4,21 +4,20 @@ import dynamic from 'next/dynamic';
 import DecryptedText from '@/components/DecryptedText';
 import { ShinyText } from '@/components/effects/ShinyText';
 
-// Canvas glitch field is decorative and client-only — keep it out of the
+// WebGL aurora curtain is decorative and client-only — keep it out of the
 // initial bundle so the form paints immediately.
-const LetterGlitch = dynamic(() => import('@/components/LetterGlitch'), { ssr: false });
+const Aurora = dynamic(() => import('@/components/Aurora'), { ssr: false });
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-4">
-      <div className="absolute inset-0 opacity-25" aria-hidden>
-        <LetterGlitch
-          glitchColors={['#141225', '#2ee6a6', '#ff5cc8', '#3b9dff', '#a3e635']}
-          glitchSpeed={60}
-          centerVignette={false}
-          outerVignette={true}
-          smooth={true}
-          characters="ABCDEF0123456789$#@&*<>/"
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden px-4">
+      <div className="absolute inset-0 opacity-60" aria-hidden>
+        {/* Brand ramp: navy -> blue -> white -> champagne -> yellow. */}
+        <Aurora
+          colorStops={['#1a2b6d', '#3b9dff', '#ffffff', '#d3cbc0', '#ffd54a']}
+          amplitude={1.0}
+          blend={0.6}
+          speed={0.6}
         />
       </div>
       {/* Terminal power-on: corner labels flicker in after the wordmark starts. */}
@@ -32,7 +31,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         className="text-micro absolute right-6 top-5 animate-word-in motion-reduce:animate-none"
         style={{ animationDelay: '0.3s' }}
       >
-        <ShinyText color="#a3e635" speed={4}>
+        <ShinyText color="#d3cbc0" speed={4}>
           [ STATUS: ONLINE ]
         </ShinyText>
       </p>
