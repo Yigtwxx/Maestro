@@ -51,7 +51,7 @@ export default function OpengraphImage() {
             maxWidth: 900,
             fontSize: 42,
             lineHeight: 1.35,
-            color: BRAND.lime,
+            color: BRAND.primary,
           }}
         >
           {SITE_TAGLINE}
