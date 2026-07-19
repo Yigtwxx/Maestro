@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { reportError } from '@/lib/observability/reporter';
 import './globals.css';
 
 /**
@@ -19,6 +20,10 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error(error);
+    // Usually a no-op client-side: when the root layout itself failed,
+    // SentryInit never mounted. The server-side render error was already
+    // captured via `onRequestError` in instrumentation.ts.
+    reportError(error);
   }, [error]);
 
   return (
