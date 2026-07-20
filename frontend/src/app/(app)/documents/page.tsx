@@ -5,6 +5,7 @@ import type { CSSProperties, DragEvent } from 'react';
 import { FileText, UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Skeleton, SkeletonList } from '@/components/ui/Skeleton';
+import { PageShell } from '@/components/layout/PageShell';
 import { cn } from '@/lib/cn';
 import { api, ApiError } from '@/lib/api';
 import { MODULE_COLOR } from '@/lib/module-colors';
@@ -75,7 +76,7 @@ export default function DocumentsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-5 pb-8">
+    <PageShell>
       {error && <p className="mb-4 text-sm text-danger">&gt; ERROR: {error}</p>}
 
       <div
@@ -153,6 +154,6 @@ export default function DocumentsPage() {
           </ul>
         )}
       </div>
-    </div>
+    </PageShell>
   );
 }
