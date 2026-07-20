@@ -40,7 +40,7 @@ export default function DocsPage() {
         eyebrow="[ DOCS ]"
         title="Everything runs on your"
         titleAccent="machine"
-        description="Two commands bring the whole stack up. Bring your own model keys, or stay entirely local and pay nothing."
+        description="Two commands bring the whole stack up. Bring your own model keys, or drive everything with a local model through Ollama."
       />
 
       <div className="mt-14 space-y-4">
