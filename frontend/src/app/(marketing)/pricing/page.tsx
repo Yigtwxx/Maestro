@@ -6,12 +6,7 @@ import { Reveal } from '@/components/effects/Reveal';
 import { MarketingPage, PageHeader } from '@/components/landing/MarketingSection';
 import { api } from '@/lib/api';
 import { formatPrice, formatQuota } from '@/lib/billing-format';
-import {
-  PUBLIC_DISCOUNT_PCT,
-  RECOMMENDED_PLAN,
-  SUBSCRIPTION_PLANS,
-  TRIAL_DURATION_DAYS,
-} from '@/lib/constants';
+import { RECOMMENDED_PLAN, SUBSCRIPTION_PLANS } from '@/lib/constants';
 import { BILLING_LIVE, BILLING_PRERELEASE_NOTICE } from '@/lib/legal';
 import { cn } from '@/lib/cn';
 import { buildPageMetadata } from '@/lib/seo/metadata';
@@ -20,7 +15,7 @@ import type { PlanPublicListing } from '@/types';
 export const metadata = buildPageMetadata({
   title: 'Pricing',
   description:
-    'Three plans, no free tier. Every account starts with a 14-day trial on Starter quota.',
+    'Three paid plans. Subscribe to run tasks — bring your own API keys or use the local model.',
   path: '/pricing',
 });
 
@@ -46,12 +41,8 @@ export default async function PricingPage() {
         eyebrow="[ PRICING ]"
         title="Pay for tokens, not"
         titleAccent="seats"
-        description={`Every account starts with a ${TRIAL_DURATION_DAYS}-day trial on Starter quota — no card required. Bring your own API keys, or run the free local model and pay nothing to the provider.`}
+        description="Subscribe to a plan to run tasks. Bring your own API keys, or drive everything with the local model through Ollama."
       />
-
-      <Reveal className="mt-8 flex justify-center">
-        <Badge tone="lime">{PUBLIC_DISCOUNT_PCT}% off your first month</Badge>
-      </Reveal>
 
       {!BILLING_LIVE && (
         <Reveal className="mt-8">
@@ -126,7 +117,7 @@ export default async function PricingPage() {
                       'w-full justify-center',
                     )}
                   >
-                    Start free trial
+                    Get started
                   </Link>
                 </div>
               </Reveal>
