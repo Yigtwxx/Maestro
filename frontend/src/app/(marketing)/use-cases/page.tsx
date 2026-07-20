@@ -79,7 +79,7 @@ export default function UseCasesPage() {
           href="/register"
           className={cn(buttonVariants({ variant: 'lime' }), 'gap-1.5 px-6 py-2.5')}
         >
-          Start for free
+          Get started
           <ArrowRight className="h-4 w-4" aria-hidden />
         </Link>
       </div>
