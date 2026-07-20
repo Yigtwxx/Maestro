@@ -5,50 +5,22 @@ import { Card, CardTitle } from '@/components/ui/Card';
 import CountUp from '@/components/CountUp';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { Sparkline } from '@/components/ui/Sparkline';
+import { BarList } from '@/components/ui/BarList';
 import { SkeletonCard, SkeletonStatTile } from '@/components/ui/Skeleton';
 import { Stagger, StaggerItem } from '@/components/effects/Stagger';
+import { PageShell } from '@/components/layout/PageShell';
+import { CostExplorer } from '@/components/trace/CostExplorer';
 import { api, ApiError } from '@/lib/api';
 import { MODULE_COLOR } from '@/lib/module-colors';
 import type { CostSummary, DashboardMetrics, TokenUsage } from '@/types';
 
 const mc = MODULE_COLOR.dashboard;
 
-// Placeholder series: the API exposes only current totals (no history yet),
-// so tiles render a decorative flat-ish series until a history endpoint exists.
-const PLACEHOLDER_SERIES = [4, 7, 5, 9, 6, 8, 10, 7];
-
-interface BarRow {
+interface Tile {
   label: string;
-  value: number;
-  display: string;
-}
-
-/** Horizontal single-hue bar list (magnitude ranking). Values stay in text ink. */
-function BarList({ rows, color }: { rows: BarRow[]; color: 'lime' | 'cyan' }) {
-  const max = Math.max(...rows.map((r) => r.value), 1);
-  const fill = color === 'lime' ? 'bg-primary' : 'bg-accent';
-  return (
-    <ul className="space-y-3">
-      {rows.map((row, i) => (
-        <li key={row.label}>
-          <div className="mb-1 flex items-baseline justify-between gap-3">
-            <span className="text-sm capitalize text-slate-200">{row.label}</span>
-            <span className="font-mono text-xs text-muted">{row.display}</span>
-          </div>
-          <div className="h-2 w-full overflow-hidden rounded-sm bg-surface-2">
-            {/* One-shot grow on mount; re-renders reuse the DOM so it never replays. */}
-            <div
-              className={`bar-grow h-full rounded-sm ${fill}`}
-              style={{
-                width: `${Math.max((row.value / max) * 100, 2)}%`,
-                animationDelay: `${(i * 0.05).toFixed(2)}s`,
-              }}
-            />
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
+  value: number | string;
+  /** Daily trend series; omitted for point-in-time metrics (no sparkline). */
+  series?: (number | null)[];
 }
 
 export default function DashboardPage() {
@@ -83,21 +55,26 @@ export default function DashboardPage() {
 
   const successPct = metrics ? Math.round(metrics.success_rate * 100) : 0;
 
-  const tiles = metrics
+  // Running and Estimated Cost are point-in-time values with no daily series.
+  const tiles: Tile[] = metrics
     ? [
-        { label: 'Total Tasks', value: metrics.total_tasks },
+        { label: 'Total Tasks', value: metrics.total_tasks, series: metrics.trends.tasks },
         { label: 'Running', value: metrics.running_tasks },
-        { label: 'Success Rate', value: `${successPct}%` },
-        { label: 'Total Tokens', value: metrics.total_tokens },
-        { label: 'Completed', value: metrics.completed_tasks },
-        { label: 'Failed', value: metrics.failed_tasks },
-        { label: 'Tokens per Task', value: metrics.avg_tokens_per_task },
+        { label: 'Success Rate', value: `${successPct}%`, series: metrics.trends.success_rate },
+        { label: 'Total Tokens', value: metrics.total_tokens, series: metrics.trends.tokens },
+        { label: 'Completed', value: metrics.completed_tasks, series: metrics.trends.completed },
+        { label: 'Failed', value: metrics.failed_tasks, series: metrics.trends.failed },
+        {
+          label: 'Tokens per Task',
+          value: metrics.avg_tokens_per_task,
+          series: metrics.trends.avg_tokens_per_task,
+        },
         { label: 'Estimated Cost', value: `$${(cost?.total_cost ?? 0).toFixed(4)}` },
       ]
     : [];
 
   return (
-    <div className="mx-auto max-w-5xl px-6 pt-5 pb-8">
+    <PageShell>
       {error && <p className="mb-4 text-sm text-danger">&gt; ERROR: {error}</p>}
       {loading && (
         <>
@@ -133,12 +110,14 @@ export default function DashboardPage() {
                         )
                       }
                     />
-                    <Sparkline
-                      animate
-                      values={PLACEHOLDER_SERIES}
-                      hex={mc.hex}
-                      className="h-7 w-14 shrink-0 opacity-60"
-                    />
+                    {tile.series && (
+                      <Sparkline
+                        animate
+                        values={tile.series}
+                        hex={mc.hex}
+                        className="h-7 w-14 shrink-0 opacity-60"
+                      />
+                    )}
                   </div>
                 </Card>
               </StaggerItem>
@@ -178,12 +157,16 @@ export default function DashboardPage() {
                   }))}
                 />
               ) : (
-                <p className="text-sm text-muted">&gt; No cost yet (free tier).</p>
+                <p className="text-sm text-muted">&gt; No cost yet.</p>
               )}
             </Card>
           </section>
+
+          <section className="mt-6">
+            <CostExplorer />
+          </section>
         </>
       )}
-    </div>
+    </PageShell>
   );
 }
