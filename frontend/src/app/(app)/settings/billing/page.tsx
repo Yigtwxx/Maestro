@@ -9,12 +9,13 @@ import { QuotaMeter } from '@/components/billing/QuotaMeter';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
+import { PageShell } from '@/components/layout/PageShell';
 import { api, ApiError } from '@/lib/api';
 import { MODULE_COLOR } from '@/lib/module-colors';
 import { useAuthStore } from '@/stores/auth';
 import type { CardInput, PlanPublic, SubscriptionPlan, SubscriptionPublic } from '@/types';
 
-const mc = MODULE_COLOR.settings;
+const mc = MODULE_COLOR.billing;
 
 export default function BillingPage() {
   const refreshUser = useAuthStore((s) => s.refreshUser);
@@ -29,8 +30,14 @@ export default function BillingPage() {
 
   const load = useCallback(async () => {
     try {
+      // A fresh account holds no subscription (there is no trial): the endpoint
+      // 404s, which is a normal "not subscribed yet" state, not an error. The
+      // plan grid below is exactly how the user subscribes.
       const [nextSubscription, nextPlans] = await Promise.all([
-        api.getSubscription(),
+        api.getSubscription().catch((err) => {
+          if (err instanceof ApiError && err.status === 404) return undefined;
+          throw err;
+        }),
         api.getPlans(),
       ]);
       setSubscription(nextSubscription);
@@ -53,7 +60,7 @@ export default function BillingPage() {
     try {
       setSubscription(await api.subscribe(selectedPlan, card));
       setSelectedPlan(undefined);
-      // The plan gates the UI elsewhere, and the discount is now spent.
+      // The plan gates the UI elsewhere, so refresh the cached user tier too.
       await Promise.all([refreshUser(), load()]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'The payment could not be processed.');
@@ -76,14 +83,13 @@ export default function BillingPage() {
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-4xl space-y-6 px-6 pt-5 pb-8">
+      <PageShell className="space-y-6">
         <Skeleton className="h-32 w-full" />
         <Skeleton className="h-64 w-full" />
-      </div>
+      </PageShell>
     );
   }
 
-  const onTrial = subscription?.status === 'trialing';
   const paymentMethod = subscription?.payment_method;
   const canCancel =
     subscription !== undefined &&
@@ -91,31 +97,30 @@ export default function BillingPage() {
     !subscription.cancel_at_period_end;
 
   return (
-    <div className="mx-auto max-w-4xl px-6 pt-5 pb-8">
+    <PageShell>
       <div className="space-y-6">
         {subscription && <QuotaMeter subscription={subscription} />}
 
-        <Card module="settings">
-          <CardHeader icon={<Receipt className="h-5 w-5" />} module="settings">
+        <Card module="billing">
+          <CardHeader icon={<Receipt className="h-5 w-5" />} module="billing">
             <CardTitle>Plans</CardTitle>
           </CardHeader>
-          {onTrial && (
+          {!subscription && (
             <p className={`text-micro mb-4 ${mc.text}`}>
-              [ TRIAL — SUBSCRIBE BEFORE IT ENDS TO KEEP RUNNING TASKS ]
+              [ SUBSCRIBE TO A PLAN TO START RUNNING TASKS ]
             </p>
           )}
           <PlanGrid
             plans={plans}
             currentPlan={subscription?.plan}
-            onTrial={onTrial}
             selectedPlan={selectedPlan}
             onSelect={setSelectedPlan}
           />
         </Card>
 
         {selectedPlan && (
-          <Card module="settings">
-            <CardHeader icon={<CreditCard className="h-5 w-5" />} module="settings">
+          <Card module="billing">
+            <CardHeader icon={<CreditCard className="h-5 w-5" />} module="billing">
               <CardTitle>Payment details</CardTitle>
             </CardHeader>
             <CardForm
@@ -127,8 +132,8 @@ export default function BillingPage() {
         )}
 
         {paymentMethod && !selectedPlan && (
-          <Card module="settings">
-            <CardHeader icon={<CreditCard className="h-5 w-5" />} module="settings">
+          <Card module="billing">
+            <CardHeader icon={<CreditCard className="h-5 w-5" />} module="billing">
               <CardTitle>Payment method</CardTitle>
             </CardHeader>
             <div className="flex items-center gap-3">
@@ -159,6 +164,6 @@ export default function BillingPage() {
 
         {error && <p className="text-sm text-danger">&gt; ERROR: {error}</p>}
       </div>
-    </div>
+    </PageShell>
   );
 }
