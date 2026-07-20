@@ -12,14 +12,15 @@ import { Sparkline } from '@/components/ui/Sparkline';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { SkeletonCard } from '@/components/ui/Skeleton';
 import { Stagger, StaggerItem } from '@/components/effects/Stagger';
+import { PageShell } from '@/components/layout/PageShell';
+import { RatingStars } from '@/components/marketplace/RatingStars';
+import { ReviewsDialog } from '@/components/marketplace/ReviewsDialog';
+import { ReportModal, type ReportTarget } from '@/components/marketplace/ReportModal';
 import { api, ApiError } from '@/lib/api';
 import { AGENT_DOMAINS } from '@/lib/constants';
 import { domainColor } from '@/lib/agent-colors';
 import { toast } from '@/stores/toast';
 import type { MarketplaceItem } from '@/types';
-
-// Decorative install-trend strip; API exposes only the current install total.
-const CARD_SERIES = [3, 6, 4, 8, 5, 9, 7, 10];
 
 export default function MarketplacePage() {
   const [items, setItems] = useState<MarketplaceItem[]>([]);
@@ -33,6 +34,8 @@ export default function MarketplacePage() {
   const [domain, setDomain] = useState('general');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [saving, setSaving] = useState(false);
+  const [reviewItem, setReviewItem] = useState<MarketplaceItem | undefined>();
+  const [reportTarget, setReportTarget] = useState<ReportTarget | undefined>();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,6 +78,16 @@ export default function MarketplacePage() {
     }
   };
 
+  // Aggregate refresh after a review: cosmetic, so a failure keeps the stale
+  // numbers instead of surfacing an error inside the open dialog.
+  const refresh = useCallback(async () => {
+    try {
+      setItems(await api.listMarketplace());
+    } catch {
+      /* keep the stale aggregates */
+    }
+  }, []);
+
   // The Deploy button sits at the bottom of a card, far from the page-top
   // banner, so a toast is the feedback the user will actually see.
   const onInstall = async (id: string) => {
@@ -88,7 +101,7 @@ export default function MarketplacePage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl px-6 pt-5 pb-8">
+    <PageShell>
       <div className="mb-4 flex items-center justify-between">
         <p className="text-micro text-module-marketplace">[ MARKETPLACE ]</p>
         <Button
@@ -192,14 +205,54 @@ export default function MarketplacePage() {
                 <div className="mb-4 flex-1">
                   <p className="line-clamp-3 text-sm text-muted">{item.description}</p>
                 </div>
-                <div className="mb-4 grid grid-cols-2 gap-3 rounded-md border border-border bg-surface-2 p-3">
-                  <StatBlock size="sm" label="Installs" value={item.installs} />
-                  <div className="flex items-end justify-end">
-                    <Sparkline
-                      values={CARD_SERIES}
-                      hex={dc.accentHex}
-                      className="h-6 w-16 opacity-70"
-                    />
+                <div className="mb-4 rounded-md border border-border bg-surface-2 p-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <StatBlock size="sm" label="Installs" value={item.installs} />
+                    <div className="flex items-end justify-end">
+                      {item.install_history ? (
+                        <Sparkline
+                          values={item.install_history}
+                          hex={dc.accentHex}
+                          className="h-6 w-16 opacity-70"
+                        />
+                      ) : (
+                        <span className="text-[10px] text-muted/60">no trend yet</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
+                    {item.rating_count > 0 ? (
+                      <span className="flex items-center gap-1.5">
+                        <RatingStars value={item.rating_avg ?? 0} />
+                        <span className="text-[10px] text-muted/60">
+                          ({item.rating_count})
+                        </span>
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted/60">no ratings yet</span>
+                    )}
+                    <span className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setReportTarget({
+                            kind: 'item',
+                            id: item.id,
+                            label: item.name,
+                          })
+                        }
+                        className="text-[10px] text-muted hover:text-module-admin"
+                      >
+                        Report
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReviewItem(item)}
+                        className="text-[10px] text-module-marketplace hover:underline"
+                      >
+                        Reviews
+                      </button>
+                    </span>
                   </div>
                 </div>
                 <div className="flex items-center justify-between">
@@ -216,6 +269,17 @@ export default function MarketplacePage() {
           })}
         </Stagger>
       )}
-    </div>
+
+      {reviewItem && (
+        <ReviewsDialog
+          item={reviewItem}
+          onClose={() => setReviewItem(undefined)}
+          onReviewed={() => void refresh()}
+          onReport={setReportTarget}
+        />
+      )}
+
+      <ReportModal target={reportTarget} onClose={() => setReportTarget(undefined)} />
+    </PageShell>
   );
 }
