@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/Input';
 import { Card } from '@/components/ui/Card';
 import { api, ApiError } from '@/lib/api';
 import { useAuthStore } from '@/stores/auth';
+import { toast } from '@/stores/toast';
 import { cn } from '@/lib/cn';
 import { MODULE_COLOR } from '@/lib/module-colors';
 
@@ -43,6 +44,7 @@ export default function RegisterPage() {
     try {
       await api.register(email, password, displayName || undefined);
       await login(email, password);
+      toast.info('We sent a verification link to your email.');
       setGranted(true);
       window.setTimeout(() => router.replace('/architect'), GRANTED_SWEEP_MS);
     } catch (err) {
@@ -63,11 +65,11 @@ export default function RegisterPage() {
           style={{ ['--pt-rgb' as string]: MODULE_COLOR.brand.rgb } as CSSProperties}
         />
       )}
-      <Card featured className={cn('stagger-children', error && 'shadow-glow-danger')}>
+      <Card featured glow className={cn('stagger-children', error && 'shadow-glow-danger')}>
         <h2 className="font-sans text-xl font-bold text-white">
           <span className="text-primary">&gt;</span> Create Account
         </h2>
-        <p className="text-micro mt-2 text-muted">[ START FOR FREE — QWEN3 LOCAL ]</p>
+        <p className="text-micro mt-2 text-muted">[ CREATE YOUR ACCOUNT ]</p>
         <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4">
           <Input
             label="Display name (optional)"
