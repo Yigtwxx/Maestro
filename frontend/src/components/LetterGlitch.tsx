@@ -3,8 +3,8 @@
 import { useRef, useEffect } from 'react';
 
 const LetterGlitch = ({
-  // Dark base + full-spectrum neon accents (emerald / magenta / blue / lime).
-  glitchColors = ['#141225', '#2ee6a6', '#ff5cc8', '#3b9dff', '#a3e635'],
+  // Dark base + full-spectrum neon accents (emerald / magenta / blue / periwinkle).
+  glitchColors = ['#141225', '#2ee6a6', '#ff5cc8', '#3b9dff', '#d3cbc0'],
   glitchSpeed = 50,
   centerVignette = false,
   outerVignette = true,
