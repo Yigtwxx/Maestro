@@ -10,7 +10,7 @@ import { cn } from '@/lib/cn';
 interface GradientTextProps {
   children: ReactNode;
   className?: string;
-  /** Gradient stops — defaults to the lime→cyan brand sweep. */
+  /** Gradient stops — defaults to the brand→cyan sweep. */
   colors?: string[];
   /** Full pan duration in seconds. */
   speed?: number;
@@ -20,7 +20,7 @@ interface GradientTextProps {
 export function GradientText({
   children,
   className,
-  colors = ['#a3e635', '#22d3ee', '#a3e635'],
+  colors = ['#d3cbc0', '#22d3ee', '#d3cbc0'],
   speed = 4,
 }: GradientTextProps) {
   const style: CSSProperties = {
