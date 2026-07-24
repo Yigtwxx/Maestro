@@ -4,12 +4,12 @@ import type { CSSProperties } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Bell, Settings } from 'lucide-react';
-import { NAV } from '@/components/layout/Sidebar';
+import { ADMIN_LINK, NAV } from '@/components/layout/Sidebar';
 import { moduleColor, moduleFromPathname } from '@/lib/module-colors';
 
 export function TopBar() {
   const pathname = usePathname();
-  const current = NAV.find((item) => pathname.startsWith(item.href));
+  const current = [...NAV, ADMIN_LINK].find((item) => pathname.startsWith(item.href));
   const moduleKey = moduleFromPathname(pathname);
   const mc = moduleColor(moduleKey);
   const label = current?.label ?? 'Settings';
@@ -36,14 +36,14 @@ export function TopBar() {
       <div className="flex items-center gap-4">
         <button
           className="text-muted transition-colors hover:text-white"
-          aria-label="Bildirimler"
+          aria-label="Notifications"
         >
           <Bell className="h-4 w-4" />
         </button>
         <Link
           href="/settings/api-keys"
           className="text-muted transition-colors hover:text-white"
-          aria-label="Ayarlar"
+          aria-label="Settings"
         >
           <Settings className="h-4 w-4" />
         </Link>
