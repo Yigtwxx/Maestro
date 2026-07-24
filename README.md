@@ -9,7 +9,7 @@ domain Main Agent plans it, Subagents execute it with real tools (web search, da
 sandboxed code execution), and an optional Reviewer audits the results. Everything streams
 live over WebSocket, backed by per-user RAG memory and a community Marketplace.
 
-[![CI](https://github.com/Yigtwxx/maestro/actions/workflows/ci.yml/badge.svg)](https://github.com/Yigtwxx/maestro/actions/workflows/ci.yml)
+[![CI](https://github.com/Yigtwxx/Maestro/actions/workflows/ci.yml/badge.svg)](https://github.com/Yigtwxx/Maestro/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/License-Sustainable_Use-blue)](./LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)](https://nextjs.org)

@@ -16,7 +16,7 @@ Closes #
 ## Verification
 
 Everything below runs in CI
-([`ci.yml`](https://github.com/Yigtwxx/maestro/blob/main/.github/workflows/ci.yml)).
+([`ci.yml`](https://github.com/Yigtwxx/Maestro/blob/main/.github/workflows/ci.yml)).
 Tick what you ran locally; leave a box unticked rather than guessing.
 
 **Backend** (skip if untouched)

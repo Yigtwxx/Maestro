@@ -20,7 +20,7 @@ frontend, and Ollama run on the host.
 ### The fast path
 
 ```bash
-git clone https://github.com/Yigtwxx/maestro.git
+git clone https://github.com/Yigtwxx/Maestro.git
 cd maestro
 
 ./scripts/dev.sh          # macOS / Linux
