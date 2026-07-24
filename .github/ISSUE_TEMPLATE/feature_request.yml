@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Before opening a request, check the roadmap in
-        [`CLAUDE.md`](https://github.com/Yigtwxx/maestro/blob/main/CLAUDE.md) §16 — it may
+        [`CLAUDE.md`](https://github.com/Yigtwxx/Maestro/blob/main/CLAUDE.md) §16 — it may
         already be planned.
 
   - type: textarea
