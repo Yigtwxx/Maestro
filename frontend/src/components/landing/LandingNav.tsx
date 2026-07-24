@@ -2,8 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ArrowRight, Heart } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { buttonVariants } from '@/components/ui/Button';
+import { LikeBurst } from '@/components/effects/LikeBurst';
+import { BrandMark } from '@/components/brand/BrandMark';
 import { GITHUB_SPONSORS_URL, GITHUB_URL, MARKETING_NAV_LINKS } from '@/lib/constants';
 import { cn } from '@/lib/cn';
 
@@ -39,26 +41,10 @@ export default function LandingNav({ hydrated, isAuthenticated }: LandingNavProp
       style={{ animationDelay: '0.3s' }}
     >
       <nav className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
-        <Link href="/" className="flex shrink-0 items-center gap-3" aria-label="Maestro">
-          <span
-            className="flex h-9 w-9 items-center justify-center rounded bg-primary text-black"
-            aria-hidden
-          >
-            {/* Maestro monogram: an "M" traced as two peaks and a valley — a nod
-                to the orchestrator → agents → reviewer flow. */}
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2.4}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="h-5 w-5"
-            >
-              <path d="M5 17V7l7 6 7-6v10" />
-            </svg>
-          </span>
-          <span className="hidden font-sans text-sm font-bold tracking-wide text-white sm:block">
+        <Link href="/" className="flex shrink-0 items-end gap-3" aria-label="Maestro">
+          <BrandMark className="h-9 w-9 rounded" glyphClassName="h-5 w-5" />
+          {/* Baseline sits on the mark's bottom edge, not its centre. */}
+          <span className="hidden font-sans text-sm font-bold leading-none tracking-wide text-white sm:block">
             MAESTRO
             <span className="text-micro ml-2 text-primary">AI OS</span>
           </span>
@@ -108,10 +94,10 @@ export default function LandingNav({ hydrated, isAuthenticated }: LandingNavProp
             rel="noopener noreferrer"
             className={cn(
               buttonVariants({ variant: 'sponsor-outline' }),
-              'hidden gap-1.5 sm:inline-flex',
+              'relative hidden gap-1.5 sm:inline-flex',
             )}
           >
-            <Heart className="h-4 w-4" aria-hidden />
+            <LikeBurst />
             Sponsor
           </a>
 
