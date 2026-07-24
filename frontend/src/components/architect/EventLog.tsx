@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { cn } from '@/lib/cn';
+import { formatTime, useTimeZone } from '@/lib/date';
 import type { AgentEvent } from '@/types';
 
 /** Distance from the bottom (px) within which the log still counts as "at bottom". */
@@ -26,6 +27,10 @@ function describe(event: AgentEvent): string {
       return `User answered: ${event.answer ?? ''}`;
     case 'task_completed':
       return 'Task completed';
+    case 'task_completed_with_warnings':
+      return 'Task completed with warnings';
+    case 'task_cancelled':
+      return 'Task cancelled';
     case 'task_failed':
       return `Task failed: ${event.error ?? ''}`;
     default:
@@ -37,6 +42,9 @@ function eventColor(event: AgentEvent): string {
   switch (event.type) {
     case 'task_completed':
       return 'text-primary';
+    case 'task_completed_with_warnings':
+    case 'task_cancelled':
+      return 'text-warning';
     case 'task_failed':
       return 'text-danger';
     case 'node_update':
@@ -53,11 +61,14 @@ function eventColor(event: AgentEvent): string {
 function eventRgb(event: AgentEvent): string {
   switch (event.type) {
     case 'task_completed':
-      return '163 230 53';
+      return '211 203 192';
+    case 'task_completed_with_warnings':
+    case 'task_cancelled':
+      return '255 122 69';
     case 'task_failed':
       return '255 77 109';
     case 'review_result':
-      return event.approved ? '163 230 53' : '255 77 109';
+      return event.approved ? '211 203 192' : '255 77 109';
     case 'node_update':
     case 'agent_question':
       return '34 211 238';
@@ -71,6 +82,10 @@ function eventGlyph(event: AgentEvent): string {
   switch (event.type) {
     case 'task_completed':
       return '✓';
+    case 'task_completed_with_warnings':
+      return '⚠';
+    case 'task_cancelled':
+      return '⊘';
     case 'task_failed':
       return '✕';
     case 'review_result':
@@ -92,6 +107,7 @@ interface EventLogProps {
 }
 
 export function EventLog({ events, staticCount = 0 }: EventLogProps) {
+  const tz = useTimeZone();
   const containerRef = useRef<HTMLDivElement>(null);
   // Follow new events only while the user is already at the bottom of the log.
   const stickToBottomRef = useRef(true);
@@ -120,6 +136,9 @@ export function EventLog({ events, staticCount = 0 }: EventLogProps) {
         <p className="text-muted">&gt; No events yet. Start a task.</p>
       ) : (
         events.map((event, i) => {
+          // Synthesis streaming deltas are merged into the answer panel, not the
+          // log — rendering each one raw would flood the terminal with noise.
+          if (event.type === 'agent_delta') return null;
           const live = i >= staticCount;
           return (
             <div
@@ -133,7 +152,7 @@ export function EventLog({ events, staticCount = 0 }: EventLogProps) {
                 {eventGlyph(event)}
               </span>
               <span className="shrink-0 text-muted/60">
-                {event.ts ? new Date(event.ts).toLocaleTimeString() : ''}
+                {event.ts ? formatTime(event.ts, tz) : ''}
               </span>
               <span className={cn(eventColor(event))}>{describe(event)}</span>
             </div>
