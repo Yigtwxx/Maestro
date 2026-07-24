@@ -33,11 +33,34 @@ function timeAgo(isoTimestamp: string): string {
   return '';
 }
 
+/** Outline trash glyph for the per-task delete control. */
+function TrashIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M3 6h18" />
+      <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6" />
+      <path d="M14 11v6" />
+    </svg>
+  );
+}
+
 interface HistoryPanelProps {
   items: TaskSummary[];
   loading: boolean;
   activeTaskId: string | undefined;
   onSelect: (taskId: string) => void;
+  onDelete: (taskId: string) => void;
 }
 
 /** Sidebar of the user's past tasks; selecting one reloads its full session. */
@@ -46,6 +69,7 @@ export function HistoryPanel({
   loading,
   activeTaskId,
   onSelect,
+  onDelete,
 }: HistoryPanelProps) {
   return (
     <aside className="h-fit rounded-lg border border-border bg-surface">
@@ -64,13 +88,13 @@ export function HistoryPanel({
           {items.map((task) => {
             const active = task.task_id === activeTaskId;
             return (
-              <li key={task.task_id}>
+              <li key={task.task_id} className="group relative">
                 <button
                   type="button"
                   onClick={() => onSelect(task.task_id)}
                   aria-current={active ? 'true' : undefined}
                   className={cn(
-                    'w-full border-l-2 px-4 py-3 text-left transition-colors hover:bg-surface-2',
+                    'w-full border-l-2 py-3 pl-4 pr-9 text-left transition-colors hover:bg-surface-2',
                     active
                       ? 'border-l-module-architect bg-surface-2'
                       : 'border-l-transparent',
@@ -85,6 +109,23 @@ export function HistoryPanel({
                   <p className="mt-2 line-clamp-2 font-mono text-sm text-slate-200">
                     {task.prompt}
                   </p>
+                </button>
+                {/* Sibling (not nested) button — deletes without opening the task. */}
+                <button
+                  type="button"
+                  onClick={() => onDelete(task.task_id)}
+                  aria-label="Delete task"
+                  title="Delete task"
+                  className={cn(
+                    'absolute right-2 top-2 rounded p-1 text-muted transition-colors',
+                    'hover:bg-danger/10 hover:text-danger',
+                    // Hover-capable pointers reveal it on row hover/focus; touch
+                    // devices (no hover) keep it visible so it stays reachable.
+                    '[@media(hover:hover)]:opacity-0',
+                    'group-hover:opacity-100 focus-visible:opacity-100',
+                  )}
+                >
+                  <TrashIcon />
                 </button>
               </li>
             );
