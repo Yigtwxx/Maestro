@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { Heart } from 'lucide-react';
 import { GITHUB_SPONSORS_URL, GITHUB_URL, MARKETING_NAV_LINKS } from '@/lib/constants';
 import { LEGAL_FOOTER_LINKS } from '@/lib/legal';
+import { BrandMark } from '@/components/brand/BrandMark';
 
 const FOUNDING_YEAR = 2026;
 
@@ -25,36 +26,21 @@ function FooterColumn({ label, children }: { label: string; children: ReactNode 
  */
 export function MarketingFooter() {
   return (
-    <footer className="border-t border-border bg-background">
-      <div className="mx-auto flex max-w-7xl flex-col gap-10 px-5 py-10 sm:px-8 md:flex-row md:justify-between">
+    <footer className="border-t border-border/50 bg-background/50 backdrop-blur-md">
+      <div className="mx-auto flex max-w-7xl flex-col gap-6 px-5 py-6 sm:px-8 md:flex-row md:justify-between">
         <div>
           <Link href="/" className="flex items-center gap-2.5" aria-label="Maestro">
-            <span
-              className="flex h-7 w-7 items-center justify-center rounded bg-primary text-black"
-              aria-hidden
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth={2.4}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-4 w-4"
-              >
-                <path d="M5 17V7l7 6 7-6v10" />
-              </svg>
-            </span>
+            <BrandMark className="h-7 w-7 rounded" glyphClassName="h-4 w-4" />
             <span className="font-sans text-sm font-bold tracking-wide text-white">
               MAESTRO
             </span>
           </Link>
-          <p className="mt-3 font-mono text-xs text-muted">
+          <p className="mt-2 font-mono text-xs text-muted">
             © {FOUNDING_YEAR} Maestro — multi-layer AI agent orchestration.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-x-10 gap-y-8 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-x-10 gap-y-6 sm:grid-cols-3">
           <FooterColumn label="Product">
             {MARKETING_NAV_LINKS.map((link) => (
               <Link key={link.href} href={link.href} className={LINK_CLASS}>
