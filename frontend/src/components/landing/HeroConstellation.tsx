@@ -427,7 +427,7 @@ export default function HeroConstellation() {
           className="absolute left-1/2 top-1/2 h-[26rem] w-[34rem] -translate-x-1/2 -translate-y-1/2 rounded-full blur-[90px] animate-pulse-glow"
           style={{
             background:
-              'radial-gradient(circle, rgba(255,255,255,0.5) 0%, rgba(163,230,53,0.24) 42%, transparent 72%)',
+              'radial-gradient(circle, rgba(255,255,255,0.5) 0%, rgba(211,203,192,0.24) 42%, transparent 72%)',
             mixBlendMode: 'screen',
           }}
         />
@@ -588,7 +588,7 @@ export default function HeroConstellation() {
             style={{
               opacity: 0,
               boxShadow:
-                '0 0 60px -12px rgba(255,255,255,0.35), 0 0 90px -20px rgba(163,230,53,0.35), 0 0 90px -20px rgba(34,211,238,0.3)',
+                '0 0 60px -12px rgba(255,255,255,0.35), 0 0 90px -20px rgba(211,203,192,0.35), 0 0 90px -20px rgba(34,211,238,0.3)',
             }}
           >
             {/* Slowly rotating multicolor halo behind the card — a round,
@@ -598,7 +598,7 @@ export default function HeroConstellation() {
               className="pointer-events-none absolute -inset-8 -z-10 rounded-full opacity-50 blur-lg animate-[spin_9s_linear_infinite]"
               style={{
                 background:
-                  'conic-gradient(from 0deg, transparent, rgba(163,230,53,0.55), transparent 28%, rgba(34,211,238,0.55), transparent 58%, rgba(255,92,200,0.55), transparent)',
+                  'conic-gradient(from 0deg, transparent, rgba(211,203,192,0.55), transparent 28%, rgba(34,211,238,0.55), transparent 58%, rgba(255,92,200,0.55), transparent)',
               }}
             />
             {/* Soft white glow, pulsing with anime.js. */}
