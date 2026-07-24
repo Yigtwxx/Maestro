@@ -1,7 +1,7 @@
 import { AlertTriangle } from 'lucide-react';
 import { Reveal } from '@/components/effects/Reveal';
 import { Card } from '@/components/ui/Card';
-import { Markdown } from '@/components/ui/Markdown';
+import { LegalBody } from '@/components/legal/LegalBody';
 import { MarketingPage, PageHeader } from '@/components/landing/MarketingSection';
 import { formatLegalDate, type LegalDoc } from '@/lib/legal';
 
@@ -13,10 +13,12 @@ interface LegalDocumentProps {
   titleAccent?: string;
   /** Standing caveats shown above the text (pre-release billing, pending KVKK). */
   notices?: readonly string[];
+  /** Interactive extras below the prose (e.g. the consent manager on /cookies). */
+  children?: React.ReactNode;
 }
 
 /** The shell every legal page renders: header, date, caveats, then the prose. */
-export function LegalDocument({ doc, title, titleAccent, notices }: LegalDocumentProps) {
+export function LegalDocument({ doc, title, titleAccent, notices, children }: LegalDocumentProps) {
   return (
     <MarketingPage>
       <PageHeader
@@ -53,9 +55,15 @@ export function LegalDocument({ doc, title, titleAccent, notices }: LegalDocumen
 
       <Reveal className="mt-10">
         <Card className="p-6 sm:p-8">
-          <Markdown content={doc.content} />
+          <LegalBody
+            content={doc.content}
+            locale={doc.locale}
+            translations={doc.translations}
+          />
         </Card>
       </Reveal>
+
+      {children !== undefined && <Reveal className="mt-8">{children}</Reveal>}
     </MarketingPage>
   );
 }
