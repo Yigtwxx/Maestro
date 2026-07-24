@@ -85,7 +85,7 @@ export function CardForm({ submitLabel, submitting, disabled, onSubmit }: CardFo
       <div className="relative">
         <Input
           label="Card number"
-          module="settings"
+          module="billing"
           inputMode="numeric"
           autoComplete="cc-number"
           placeholder="4242 4242 4242 4242"
@@ -101,7 +101,7 @@ export function CardForm({ submitLabel, submitting, disabled, onSubmit }: CardFo
       <div className="grid grid-cols-3 gap-3">
         <Input
           label="Month"
-          module="settings"
+          module="billing"
           inputMode="numeric"
           autoComplete="cc-exp-month"
           placeholder="12"
@@ -111,7 +111,7 @@ export function CardForm({ submitLabel, submitting, disabled, onSubmit }: CardFo
         />
         <Input
           label="Year"
-          module="settings"
+          module="billing"
           inputMode="numeric"
           autoComplete="cc-exp-year"
           placeholder="2030"
@@ -121,7 +121,7 @@ export function CardForm({ submitLabel, submitting, disabled, onSubmit }: CardFo
         />
         <Input
           label="CVC"
-          module="settings"
+          module="billing"
           inputMode="numeric"
           autoComplete="cc-csc"
           placeholder="123"
@@ -135,7 +135,7 @@ export function CardForm({ submitLabel, submitting, disabled, onSubmit }: CardFo
 
       <Input
         label="Name on card"
-        module="settings"
+        module="billing"
         autoComplete="cc-name"
         placeholder="A. Person"
         value={holder}
@@ -144,7 +144,7 @@ export function CardForm({ submitLabel, submitting, disabled, onSubmit }: CardFo
 
       <Button
         type="submit"
-        module="settings"
+        module="billing"
         loading={submitting}
         disabled={!complete || disabled}
       >
