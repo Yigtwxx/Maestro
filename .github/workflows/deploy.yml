@@ -27,6 +27,10 @@ jobs:
       # sync on every rollout. First-time placement (before any tagged deploy)
       # is the manual copy in docs/DEPLOYMENT.md "Place the deployment files".
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # This checkout only supplies scripts/backup.sh to the scp step below;
+          # no git operation follows, so the token must not be persisted.
+          persist-credentials: false
 
       - name: Sync backup script to host
         uses: appleboy/scp-action@ff85246acaad7bdce478db94a363cd2bf7c90345 # v1.0.0
