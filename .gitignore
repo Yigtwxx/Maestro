@@ -69,6 +69,8 @@ desktop.ini
 
 # --- Local agent state ---
 .claude/
+# Private engineering log: build history, open defects, roadmap. CLAUDE.md is public.
+CLAUDE.local.md
 
 # --- Docker volumes (local data) ---
 .data/
