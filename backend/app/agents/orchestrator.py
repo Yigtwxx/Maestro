@@ -93,6 +93,16 @@ async def route_decision(
             exc_info=True,
         )
         domain, reason = DEFAULT_DOMAIN, "fallback: could not classify"
+        await ctx.emit(
+            EventType.AGENT_WARNING,
+            {
+                "role": AgentRole.ORCHESTRATOR.value,
+                "kind": "degraded",
+                "message": (
+                    f"Could not classify the task; routed to '{DEFAULT_DOMAIN}'."
+                ),
+            },
+        )
 
     await ctx.emit(
         EventType.NODE_UPDATE,
