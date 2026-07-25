@@ -140,6 +140,14 @@ async def start_task(
         if payload.reviewer_enabled is not None
         else user.default_reviewer_enabled
     )
+    # Tracing: the request wins, then the user's saved default, then the
+    # server-wide setting. Freezing it here means a resumed run traces exactly
+    # as the original did, without re-reading the user row.
+    tracing_enabled = (
+        payload.tracing_enabled
+        if payload.tracing_enabled is not None
+        else (user.default_tracing_enabled or settings.tracing_enabled)
+    )
     # Bake the user's saved per-role model preferences into the task's overrides
     # (request wins per role), so model resolution is deterministic on the frozen
     # payload — including on a resumed run, which has no access to the user row.
@@ -151,6 +159,7 @@ async def start_task(
         update={
             "provider": provider,
             "reviewer_enabled": reviewer_enabled,
+            "tracing_enabled": tracing_enabled,
             "model_overrides": merged_models or None,
         }
     )
