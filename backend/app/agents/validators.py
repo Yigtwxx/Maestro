@@ -12,11 +12,21 @@ only fires on an unambiguous miss, so a good output is never wrongly rejected.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 from app.agents.base import extract_json
 from app.agents.domains.base import SubagentSpec
-from app.core.constants import REVIEW_MIN_OUTPUT_CHARS
+from app.core.constants import (
+    REVIEW_MIN_OUTPUT_CHARS,
+    UNCERTAINTY_CLOSE,
+    UNCERTAINTY_OPEN,
+)
+
+# Fenced blocks and inline spans, stripped before counting uncertainty markers:
+# ``[?`` is ordinary regex syntax (a character class) and a software deliverable
+# that contains one is correct, not malformed.
+_CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]*`", re.DOTALL)
 
 Validator = Callable[[str, "SubagentSpec | None"], "str | None"]
 
@@ -58,6 +68,26 @@ def output_format_sections_present(
     )
 
 
+def uncertainty_markers_balanced(
+    output: str, member: SubagentSpec | None
+) -> str | None:
+    """Fail an output that opens an uncertainty marker and never closes it.
+
+    An unclosed marker reaches the user as literal ``[?`` in the rendered answer
+    and leaves the guess it was meant to flag unmarked — the exact failure the
+    marker exists to prevent. Only the open-without-close direction fires; a
+    stray close is harmless punctuation.
+    """
+    prose = _CODE_SPAN_RE.sub("", output)
+    if prose.count(UNCERTAINTY_OPEN) <= prose.count(UNCERTAINTY_CLOSE):
+        return None
+    return (
+        f"An uncertainty marker was opened with {UNCERTAINTY_OPEN} but never "
+        f"closed with {UNCERTAINTY_CLOSE}; close every marker you open, or drop "
+        "it if the statement is sourced."
+    )
+
+
 def json_parses(output: str, member: SubagentSpec | None) -> str | None:
     """Fail a data-domain output that carries no parseable JSON object."""
     try:
@@ -86,7 +116,10 @@ def code_blocks_present(output: str, member: SubagentSpec | None) -> str | None:
 # intentionally left out of the active set — matching declared "Label:" headings
 # against a paraphrased-but-correct deliverable is too false-positive-prone; it
 # stays defined for a future structured-output-format contract.
-UNIVERSAL_VALIDATORS: tuple[Validator, ...] = (nonempty_min_length,)
+UNIVERSAL_VALIDATORS: tuple[Validator, ...] = (
+    nonempty_min_length,
+    uncertainty_markers_balanced,
+)
 
 # Extra checks keyed by domain id.
 DOMAIN_VALIDATORS: dict[str, tuple[Validator, ...]] = {
