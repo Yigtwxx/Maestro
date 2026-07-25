@@ -12,7 +12,7 @@ from app.agents.base import (
     format_optional_block,
     with_current_date,
 )
-from app.agents.domains.base import ReviewCriterion
+from app.agents.domains.base import UNIVERSAL_CRITERIA, ReviewCriterion
 from app.agents.prompts import REVIEWER_SYSTEM
 from app.agents.registry import SubagentSpec, get_domain_info
 from app.agents.schemas import ReviewVerdict
@@ -167,16 +167,24 @@ async def _review(
 
     info = ctx.domain_info or (get_domain_info(domain) if domain else None)
     rubric = info.review_rubric if info else ""
-    criteria = info.review_criteria if info else ()
-    # Structured criteria (when the domain declares them) render as a scored
-    # checklist appended to the string rubric — back-compatible: a domain with
-    # only a string rubric is unchanged.
+    # Grounding is judged everywhere, so the universal criteria lead and the
+    # domain's own follow.
+    #
+    # This does change the gate for the domains that declare no criteria of their
+    # own: they used to take the ``not criteria`` branch of _weighted_approved and
+    # ride on the model's boolean ``approved``, and now they go through the
+    # weighted threshold like everyone else. That is the point of the change, and
+    # it is bounded — the model returning no ``scores`` still falls back to the
+    # boolean, so a reviewer that cannot score never makes the gate stricter.
+    criteria = UNIVERSAL_CRITERIA + (info.review_criteria if info else ())
+    # Structured criteria render as a scored checklist appended to the string
+    # rubric; a domain with only a string rubric keeps that rubric verbatim.
     rubric_body = rubric + _criteria_block(criteria)
     # REVIEWER_SYSTEM escapes literal JSON braces as {{...}}, so it must be
     # rendered via .format(); the rubric is replacement text, so any braces
     # inside it are not re-processed.
     system = REVIEWER_SYSTEM.format(
-        rubric=format_optional_block("Domain-specific review criteria:", rubric_body)
+        rubric=format_optional_block("Acceptance criteria:", rubric_body)
     )
     producer = (
         f'Produced by "{member.name}" whose role is: {member.role}.\n\n'
@@ -206,6 +214,21 @@ async def _review(
         # The reviewer itself failed. What that means is configurable so a flaky
         # model can't silently turn the quality gate into a no-op (D8).
         review_result = _on_reviewer_failure(index)
+        # Emitted here rather than inside `_on_reviewer_failure` to keep that a
+        # pure verdict mapper. The fail mode is named because it tells the user
+        # which way the quality gate swung when it could not evaluate.
+        await ctx.emit(
+            EventType.AGENT_WARNING,
+            {
+                "role": AgentRole.REVIEWER.value,
+                "index": index,
+                "kind": "degraded",
+                "message": (
+                    "Reviewer could not evaluate this output "
+                    f"(fail mode: {settings.reviewer_fail_mode})."
+                ),
+            },
+        )
 
     await ctx.emit(
         EventType.REVIEW_RESULT,
