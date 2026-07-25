@@ -554,7 +554,12 @@ _TOOL_PARAMETERS: dict[str, dict] = {
         "properties": {
             "repo": {
                 "type": "string",
-                "description": 'Repository as "owner/name", e.g. "psf/requests".',
+                "description": (
+                    'Repository as "owner/name", exactly as it appears in the '
+                    'project\'s GitHub URL, e.g. "psf/requests". The owner '
+                    "cannot be derived from a package name — look it up rather "
+                    "than assembling one."
+                ),
             },
             "aspect": {
                 "type": "string",
