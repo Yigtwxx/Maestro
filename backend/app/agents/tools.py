@@ -17,17 +17,41 @@ from app.core.config import settings
 from app.core.constants import (
     CODE_EXECUTION_ACTION,
     CODE_EXECUTION_PREVIEW_MAX_CHARS,
+    COMMUNITY_PLATFORMS,
+    COMMUNITY_READ_ACTION,
+    CONNECTED_DEFAULT_WINDOW,
+    CONNECTED_TOOL_IDS,
+    CONNECTED_TOOL_PROVIDERS,
+    CONNECTED_WINDOWS,
     DATA_FETCH_ACTION,
+    DATA_FETCH_SELECTOR_MAX_CHARS,
     EXECUTABLE_TOOL_IDS,
+    KEYLESS_CONNECTED_TOOL_IDS,
     OBJECTIVE_MAX_CHARS,
     ORIGINAL_REQUEST_CLOSE,
     ORIGINAL_REQUEST_OPEN,
+    PLACES_INTEL_ACTION,
+    PLACES_INTEL_ASPECTS,
+    PLACES_INTEL_DEFAULT_ASPECT,
+    REPO_INTEL_ACTION,
+    REPO_INTEL_ASPECTS,
+    REPO_INTEL_DEFAULT_ASPECT,
+    SOCIAL_SEARCH_ACTION,
     VIEW_ORIGINAL_REQUEST_ACTION,
     WEB_SEARCH_ACTION,
     WEB_SEARCH_CATEGORIES,
     WEB_SEARCH_DEFAULT_CATEGORY,
 )
-from app.services import code_execution_service, data_fetch_service, web_search_service
+from app.services import (
+    code_execution_service,
+    community_read_service,
+    data_fetch_service,
+    places_intel_service,
+    repo_intel_service,
+    social_search_service,
+    web_search_service,
+)
+from app.services.service_key_service import ServiceCredentials
 
 from .base import extract_json, truncate_text
 
@@ -38,6 +62,20 @@ class ToolDirective:
 
     action: str
     args: dict[str, str] = field(default_factory=dict)
+
+
+# args stays str-valued (it feeds the Architect event payload verbatim), so
+# booleans travel as this sentinel. Models emit true/"true"/"yes"/1
+# interchangeably, hence the permissive read.
+_RENDER_TRUE = "true"
+_TRUTHY = frozenset({"true", "yes", "1", "on"})
+
+
+def _as_bool(value: object) -> bool:
+    """Coerce a model-supplied flag to a bool without trusting its type."""
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in _TRUTHY
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,18 +98,26 @@ class ToolSpec:
     executor: Callable[[ToolDirective], Awaitable[str]]
     # Human-readable one-liner for the live Architect stream.
     describe: Callable[[ToolDirective, bool], str]
+    # Which BYOK service this call authenticates against, for the Architect
+    # rail. None for the keyless tools (web_search, data_fetch, code_execution),
+    # which deliberately get no lane. A callable rather than a constant because
+    # community_read's provider is chosen per call by its ``platform`` argument.
+    provider_of: Callable[[ToolDirective], str | None] | None = None
 
 
 async def _run_web_search(directive: ToolDirective) -> str:
-    query = directive.args["query"]
-    results = await web_search_service.search(
-        query, category=directive.args["category"]
+    outcome = await web_search_service.search(
+        directive.args["query"], category=directive.args["category"]
     )
-    return web_search_service.format_results_block(query, results)
+    return web_search_service.format_results_block(outcome)
 
 
 async def _run_data_fetch(directive: ToolDirective) -> str:
-    return await data_fetch_service.fetch(directive.args["url"])
+    return await data_fetch_service.fetch(
+        directive.args["url"],
+        selector=directive.args.get("selector") or None,
+        render=directive.args.get("render") == _RENDER_TRUE,
+    )
 
 
 async def _run_code_execution(directive: ToolDirective) -> str:
@@ -86,7 +132,11 @@ def _describe_web_search(directive: ToolDirective, done: bool) -> str:
 
 def _describe_data_fetch(directive: ToolDirective, done: bool) -> str:
     target = directive.args["url"]
-    return f"Fetched: {target}" if done else f"Fetching: {target}"
+    # Safe to interpolate: parse_directive caps the selector's length and
+    # rejects newlines before it ever reaches an event payload.
+    selector = directive.args.get("selector")
+    suffix = f" [{selector}]" if selector else ""
+    return f"Fetched: {target}{suffix}" if done else f"Fetching: {target}{suffix}"
 
 
 def _describe_code_execution(directive: ToolDirective, done: bool) -> str:
@@ -131,7 +181,126 @@ def make_view_original_request_spec(objective: str) -> ToolSpec:
     )
 
 
-# The registry: one entry per executable tool (keys == EXECUTABLE_TOOL_IDS).
+def _describe_repo_intel(directive: ToolDirective, done: bool) -> str:
+    target = f"{directive.args['repo']} ({directive.args['aspect']})"
+    return f"Repo read: {target}" if done else f"Reading repo: {target}"
+
+
+def _describe_social_search(directive: ToolDirective, done: bool) -> str:
+    target = f"{directive.args['query']} ({directive.args['window']})"
+    return f"Social search done: {target}" if done else f"Searching X: {target}"
+
+
+def _describe_community_read(directive: ToolDirective, done: bool) -> str:
+    target = f"{directive.args['platform']}/{directive.args['channel']}"
+    return f"Community read: {target}" if done else f"Reading community: {target}"
+
+
+def _describe_places_intel(directive: ToolDirective, done: bool) -> str:
+    target = f"{directive.args['query']} ({directive.args['aspect']})"
+    return f"Places read: {target}" if done else f"Reading places: {target}"
+
+
+def make_connected_tool_specs(credentials: ServiceCredentials) -> dict[str, ToolSpec]:
+    """Per-run specs for the tools that authenticate with a user's BYOK key.
+
+    They cannot live in the process-wide ``TOOL_SPECS`` because their executors
+    need this run's credentials, and ``ToolSpec.executor`` takes only a
+    directive. Closing over the credentials is the same seam
+    :func:`make_view_original_request_spec` already uses for run-scoped state,
+    and it keeps decryption at the engine edge instead of inside the agent loop.
+    """
+
+    async def _run_repo_intel(directive: ToolDirective) -> str:
+        return await repo_intel_service.fetch(
+            directive.args["repo"],
+            aspect=directive.args["aspect"],
+            credentials=credentials,
+        )
+
+    async def _run_social_search(directive: ToolDirective) -> str:
+        return await social_search_service.fetch(
+            directive.args["query"],
+            window=directive.args["window"],
+            credentials=credentials,
+        )
+
+    async def _run_community_read(directive: ToolDirective) -> str:
+        return await community_read_service.fetch(
+            directive.args["channel"],
+            platform=directive.args["platform"],
+            window=directive.args["window"],
+            credentials=credentials,
+        )
+
+    async def _run_places_intel(directive: ToolDirective) -> str:
+        return await places_intel_service.fetch(
+            directive.args["query"],
+            location=directive.args.get("location", ""),
+            aspect=directive.args["aspect"],
+            credentials=credentials,
+        )
+
+    return {
+        REPO_INTEL_ACTION: ToolSpec(
+            action=REPO_INTEL_ACTION,
+            budget_attr="max_repo_lookups",
+            metadata_key="repo_lookups_used",
+            event_arg="repo",
+            executor=_run_repo_intel,
+            describe=_describe_repo_intel,
+            provider_of=lambda _: CONNECTED_TOOL_PROVIDERS[REPO_INTEL_ACTION].value,
+        ),
+        SOCIAL_SEARCH_ACTION: ToolSpec(
+            action=SOCIAL_SEARCH_ACTION,
+            budget_attr="max_social_searches",
+            metadata_key="social_searches_used",
+            event_arg="query",
+            executor=_run_social_search,
+            describe=_describe_social_search,
+            provider_of=lambda _: CONNECTED_TOOL_PROVIDERS[SOCIAL_SEARCH_ACTION].value,
+        ),
+        COMMUNITY_READ_ACTION: ToolSpec(
+            action=COMMUNITY_READ_ACTION,
+            budget_attr="max_community_reads",
+            metadata_key="community_reads_used",
+            event_arg="channel",
+            executor=_run_community_read,
+            describe=_describe_community_read,
+            # The platform argument *is* the provider here, which is why this
+            # field is a callable rather than a constant.
+            provider_of=lambda d: d.args.get("platform"),
+        ),
+        PLACES_INTEL_ACTION: ToolSpec(
+            action=PLACES_INTEL_ACTION,
+            budget_attr="max_places_lookups",
+            metadata_key="places_lookups_used",
+            event_arg="query",
+            executor=_run_places_intel,
+            describe=_describe_places_intel,
+            provider_of=lambda _: CONNECTED_TOOL_PROVIDERS[PLACES_INTEL_ACTION].value,
+        ),
+    }
+
+
+def specs_for(
+    enabled: frozenset[str], credentials: ServiceCredentials
+) -> dict[str, ToolSpec]:
+    """Assemble one run's specs: stateless built-ins plus credentialed ones.
+
+    The single place the two registries are merged, so the subagent loop never
+    has to know that some specs are process-wide and some are per-run.
+    """
+    connected = make_connected_tool_specs(credentials)
+    return {
+        action: TOOL_SPECS[action] if action in TOOL_SPECS else connected[action]
+        for action in enabled
+        if action in TOOL_SPECS or action in connected
+    }
+
+
+# The registry: stateless executable tools. The credentialed ones are built
+# per run by ``make_connected_tool_specs`` and merged in by ``specs_for``.
 TOOL_SPECS: dict[str, ToolSpec] = {
     WEB_SEARCH_ACTION: ToolSpec(
         action=WEB_SEARCH_ACTION,
@@ -193,7 +362,20 @@ def parse_directive(content: str, enabled: frozenset[str]) -> ToolDirective | No
         url = str(parsed.get("url", "")).strip()
         if not url:
             return None
-        return ToolDirective(action, {"url": url})
+        args = {"url": url}
+        # A malformed selector degrades the call to a full-text fetch rather
+        # than killing the directive: returning None here would make the loop
+        # read this JSON as the subagent's final answer, which is strictly worse.
+        selector = str(parsed.get("selector", "")).strip()
+        if (
+            selector
+            and len(selector) <= DATA_FETCH_SELECTOR_MAX_CHARS
+            and "\n" not in selector
+        ):
+            args["selector"] = selector
+        if _as_bool(parsed.get("render")):
+            args["render"] = _RENDER_TRUE
+        return ToolDirective(action, args)
 
     if action == CODE_EXECUTION_ACTION:
         code = str(parsed.get("code", "")).strip()
@@ -201,20 +383,110 @@ def parse_directive(content: str, enabled: frozenset[str]) -> ToolDirective | No
             return None
         return ToolDirective(action, {"code": code})
 
+    if action == REPO_INTEL_ACTION:
+        repo = str(parsed.get("repo", "")).strip()
+        if not repo:
+            return None
+        # Like data_fetch's selector, a bad optional arg degrades to the default
+        # rather than returning None, which the loop would read as a final answer.
+        aspect = str(parsed.get("aspect", "")).strip().lower()
+        if aspect not in REPO_INTEL_ASPECTS:
+            aspect = REPO_INTEL_DEFAULT_ASPECT
+        return ToolDirective(action, {"repo": repo, "aspect": aspect})
+
+    if action == SOCIAL_SEARCH_ACTION:
+        query = str(parsed.get("query", "")).strip()
+        if not query:
+            return None
+        return ToolDirective(
+            action, {"query": query, "window": _window_arg(parsed.get("window"))}
+        )
+
+    if action == COMMUNITY_READ_ACTION:
+        channel = str(parsed.get("channel", "")).strip()
+        platform = str(parsed.get("platform", "")).strip().lower()
+        # Both are required: unlike an aspect there is no safe default platform,
+        # and guessing one would read the wrong community.
+        if not channel or platform not in COMMUNITY_PLATFORMS:
+            return None
+        return ToolDirective(
+            action,
+            {
+                "channel": channel,
+                "platform": platform,
+                "window": _window_arg(parsed.get("window")),
+            },
+        )
+
+    if action == PLACES_INTEL_ACTION:
+        query = str(parsed.get("query", "")).strip()
+        if not query:
+            return None
+        aspect = str(parsed.get("aspect", "")).strip().lower()
+        if aspect not in PLACES_INTEL_ASPECTS:
+            aspect = PLACES_INTEL_DEFAULT_ASPECT
+        args = {"query": query, "aspect": aspect}
+        location = str(parsed.get("location", "")).strip()
+        if location:
+            args["location"] = location
+        return ToolDirective(action, args)
+
     return None
 
 
-async def resolve_enabled_tools(domain: str) -> frozenset[str]:
+def _window_arg(raw: object) -> str:
+    """Normalize a model-supplied lookback window to a supported value."""
+    window = str(raw or "").strip().lower()
+    return window if window in CONNECTED_WINDOWS else CONNECTED_DEFAULT_WINDOW
+
+
+def _connected_is_usable(action: str, credentials: ServiceCredentials) -> bool:
+    """Whether a connected tool has what it needs to do anything at all.
+
+    ``repo_intel`` is usable with no key (GitHub serves anonymous reads), so it
+    stays enabled either way. The rest are dropped when their credential is
+    missing, for the same reason ``code_execution`` is dropped without Docker:
+    offering a tool that cannot work guarantees a wasted tool call. The subagent
+    then works from ``web_search`` and reports the gap in its Data coverage.
+    """
+    if action in KEYLESS_CONNECTED_TOOL_IDS:
+        return True
+    if action == COMMUNITY_READ_ACTION:
+        # Any one of the three platforms is enough to make the tool worth having.
+        return any(credentials.has(platform) for platform in COMMUNITY_PLATFORMS)
+    provider = CONNECTED_TOOL_PROVIDERS.get(action)
+    return provider is not None and credentials.has(provider)
+
+
+async def resolve_enabled_tools(
+    domain: str, *, credentials: ServiceCredentials | None = None
+) -> frozenset[str]:
     """Executable tools this domain may use, filtered by runtime switches."""
     declared = set(get_domain_info(domain).tools) & EXECUTABLE_TOOL_IDS
     if not settings.web_search_enabled:
         declared.discard(WEB_SEARCH_ACTION)
+    # Deliberately no browser-availability probe here, unlike code_execution
+    # below. Without Docker, code_execution can do nothing at all, so offering
+    # it guarantees a wasted tool call. data_fetch's baseline is
+    # TLS-impersonating HTTP, which works on every image; the browser is an
+    # optional accelerator for JS-heavy pages. Gating the whole tool on a
+    # browser probe would delete a working capability from every domain on a
+    # browser-free host. The probe lives inside the service, where a missing
+    # browser silently degrades to the static tier.
     if not settings.data_fetch_enabled:
         declared.discard(DATA_FETCH_ACTION)
     if CODE_EXECUTION_ACTION in declared and not (
         settings.code_execution_enabled and await code_execution_service.is_available()
     ):
         declared.discard(CODE_EXECUTION_ACTION)
+
+    # Connected-API tools: an operator switch, then a credential check.
+    creds = credentials if credentials is not None else ServiceCredentials()
+    for action in list(declared & CONNECTED_TOOL_IDS):
+        if not getattr(settings, f"{action}_enabled", True):
+            declared.discard(action)
+        elif not _connected_is_usable(action, creds):
+            declared.discard(action)
     return frozenset(declared)
 
 
@@ -252,7 +524,24 @@ _TOOL_PARAMETERS: dict[str, dict] = {
     },
     DATA_FETCH_ACTION: {
         "type": "object",
-        "properties": {"url": {"type": "string"}},
+        "properties": {
+            "url": {"type": "string"},
+            "selector": {
+                "type": "string",
+                "maxLength": DATA_FETCH_SELECTOR_MAX_CHARS,
+                "description": (
+                    "Optional CSS selector. When set, only the matching "
+                    "elements are returned, as a compact JSON array."
+                ),
+            },
+            "render": {
+                "type": "boolean",
+                "description": (
+                    "Render JavaScript in a real browser. Slow, and ignored "
+                    "when no browser is installed on the server."
+                ),
+            },
+        },
         "required": ["url"],
     },
     CODE_EXECUTION_ACTION: {
@@ -260,13 +549,93 @@ _TOOL_PARAMETERS: dict[str, dict] = {
         "properties": {"code": {"type": "string"}},
         "required": ["code"],
     },
+    REPO_INTEL_ACTION: {
+        "type": "object",
+        "properties": {
+            "repo": {
+                "type": "string",
+                "description": 'Repository as "owner/name", e.g. "psf/requests".',
+            },
+            "aspect": {
+                "type": "string",
+                "enum": sorted(REPO_INTEL_ASPECTS),
+                "description": (
+                    "Which facts to return: profile (identity, license, "
+                    "counts), activity (commits, contributors), issues "
+                    "(backlog), releases (cadence)."
+                ),
+            },
+        },
+        "required": ["repo"],
+    },
+    SOCIAL_SEARCH_ACTION: {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string"},
+            "window": {"type": "string", "enum": sorted(CONNECTED_WINDOWS)},
+        },
+        "required": ["query"],
+    },
+    COMMUNITY_READ_ACTION: {
+        "type": "object",
+        "properties": {
+            "platform": {"type": "string", "enum": sorted(COMMUNITY_PLATFORMS)},
+            "channel": {
+                "type": "string",
+                "description": (
+                    "Channel identifier: a Discord or Slack channel id, or a "
+                    'Telegram "@name" or numeric chat id.'
+                ),
+            },
+            "window": {"type": "string", "enum": sorted(CONNECTED_WINDOWS)},
+        },
+        "required": ["platform", "channel"],
+    },
+    PLACES_INTEL_ACTION: {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "What kind of place to find."},
+            "location": {
+                "type": "string",
+                "description": "City, district or area to search within.",
+            },
+            "aspect": {
+                "type": "string",
+                "enum": sorted(PLACES_INTEL_ASPECTS),
+                "description": (
+                    "search returns places with ratings and price level; "
+                    "reviews returns review text for theme mining."
+                ),
+            },
+        },
+        "required": ["query"],
+    },
     VIEW_ORIGINAL_REQUEST_ACTION: {"type": "object", "properties": {}},
 }
 
 _TOOL_DESCRIPTIONS: dict[str, str] = {
     WEB_SEARCH_ACTION: "Search the web for up-to-date information.",
-    DATA_FETCH_ACTION: "Fetch the contents of a URL.",
+    DATA_FETCH_ACTION: (
+        "Fetch a URL and return its readable text. Pass a CSS selector to get "
+        "just the matching elements as a JSON array instead of the whole page."
+    ),
     CODE_EXECUTION_ACTION: "Run Python code in a sandbox and return its output.",
+    REPO_INTEL_ACTION: (
+        "Read structured facts about a GitHub repository — health, activity, "
+        "issue backlog and release cadence — one aspect per call."
+    ),
+    SOCIAL_SEARCH_ACTION: (
+        "Search recent public posts on X, with author, timestamp and "
+        "engagement counts for each, so you can measure rather than guess."
+    ),
+    COMMUNITY_READ_ACTION: (
+        "Read recent messages from a Discord, Slack or Telegram channel the "
+        "user has connected."
+    ),
+    PLACES_INTEL_ACTION: (
+        "Find places in an area with their ratings, review counts and price "
+        "level, or read their reviews for complaint and theme mining."
+    ),
     VIEW_ORIGINAL_REQUEST_ACTION: "Read the original user request for context.",
 }
 
