@@ -31,6 +31,41 @@ $Frontend = Join-Path $RepoRoot 'frontend'
 
 function Write-Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
+# Blocks until every compose service with a healthcheck reports healthy. Without
+# this the script raced straight into pip/alembic while the four containers were
+# still warming up, so the Docker memory spike and the Next.js compile — the two
+# heaviest phases — landed in the same window and exhausted host RAM.
+function Wait-Infra([int]$TimeoutSeconds = 90) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        # `docker compose ps` emits one JSON object per line (not a JSON array).
+        $lines = @(docker compose ps --format json 2>$null) | Where-Object { $_ }
+        if ($lines) {
+            $states = $lines | ForEach-Object {
+                try { $_ | ConvertFrom-Json } catch { $null }
+            } | Where-Object { $_ }
+            # Qdrant declares no healthcheck; an empty Health means "running is enough".
+            $pending = $states | Where-Object { $_.Health -and $_.Health -ne 'healthy' }
+            if ($states.Count -gt 0 -and -not $pending) { return }
+        }
+        Start-Sleep -Seconds 2
+    }
+    Write-Warning "Infra did not report healthy within ${TimeoutSeconds}s; continuing anyway."
+}
+
+# Turbopack's persistent dev cache is disabled in next.config.ts, so .next should
+# stay small. This is a backstop: a stale multi-GB .next gets memory-mapped on
+# dev-server start and is exactly what produced `os error 1450` before.
+function Clear-StaleNextCache([string]$Path, [int]$ThresholdMB = 600) {
+    if (-not (Test-Path $Path)) { return }
+    $bytes = (Get-ChildItem $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Measure-Object -Property Length -Sum).Sum
+    $sizeMB = [int]($bytes / 1MB)
+    if ($sizeMB -lt $ThresholdMB) { return }
+    Write-Warning "frontend/.next is ${sizeMB}MB (threshold ${ThresholdMB}MB); removing it to avoid an out-of-memory dev start."
+    Remove-Item $Path -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 function Clear-Port([int]$Port) {
     $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
     if (-not $conns) { return }
@@ -51,7 +86,12 @@ if (-not $SkipInfra) {
     if (Get-Command docker -ErrorAction SilentlyContinue) {
         Write-Step 'Starting infra (Postgres, MongoDB, Qdrant) via docker-compose'
         Push-Location $RepoRoot
-        try { docker compose up -d } catch { Write-Warning "docker compose failed: $_" }
+        try {
+            docker compose up -d
+            Write-Host 'Waiting for infra to become healthy...'
+            Wait-Infra
+        }
+        catch { Write-Warning "docker compose failed: $_" }
         Pop-Location
     }
     else {
@@ -79,8 +119,14 @@ Write-Host 'Installing backend dependencies...'
 & $VenvPy -m pip install --disable-pip-version-check -q -r (Join-Path $Backend 'requirements.txt')
 
 Write-Host 'Running database migrations (alembic upgrade head)...'
-try { & $VenvPy -m alembic -c (Join-Path $Backend 'alembic.ini') upgrade head }
+# Must run with the backend as CWD: alembic.ini resolves both `script_location`
+# and `prepend_sys_path` relative to the working directory, not to the ini file.
+# Passing -c alone is not enough — invoking this script from scripts/ made
+# alembic look for ./alembic and fail with "Path doesn't exist: alembic".
+Push-Location $Backend
+try { & $VenvPy -m alembic -c 'alembic.ini' upgrade head }
 catch { Write-Warning "Alembic migration failed (is Postgres up?): $_" }
+finally { Pop-Location }
 
 if (-not $SkipSeed) {
     Write-Host 'Seeding featured marketplace teams (idempotent)...'
@@ -88,7 +134,7 @@ if (-not $SkipSeed) {
     # Seeding is cosmetic: a missing Mongo must not stop the dev stack coming up.
     try { & $VenvPy -m app.scripts.seed_marketplace }
     catch { Write-Warning "Marketplace seed failed (is MongoDB up?): $_" }
-    Pop-Location
+    finally { Pop-Location }
 }
 
 Clear-Port $BackendPort
@@ -110,11 +156,21 @@ if (-not (Test-Path (Join-Path $Frontend '.env.local'))) {
     Copy-Item (Join-Path $Frontend '.env.local.example') (Join-Path $Frontend '.env.local')
 }
 
+Clear-StaleNextCache (Join-Path $Frontend '.next')
+
 Clear-Port $FrontendPort
 Write-Step "Launching frontend on http://localhost:$FrontendPort"
+# Bound the V8 heap so a runaway dev server dies with a heap error instead of
+# dragging the whole host into swap. This covers the JS side only — Turbopack's
+# native memory-mapped cache is outside V8, which is why the real fix is
+# `turbopackFileSystemCacheForDev: false` in next.config.ts.
+$PrevNodeOptions = $env:NODE_OPTIONS
+$env:NODE_OPTIONS = '--max-old-space-size=4096'
 $FrontendProc = Start-Process -FilePath 'cmd.exe' `
     -ArgumentList '/c', "npm run dev -- --port $FrontendPort" `
     -WorkingDirectory $Frontend -NoNewWindow -PassThru
+# The child has inherited it; don't leave it set in the caller's session.
+$env:NODE_OPTIONS = $PrevNodeOptions
 
 Write-Host "`nMaestro is starting:" -ForegroundColor Green
 Write-Host "  Backend : http://localhost:$BackendPort  (docs: /docs)"

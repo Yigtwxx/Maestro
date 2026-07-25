@@ -6,12 +6,18 @@
 #
 # Redis is optional locally: leave REDIS_URL unset and the rate limiter keeps
 # its buckets in process memory, which is correct for a single dev worker.
+#
+# Every service carries a `mem_limit`, mirroring docker-compose.prod.yml. Without
+# one, each container sizes its caches from the whole WSL2 VM; the four of them
+# together starved the Next.js dev server on the host and froze the machine.
+# The VM itself is capped separately in %USERPROFILE%\.wslconfig.
 # =========================================================================
 services:
   postgres:
     image: postgres:16-alpine
     container_name: maestro-postgres
     restart: unless-stopped
+    mem_limit: 512m
     environment:
       POSTGRES_USER: maestro
       POSTGRES_PASSWORD: maestro
@@ -31,6 +37,10 @@ services:
     image: mongo:7
     container_name: maestro-mongo
     restart: unless-stopped
+    mem_limit: 1g
+    # WiredTiger sizes its cache from *visible* RAM, which inside WSL2 is the
+    # whole VM — it ignores the cgroup limit and would get OOM-killed instead.
+    command: ["mongod", "--wiredTigerCacheSizeGB", "0.5"]
     ports:
       - "27017:27017"
     volumes:
@@ -42,9 +52,12 @@ services:
       retries: 5
 
   qdrant:
-    image: qdrant/qdrant:latest
+    # Pinned to the same tag as production; `latest` silently changed the storage
+    # format between runs and mmaps the segment store on start.
+    image: qdrant/qdrant:v1.18.2
     container_name: maestro-qdrant
     restart: unless-stopped
+    mem_limit: 1g
     ports:
       - "6333:6333" # REST
       - "6334:6334" # gRPC
@@ -55,6 +68,9 @@ services:
     image: redis:7-alpine
     container_name: maestro-redis
     restart: unless-stopped
+    mem_limit: 256m
+    # Rate-limit buckets expire in 60s, so eviction under pressure costs nothing.
+    command: ["redis-server", "--maxmemory", "192mb", "--maxmemory-policy", "allkeys-lru"]
     ports:
       - "6379:6379"
     volumes:
