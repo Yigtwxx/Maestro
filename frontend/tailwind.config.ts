@@ -33,6 +33,13 @@ const config: Config = {
           DEFAULT: '#ff7a45',
           dim: 'rgba(255,122,69,0.10)',
         },
+        // Neon mint for successful outcomes. Same hex as domain.finance —
+        // Tailwind's emerald-* reads washed-out against the near-black base and
+        // sits outside this palette.
+        success: {
+          DEFAULT: '#2ee6a6',
+          dim: 'rgba(46,230,166,0.10)',
+        },
         // GitHub Sponsors brand pink — used only by the Sponsor CTA.
         sponsor: {
           DEFAULT: '#db61a2',
@@ -53,6 +60,15 @@ const config: Config = {
           content: '#e879f9',
           legal: '#ff4d5e',
           education: '#ffe14d',
+          // Connected-API squads. Each is a tonal variant of its functional
+          // sibling rather than a new hue: kinship is the signal, and the
+          // spectrum is already dense at eleven domains. social/community are
+          // the two listening squads (marketing pink), opensource belongs to
+          // the software blue family, local to the seo amber family.
+          social: '#ff8ad8',
+          community: '#d63da6',
+          opensource: '#7ec4ff',
+          local: '#ffcd7a',
           general: '#a3e635',
         },
         // Per-module chrome accents — each app module owns one neon hue so the
@@ -64,7 +80,7 @@ const config: Config = {
         module: {
           dashboard: '#22d3ee',
           marketplace: '#ff5cc8',
-          architect: '#a78bfa',
+          architect: '#9d4dff',
           agents: '#3b9dff',
           documents: '#ff7a45',
           // The three settings sub-sections each own a distinct hue so the
@@ -81,9 +97,14 @@ const config: Config = {
           traces: '#6d7cff',
           brand: '#d3cbc0',
         },
-        // Chart-step hues — the same eight domains stepped down into the dark
-        // chart lightness band (OKLCH L 0.48–0.67) for data-viz marks on the
-        // surface. Validated as a set (worst adjacent CVD ΔE 16.4).
+        // Chart-step hues — the domain hues stepped down into the dark chart
+        // lightness band (OKLCH L 0.48–0.67) for data-viz marks on the surface.
+        // The original eleven were validated as a mutually-distinct set (worst
+        // adjacent CVD ΔE 16.4). That claim does NOT extend to the four
+        // connected-API squads below: they are deliberate tonal variants of
+        // their sibling domain, so social/marketing and community/marketing
+        // read as related rather than distinct. Separation within a family is
+        // lightness, not hue — do not treat these as CVD-separable pairs.
         chart: {
           software: '#2f86e6',
           finance: '#12a074',
@@ -95,6 +116,10 @@ const config: Config = {
           content: '#c026d3',
           legal: '#e0344e',
           education: '#bfa50f',
+          social: '#e86bb4',
+          community: '#b82d85',
+          opensource: '#5ea8f0',
+          local: '#d69a3a',
           general: '#749f10',
         },
       },
@@ -119,11 +144,15 @@ const config: Config = {
         'glow-content': '0 0 24px -6px rgba(232,121,249,0.45)',
         'glow-legal': '0 0 24px -6px rgba(255,77,94,0.45)',
         'glow-education': '0 0 24px -6px rgba(255,225,77,0.45)',
+        'glow-social': '0 0 24px -6px rgba(255,138,216,0.45)',
+        'glow-community': '0 0 24px -6px rgba(214,61,166,0.45)',
+        'glow-opensource': '0 0 24px -6px rgba(126,196,255,0.45)',
+        'glow-local': '0 0 24px -6px rgba(255,205,122,0.45)',
         'glow-general': '0 0 24px -6px rgba(163,230,53,0.45)',
         // Per-module neon glows (mirror the module.* hues).
         'glow-mod-dashboard': '0 0 24px -6px rgba(34,211,238,0.45)',
         'glow-mod-marketplace': '0 0 24px -6px rgba(255,92,200,0.45)',
-        'glow-mod-architect': '0 0 24px -6px rgba(167,139,250,0.45)',
+        'glow-mod-architect': '0 0 24px -6px rgba(157,77,255,0.45)',
         'glow-mod-agents': '0 0 24px -6px rgba(59,157,255,0.45)',
         'glow-mod-documents': '0 0 24px -6px rgba(255,122,69,0.45)',
         'glow-mod-api-keys': '0 0 24px -6px rgba(46,230,166,0.45)',
@@ -189,7 +218,11 @@ const config: Config = {
           to: { backgroundPosition: '100% 50%' },
         },
         'word-in': {
-          from: { opacity: '0', transform: 'translateY(6px)', filter: 'blur(4px)' },
+          from: {
+            opacity: '0',
+            transform: 'translateY(6px)',
+            filter: 'blur(4px)',
+          },
           to: { opacity: '1', transform: 'translateY(0)', filter: 'blur(0px)' },
         },
         'node-ping': {

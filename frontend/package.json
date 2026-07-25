@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "clean": "node -e \"const fs=require('fs');for(const p of ['.next','tsconfig.tsbuildinfo'])fs.rmSync(p,{recursive:true,force:true})\""
   },
   "dependencies": {
     "@sentry/nextjs": "10.65.0",

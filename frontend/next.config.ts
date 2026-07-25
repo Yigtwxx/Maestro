@@ -17,6 +17,15 @@ const nextConfig: NextConfig = {
   // node_modules tree. Entry point: .next/standalone/server.js.
   output: 'standalone',
   outputFileTracingRoot: projectRoot,
+  experimental: {
+    // Next 16 turns the Turbopack filesystem cache on by default for `next dev`.
+    // Turbopack memory-maps and compacts those .sst segments on startup and on
+    // every compile. On this source tree (~170 files) the cache bought nothing
+    // and grew to 2.9 GB, which exhausted Windows section resources mid-compile
+    // (`os error 1450` — ERROR_NO_SYSTEM_RESOURCES) and took the host down with
+    // it. Cold starts here are cheap; the cache is not worth the memory.
+    turbopackFileSystemCacheForDev: false,
+  },
   async rewrites() {
     if (!backendOrigin) return [];
     return [{ source: '/api/:path*', destination: `${backendOrigin}/api/:path*` }];

@@ -42,6 +42,55 @@ body {
     background-size: 32px 32px;
   }
 
+  /* Lit blueprint plane — the architect canvas backdrop. Three static layers on
+     one element, split this way on purpose: `mask-image` applies to an element
+     AND its pseudo-elements, so the grid's dissolve mask lives on ::before
+     alone. Putting the vignette under that mask would erase it exactly at the
+     edges where it has to be strongest. Hue via `--grid-rgb`, same contract as
+     `.bg-grid`. Host element must be positioned. Nothing animates, so there is
+     no reduced-motion entry. */
+  .canvas-depth {
+    pointer-events: none;
+    background-image: radial-gradient(
+      ellipse 90% 70% at 50% 34%,
+      rgb(var(--grid-rgb, 148 163 184) / 0.05),
+      transparent 70%
+    );
+  }
+  .canvas-depth::before,
+  .canvas-depth::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+  }
+  /* Two-tier grid: 128px majors over 32px minors. The 32px cadence and its 0.05
+     alpha are shared with `.bg-grid` so the two backdrops stay one family; 128
+     is 4x32, so every major lands on a minor and composites brighter. */
+  .canvas-depth::before {
+    background-image:
+      linear-gradient(to right, rgb(var(--grid-rgb, 148 163 184) / 0.09) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(var(--grid-rgb, 148 163 184) / 0.09) 1px, transparent 1px),
+      linear-gradient(to right, rgb(var(--grid-rgb, 148 163 184) / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(var(--grid-rgb, 148 163 184) / 0.05) 1px, transparent 1px);
+    background-size:
+      128px 128px,
+      128px 128px,
+      32px 32px,
+      32px 32px;
+    -webkit-mask-image: radial-gradient(ellipse 88% 78% at 50% 40%, #000 45%, transparent 100%);
+    mask-image: radial-gradient(ellipse 88% 78% at 50% 40%, #000 45%, transparent 100%);
+  }
+  /* Edge vignette — deliberately outside the mask above. Darkens toward the
+     page `background` token, not a new hue. */
+  .canvas-depth::after {
+    background: radial-gradient(
+      ellipse 80% 80% at 50% 45%,
+      transparent 45%,
+      rgb(10 10 16 / 0.5) 100%
+    );
+  }
+
   /* Colored spotlight beam for the landing stage. A beam is three stacked
      parts — source hotspot, coned shaft, hot core — each hued via its inline
      gradient. The shaft and core get a slow opacity breathe plus a gentle sway
@@ -62,6 +111,21 @@ body {
   /* Uppercase micro-label used for stat labels and section eyebrows. */
   .text-micro {
     @apply text-[10px] font-semibold uppercase tracking-micro;
+  }
+
+  /* Vertical label for a collapsed side rail — reads bottom-to-top. The rotate
+     is what flips `vertical-rl` from top-down to bottom-up, which is the
+     conventional direction for a Latin tab label. Compose with `text-micro`. */
+  .text-vertical {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
+
+  /* Architect step-2 column resize when a side panel collapses to its rail.
+     A tween, not a spring: FlowLayer re-measures the whole agent graph on every
+     frame of this transition, so overshoot would cost real work. */
+  .panel-grid {
+    transition: grid-template-columns 250ms cubic-bezier(0.16, 1, 0.3, 1);
   }
 
   /* Animated neon gradient border for featured cards — double-background
@@ -193,6 +257,21 @@ body {
     animation: panel-scan 0.6s ease-in both;
   }
 
+  /* Architect task rail — one status bar per task, hue via `--bar-rgb`. The
+     glow is what makes a 6px bar read as neon rather than as a plain divider. */
+  .rail-bar {
+    background-color: rgb(var(--bar-rgb, 139 143 163));
+    box-shadow: 0 0 8px 0 rgb(var(--bar-rgb, 139 143 163) / 0.45);
+  }
+
+  /* Selected task: `--glow-rgb` (the architect hue) blooms around the bar,
+     which keeps its own status color. */
+  .rail-bar-active {
+    box-shadow:
+      0 0 10px 0 rgb(var(--bar-rgb, 139 143 163) / 0.6),
+      0 0 20px 4px rgb(var(--glow-rgb, 157 77 255) / 0.5);
+  }
+
   /* Fresh EventLog row: tinted highlight decaying to transparent — `--lg-rgb`. */
   .log-flash {
     animation: log-flash 1.2s ease-out both;
@@ -248,6 +327,9 @@ body {
     .page-scanline,
     .panel-scan {
       display: none;
+    }
+    .panel-grid {
+      transition: none;
     }
   }
 }
