@@ -222,7 +222,16 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_ANALYST_OUTPUT,
         ),
     ),
-    tools=("web_search", "data_fetch", "summarize", "sentiment_analysis"),
+    # social_search is additive: when the user has connected an X key, market
+    # sentiment becomes measurable here instead of needing its own domain
+    # competing with this one for routing. Without a key it is simply withheld.
+    tools=(
+        "web_search",
+        "data_fetch",
+        "social_search",
+        "summarize",
+        "sentiment_analysis",
+    ),
     expertise=(
         "finance: financial analysis, budgeting, investment research, "
         "and market data interpretation"
