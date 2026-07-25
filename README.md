@@ -387,9 +387,17 @@ openssl rand -base64 32    # API_KEY_MASTER_KEY (32-byte AES-256 master key)
 | `WEB_SEARCH_MAX_RESULTS` | Results per query | `5` |
 | `WEB_SEARCH_TIMEOUT_SECONDS` | Per-query timeout | `10` |
 | `WEB_SEARCH_MAX_USES_PER_SUBTASK` | Searches per subtask | `3` |
-| `DATA_FETCH_ENABLED` | HTTP data-fetch tool (GET → text) | `true` |
+| `DATA_FETCH_ENABLED` | Data-fetch tool (Scrapling: TLS-impersonating GET → page text, or CSS-selected JSON) | `true` |
 | `DATA_FETCH_TIMEOUT_SECONDS` | Per-fetch timeout | `15` |
 | `DATA_FETCH_MAX_USES_PER_SUBTASK` | Fetches per subtask | `3` |
+| `DATA_FETCH_ENGINE` | `scrapling` or `httpx` (the pre-Scrapling path: no selectors, no impersonation, but a streaming size cap) | `scrapling` |
+| `DATA_FETCH_RENDER_ENABLED` | Browser tier for JS-rendered pages; needs `scrapling install` in the image plus ~1GB RAM. Self-host only — the tool works fully without it | `false` |
+| `DATA_FETCH_RENDER_TIMEOUT_SECONDS` | Per-render timeout | `45` |
+| `DATA_FETCH_RENDER_MAX_CONCURRENCY` | Concurrent browser renders | `1` |
+| `REPO_INTEL_ENABLED` | GitHub repository intelligence for the Open Source squad. Works with no key at all (anonymous reads, 60/hour); a user's stored token raises it to 5000 | `true` |
+| `SOCIAL_SEARCH_ENABLED` | X post search for the Social Listening squad. Needs the user's X key; withheld without one | `true` |
+| `COMMUNITY_READ_ENABLED` | Discord / Slack / Telegram channel reading for the Community squad. Needs the user's key for that platform | `true` |
+| `PLACES_INTEL_ENABLED` | Google Places lookup for the Local Market squad. Needs the user's Maps key | `true` |
 | `CODE_EXECUTION_ENABLED` | Docker code sandbox; requires access to the Docker daemon — keep `false` on hosted deployments | `true` |
 | `CODE_EXECUTION_IMAGE` | Sandbox container image | `python:3.12-slim` |
 | `CODE_EXECUTION_TIMEOUT_SECONDS` | Per-run timeout | `30` |

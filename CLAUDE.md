@@ -76,6 +76,8 @@ Every agent has a `system_prompt`, a `tools` list, and a `max_iterations` bound.
 | Auth | Backend-issued JWT + refresh-token rotation, optional TOTP 2FA | Sessions |
 | Encryption | AES-256-GCM | BYOK key storage |
 | Local models | Qwen3 + nomic-embed-text via Ollama (OpenAI-compatible endpoint) | Zero-cost local/self-hosted operation |
+| Web fetch | Scrapling (curl_cffi TLS impersonation, lxml/CSS) | `data_fetch` tool: page text plus CSS-selector extraction |
+| Connected APIs | GitHub REST, X API v2, Discord/Slack/Telegram, Google Places | `repo_intel` / `social_search` / `community_read` / `places_intel` tools, authenticated with the user's own BYOK service keys |
 
 ---
 
@@ -214,7 +216,16 @@ health        /health, /health/ready (outside /api/v1)
 
 **BYOK.** Keys are encrypted with AES-256-GCM using a master key held only in the
 environment. Keys are never returned to the frontend — only `provider` and `label`.
-If a task needs a key that is missing, the task is stopped and the user is told.
+If a task needs a **brain** key that is missing, the task is stopped and the user is told.
+
+A missing **service** key (X, GitHub, Maps, Discord/Slack/Telegram) is deliberately *not*
+fatal: `resolve_enabled_tools` withholds that tool, the squad falls back to `web_search`,
+and its mandatory `Data coverage` section — enforced by a `hard_fail` review criterion —
+states what could not be reached. Stopping the task instead would make every connected
+squad unusable for the majority of accounts, which hold no service keys at all.
+`service_key_service.load_service_credentials` decrypts them once per run at the engine
+edge and hands the agent layer a `ServiceCredentials` value whose `__repr__` renders
+provider names only, never secrets.
 
 **Loop protection.** `max_iterations` (default 10), `max_review_iterations` (default 3),
 and `task_timeout_seconds` (default 300) bound every run. Exceeding a bound terminates
@@ -224,6 +235,25 @@ the task and logs it.
 system prompts are scanned on write and sandboxed inside `<agent_persona>` at execution
 time. Installed marketplace agents never touch the installing user's API keys directly;
 all provider calls go through the service layer.
+
+**Outbound fetches (SSRF).** Every user- or model-supplied URL passes `url_guard`:
+http(s) only, no embedded credentials, and every resolved address must be globally
+routable. On the `data_fetch` static tier, redirects additionally use libcurl's SAFE
+mode, which refuses a hop to an internal address before the request is made, and the
+landed URL is re-validated afterwards so a body from an unexpected host never reaches the
+LLM. The browser tier has neither protection — a rendered page issues subresource
+requests to arbitrary hosts — which is a second reason `DATA_FETCH_RENDER_ENABLED`
+defaults to `false`. Fetched content is delimited and carries
+`UNTRUSTED_CONTENT_NOTICE`, and is injection-scanned before it is shown to a model.
+
+The connected-API tools have **no SSRF surface** and deliberately do not use `url_guard`:
+every host is a constant in `constants.py`, never model-supplied. What they do validate is
+any value that reaches a URL *path* — a repo slug and a channel id are pattern-matched
+before a request can be built. Their results are the richest prompt-injection surface in
+the product (a post or a commit message is attacker-authored), so items are scanned and
+dropped **individually** rather than blanking the whole block, and every block still
+carries `UNTRUSTED_CONTENT_NOTICE`. Telegram is the one provider that puts its token in
+the URL path, so that call passes an explicit redacted log label.
 
 **General.** JWT on every non-public endpoint, including WebSockets. Rate limiting on
 every route. Pydantic validation on every input. In the single-origin production topology
@@ -323,6 +353,25 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
 - `EMAIL_PROVIDER` — `console` (default; links appear in logs) or `resend`.
 - `SENTRY_DSN` / `FRONTEND_SENTRY_DSN` — two separate projects. Empty means fully off with
   zero egress; the frontend SDK chunk is never even downloaded.
+- `DATA_FETCH_ENGINE` — `scrapling` (default) or `httpx`. The httpx path is the
+  pre-Scrapling implementation, kept so a misbehaving engine rolls back with one env var
+  and no redeploy. It is the only engine that enforces the response size cap *while
+  streaming*; Scrapling returns a fully-read response, so there the cap is post-hoc.
+- `DATA_FETCH_RENDER_ENABLED` — self-host only, and off by default. The image ships no
+  browser binaries (`scrapling install` fetches ~400MB) and a headless Chromium costs
+  300-500MB RSS. The tool is fully functional without it: the TLS-impersonating HTTP tier
+  is the baseline capability, not a fallback, so a missing browser degrades one request
+  rather than disabling the tool. That is also why `resolve_enabled_tools` deliberately
+  does *not* gate `data_fetch` on a browser probe the way it gates `code_execution` on
+  Docker.
+- `REPO_INTEL_ENABLED` / `SOCIAL_SEARCH_ENABLED` / `COMMUNITY_READ_ENABLED` /
+  `PLACES_INTEL_ENABLED` — the connected-API tools. Nothing is configured operator-side
+  beyond these switches; the credential is the *user's*, stored under Settings > API Keys.
+  Setting one to `false` removes that tool from every squad declaring it, which is the
+  per-tool rollback. `repo_intel` is the odd one out: GitHub serves anonymous reads at
+  60/hour, so the `opensource` squad is fully functional with no key and a stored token
+  only raises the ceiling to 5000. It is therefore the only connected tool that can be
+  smoke-tested live from this repo.
 - `CODE_EXECUTION_ENABLED` — must stay `false` in production; enabling it requires mounting
   the Docker socket.
 
