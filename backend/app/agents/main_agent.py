@@ -172,6 +172,16 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
         )
     except (LLMError, ValueError):
         logger.warning("planning failed twice; using role-scoped fallback briefs")
+        await ctx.emit(
+            EventType.AGENT_WARNING,
+            {
+                "role": AgentRole.MAIN.value,
+                "kind": "degraded",
+                "message": (
+                    "Planning failed; each member fell back to its default brief."
+                ),
+            },
+        )
         return "assignments", _fallback_assignments(info.team)
 
     question = plan.question.strip()
@@ -336,6 +346,19 @@ async def _run_assignments(
                         "member": assignment.member.id,
                     },
                 )
+                # The subagent's own error path never ran, so nothing closed its
+                # node. Emit here or the card hangs mid-run (see subagent.py).
+                await ctx.emit(
+                    EventType.NODE_UPDATE,
+                    {
+                        "role": AgentRole.SUBAGENT.value,
+                        "index": index,
+                        "state": "error",
+                        "member": assignment.member.name,
+                        "member_id": assignment.member.id,
+                        "error": str(exc),
+                    },
+                )
                 result = SubagentResult(
                     status=SubagentStatus.ERROR,
                     data={
@@ -391,6 +414,11 @@ async def _synthesize(
     over them (D7).
     """
     if len(outputs) == 1:
+        # Single-member plans (every "simple" task) skip synthesis entirely, so
+        # SYNTHESIS_MERGE_RULES never runs for them. The uncertainty markers and
+        # inline "Not found:" lines survive regardless — they come from the
+        # subagent, which carries GROUNDING_POLICY of its own. What is missing on
+        # this path is only the collected "## Not found" section at the end.
         return outputs[0][1]
     joined = "\n\n".join(f"### {name}\n{text}" for name, text in outputs)
     system = SYNTHESIS_SYSTEM.format(
@@ -440,6 +468,16 @@ async def _synthesize(
     except LLMError:
         logger.warning(
             "synthesis failed; returning joined subtask outputs", exc_info=True
+        )
+        await ctx.emit(
+            EventType.AGENT_WARNING,
+            {
+                "role": AgentRole.MAIN.value,
+                "kind": "degraded",
+                "message": (
+                    "Synthesis failed; the answer is the subtask outputs unmerged."
+                ),
+            },
         )
         return joined
 

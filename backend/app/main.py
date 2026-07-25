@@ -38,21 +38,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # a mid-run crash never leaves a task stuck at "running" (Backend v2 §4.1).
     await reconcile.startup_reclaim()
     sweeper = asyncio.create_task(reconcile.periodic_sweep())
-    # Trace-span buffer flusher (best-effort, only when tracing is enabled).
-    span_flusher = (
-        asyncio.create_task(tracing.periodic_flush())
-        if settings.tracing_enabled
-        else None
-    )
+    # Trace-span buffer flusher (best-effort). Started unconditionally: a task
+    # can opt into tracing even when `tracing_enabled` is off server-wide, and
+    # its spans would otherwise wait for the size trigger to flush.
+    span_flusher = asyncio.create_task(tracing.periodic_flush())
     yield
     sweeper.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await sweeper
-    if span_flusher is not None:
-        span_flusher.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await span_flusher
-        await tracing.force_flush()
+    span_flusher.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await span_flusher
+    await tracing.force_flush()
     await close_llm_client()
     await close_connections()
     logger.info("Maestro backend stopped")
