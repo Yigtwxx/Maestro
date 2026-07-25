@@ -14,6 +14,8 @@ from typing import Annotated
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from app.core.constants import DATA_FETCH_ENGINES
+
 # Development-only placeholders. Rejected at startup when ENVIRONMENT=production
 # (see Settings._guard_production_secrets). Kept as the field defaults below so
 # the sentinel values live in exactly one place.
@@ -163,10 +165,61 @@ class Settings(BaseSettings):
     web_search_timeout_seconds: int = 10
     web_search_max_uses_per_subtask: int = 3
 
-    # --- Data fetch tool (subagent directive loop, HTTP GET → text) ---
+    # --- Data fetch tool (subagent directive loop, HTTP GET → text/JSON) ---
     data_fetch_enabled: bool = True
     data_fetch_timeout_seconds: int = 15
     data_fetch_max_uses_per_subtask: int = 3
+    # "scrapling" (default; TLS-fingerprint HTTP via curl_cffi) or "httpx" —
+    # the pre-Scrapling path, kept as a one-env-var rollback if the new engine
+    # misbehaves in production.
+    data_fetch_engine: str = "scrapling"
+    # Browser tier (JS rendering, Cloudflare). OFF by default: it needs browser
+    # binaries this image does not ship (`scrapling install`) and a headless
+    # Chromium costs 300-500MB RSS, which a 2GB container cannot absorb next to
+    # the API. Self-host-only, like CODE_EXECUTION_ENABLED. The tool works fully
+    # without it — the static tier is the baseline, not a fallback.
+    data_fetch_render_enabled: bool = False
+    data_fetch_render_timeout_seconds: int = 45
+    # One browser at a time. Raising this on a 2GB host will OOM the container.
+    data_fetch_render_max_concurrency: int = Field(default=1, ge=1, le=4)
+    # Retry a 403/429/503 or a Cloudflare interstitial in the browser tier when
+    # one is available. No effect while rendering is disabled.
+    data_fetch_escalate_on_challenge: bool = True
+    data_fetch_solve_cloudflare: bool = True
+
+    # --- Connected-API tools (BYOK service keys) ---
+    # Each tool authenticates with a key the user stored under Settings > API
+    # Keys. A missing key is never fatal: the tool is withheld and the subagent
+    # falls back to web_search. Setting *_enabled to false removes the tool from
+    # every domain that declares it — the per-tool rollback switch.
+    #
+    # repo_intel is the exception that proves the rule: GitHub serves anonymous
+    # reads at 60 requests/hour, so this tool works with no key at all and a
+    # stored token only raises the ceiling to 5000.
+    repo_intel_enabled: bool = True
+    repo_intel_timeout_seconds: int = 15
+    # 15, not 30: the aspects are meant to be *computed over*, and 30 commits
+    # plus 30 contributors made a single `activity` block ~5.4K characters —
+    # enough that a 9B model spent its whole output budget reasoning about the
+    # rows and returned nothing. Cadence and bus factor are both answerable
+    # from 15.
+    repo_intel_max_results: int = 15
+    repo_intel_max_uses_per_subtask: int = 4
+
+    social_search_enabled: bool = True
+    social_search_timeout_seconds: int = 15
+    social_search_max_results: int = 25
+    social_search_max_uses_per_subtask: int = 3
+
+    community_read_enabled: bool = True
+    community_read_timeout_seconds: int = 15
+    community_read_max_results: int = 50
+    community_read_max_uses_per_subtask: int = 3
+
+    places_intel_enabled: bool = True
+    places_intel_timeout_seconds: int = 15
+    places_intel_max_results: int = 20
+    places_intel_max_uses_per_subtask: int = 3
 
     # --- Code execution tool (Docker sandbox; degrades gracefully if absent) ---
     code_execution_enabled: bool = True
@@ -228,6 +281,16 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("data_fetch_engine")
+    @classmethod
+    def _check_data_fetch_engine(cls, value: str) -> str:
+        """Reject a typo'd engine name at boot rather than at first fetch."""
+        normalized = value.strip().lower()
+        if normalized not in DATA_FETCH_ENGINES:
+            allowed = ", ".join(sorted(DATA_FETCH_ENGINES))
+            raise ValueError(f"DATA_FETCH_ENGINE must be one of: {allowed}")
+        return normalized
 
     @model_validator(mode="after")
     def _guard_production_secrets(self) -> Settings:
