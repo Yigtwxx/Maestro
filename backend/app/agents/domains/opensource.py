@@ -16,7 +16,10 @@ _METHODOLOGY = """\
 - Absence of evidence is a finding: an empty security advisory list means "none
   published", not "safe".
 - If repo_intel is unavailable, fall back to web_search and say so explicitly.
-  Never present a figure you inferred as one you measured."""
+  Never present a figure you inferred as one you measured.
+- Never assemble a repository slug from a package name. If repo_intel reports
+  that a repository does not exist, find the project's real GitHub URL with
+  web_search and use the owner/name from it."""
 
 _OUTPUT_FORMAT = """\
 1. Project summary (what it is, license, maturity)
