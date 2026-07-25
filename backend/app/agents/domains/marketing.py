@@ -160,7 +160,10 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_GROWTH_OUTPUT,
         ),
     ),
-    tools=("web_search", "summarize", "sentiment_analysis"),
+    # social_search is additive: with a connected X key the audience analyst can
+    # check its segment hypotheses against real posts instead of only asserting
+    # them. Withheld when no key is connected.
+    tools=("web_search", "social_search", "summarize", "sentiment_analysis"),
     expertise=(
         "marketing: campaign planning, brand strategy, copywriting, and growth tactics"
     ),
