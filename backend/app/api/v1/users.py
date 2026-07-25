@@ -124,6 +124,11 @@ async def update_me(payload: UserUpdate, user: ActiveUser, db: DbSession) -> Use
         and payload.default_reviewer_enabled is not None
     ):
         user.default_reviewer_enabled = payload.default_reviewer_enabled
+    if (
+        "default_tracing_enabled" in payload.model_fields_set
+        and payload.default_tracing_enabled is not None
+    ):
+        user.default_tracing_enabled = payload.default_tracing_enabled
     if "default_provider" in payload.model_fields_set:
         provider = payload.default_provider
         if (
