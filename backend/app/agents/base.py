@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from app.agents.prompts import CURRENT_DATE_LINE
 from app.core.constants import EventType, SubagentStatus
 from app.services.llm_service import LLMAdapter
+from app.services.service_key_service import ServiceCredentials
 
 if TYPE_CHECKING:
     from app.agents.domains import DomainInfo
@@ -49,6 +50,13 @@ class AgentContext:
     max_web_searches: int = 3
     max_data_fetches: int = 3
     max_code_executions: int = 3
+    # Connected-API tools (BYOK service keys). repo_intel gets a larger budget
+    # because its aspects are deliberately separate calls — a member normally
+    # needs two or three to say anything about a project.
+    max_repo_lookups: int = 4
+    max_social_searches: int = 3
+    max_community_reads: int = 3
+    max_places_lookups: int = 3
     max_tool_calls: int = 6
     # Budget for the built-in view_original_request directive; exempt from
     # max_tool_calls so it never crowds out real tools.
@@ -67,6 +75,11 @@ class AgentContext:
     # each agent role its own model (all sharing one token counter); when None,
     # every role uses ``adapter``. Kept off in unit tests (they pass ``adapter``).
     adapter_pool: AdapterPool | None = None
+    # This user's decrypted BYOK service keys (X, GitHub, Maps, chat platforms),
+    # resolved once at the engine edge like ``memory_context``. The default is
+    # the empty set, which is the normal case: the connected tools are then
+    # withheld and every squad falls back to web_search.
+    service_credentials: ServiceCredentials = field(default_factory=ServiceCredentials)
 
     def role_adapter(self, role: str) -> LLMAdapter:
         """The adapter an agent role should use: its pooled per-role model when a
