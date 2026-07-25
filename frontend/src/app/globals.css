@@ -2,6 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
+/* The app has no light theme, so the UA is told so once, at the root. Without
+   this every browser-drawn control defaults to its light palette — most visibly
+   the window and pane scrollbars, which rendered as light grey over the
+   near-black surfaces. It also darkens native selects, date pickers and
+   autofill, so it is the single declaration that keeps UA chrome on-theme.
+   `scrollbar-color` is inherited, so setting it here reaches every scroll
+   container that does not opt into the `::-webkit-scrollbar` styling below;
+   it is honoured by Firefox and Chromium 121+, while older WebKit and Safari
+   fall back to the dark UA scrollbar `color-scheme` already gives them.
+   Thumb is `border.bright`, track is `surface` — the same tokens the panes use. */
+:root {
+  color-scheme: dark;
+  scrollbar-width: thin;
+  scrollbar-color: #3d3d5c #12121c;
+}
+
 html,
 body {
   height: 100%;
@@ -15,13 +31,22 @@ body {
   @apply bg-primary text-black;
 }
 
-/* Thin scrollbars for log/stream panes. */
+/* Thin scrollbars for log/stream panes. Defining any `::-webkit-scrollbar`
+   pseudo-element makes Chromium ignore `scrollbar-color` for that element and
+   draw a classic (non-overlay) bar, so the track is painted explicitly here
+   rather than inherited. */
 .scrollbar-thin::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
+.scrollbar-thin::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
 .scrollbar-thin::-webkit-scrollbar-thumb {
   @apply rounded-full bg-border-bright;
+}
+.scrollbar-thin::-webkit-scrollbar-corner {
+  @apply bg-transparent;
 }
 
 /* Scrollable but chromeless — the landing nav's tab strip on narrow screens. */
