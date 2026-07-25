@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
 from app.agents import budget
 from app.agents import tools as tool_directives
@@ -29,16 +30,18 @@ from app.agents.base import (
     with_current_date,
 )
 from app.agents.prompts import (
+    SUBAGENT_EMPTY_ANSWER_NUDGE,
     SUBAGENT_SYSTEM,
     SUBAGENT_TOOLS_RULE,
     SUBAGENT_UPSTREAM_HEADER,
     TOOL_RULE_LINES,
 )
 from app.agents.registry import SubagentSpec
-from app.agents.tools import TOOL_SPECS, ToolDirective, ToolSpec
+from app.agents.tools import ToolDirective, ToolSpec
 from app.core.constants import (
     COMPACTION_KEEP_CHARS,
     COMPACTION_THRESHOLD_TOKENS,
+    EMPTY_SUBAGENT_ANSWER,
     SUBAGENT_MAX_TOKENS,
     SUBAGENT_SUMMARY_MAX_CHARS,
     TOKEN_ESTIMATE_CHARS_PER_TOKEN,
@@ -154,11 +157,15 @@ async def _run_subtask(
         },
     )
 
-    enabled = await tool_directives.resolve_enabled_tools(domain)
+    enabled = await tool_directives.resolve_enabled_tools(
+        domain, credentials=ctx.service_credentials
+    )
     # Per-run directive registry: domain tools plus the built-in original-
     # request viewer (available whenever this run carries an objective, even
-    # in domains with no executable tools).
-    specs = {action: TOOL_SPECS[action] for action in enabled}
+    # in domains with no executable tools). ``specs_for`` merges the stateless
+    # built-ins with the connected-API specs, whose executors close over this
+    # user's decrypted service keys.
+    specs = tool_directives.specs_for(enabled, ctx.service_credentials)
     if objective.strip():
         specs[VIEW_ORIGINAL_REQUEST_ACTION] = (
             tool_directives.make_view_original_request_spec(objective)
@@ -190,9 +197,12 @@ async def _run_subtask(
         )
     except LLMError as exc:
         logger.warning("subtask failed: member=%s error=%s", member.id, exc)
-        return SubagentResult(
-            status=SubagentStatus.ERROR,
-            data={"error": str(exc), "subtask": brief, "member": member.id},
+        return await _fail(
+            ctx,
+            member=member,
+            index=index,
+            brief=brief,
+            error=str(exc),
             metadata={"execution_time_ms": _elapsed_ms(started)},
         )
 
@@ -207,6 +217,32 @@ async def _run_subtask(
         metadata["tool_calls_used"] = sum(usage.get(action, 0) for action in enabled)
     for action, spec in specs.items():
         metadata[spec.metadata_key] = usage.get(action, 0)
+
+    # An empty answer is a failure, not a success with nothing in it. A model
+    # that spends its whole output budget reasoning (or returns only a <think>
+    # block) leaves this blank, and calling that SUCCESS is corrosive: the
+    # member's card goes green, synthesis merges an empty string, and a task
+    # where every member came back blank reports `completed` instead of
+    # `failed` — because `all_subtasks_failed` in main_agent counts ERROR
+    # results, and there were none. Failing here is what makes that signal
+    # honest, and it feeds the existing partial-failure path: some members
+    # blank -> completed_with_warnings plus a "Known gaps" section.
+    if not response.content.strip():
+        logger.warning(
+            "subtask produced an empty answer: member=%s tokens=%s",
+            member.id,
+            tokens_used,
+            extra={"member_id": member.id},
+        )
+        return await _fail(
+            ctx,
+            member=member,
+            index=index,
+            brief=brief,
+            error=EMPTY_SUBAGENT_ANSWER,
+            metadata=metadata,
+        )
+
     result = SubagentResult(
         status=SubagentStatus.SUCCESS,
         data={
@@ -232,6 +268,40 @@ async def _run_subtask(
     return result
 
 
+async def _fail(
+    ctx: AgentContext,
+    *,
+    member: SubagentSpec,
+    index: int,
+    brief: str,
+    error: str,
+    metadata: dict[str, Any],
+) -> SubagentResult:
+    """Close a subtask as failed: node update plus an ERROR result.
+
+    The node update is not optional. It closes the "running" state opened at the
+    start of the run — without it the card stays mid-run until the task ends,
+    and a partial failure then freezes it to "done", rendering a failed member
+    as a success.
+    """
+    await ctx.emit(
+        EventType.NODE_UPDATE,
+        {
+            "role": AgentRole.SUBAGENT.value,
+            "index": index,
+            "state": "error",
+            "member": member.name,
+            "member_id": member.id,
+            "error": error,
+        },
+    )
+    return SubagentResult(
+        status=SubagentStatus.ERROR,
+        data={"error": error, "subtask": brief, "member": member.id},
+        metadata=metadata,
+    )
+
+
 async def _chat_with_tools(
     ctx: AgentContext,
     messages: list[ChatMessage],
@@ -240,21 +310,61 @@ async def _chat_with_tools(
     index: int,
     specs: dict[str, ToolSpec],
 ) -> tuple[LLMResponse, int, dict[str, int]]:
-    """Chat with the LLM, executing bounded tool directives.
+    """Run the tool loop, then insist on an answer when the reply comes back blank.
+
+    Providers with real function calling take the native path; everyone else
+    (Ollama/qwen by default) uses the provider-agnostic directive loop. Either
+    way a blank final reply earns exactly one nudge before the caller fails it
+    as ``EMPTY_SUBAGENT_ANSWER``: a small model that spent its output budget
+    reasoning — or that came back from a fruitless search judging it had nothing
+    worth writing — usually answers on the second ask, and one extra call is far
+    cheaper than a dead member. A second blank still fails, so the honest
+    all-members-blank signal the task layer depends on is unchanged.
+    Returns ``(final_response, total_tokens, usage_per_tool)``.
+    """
+    native = bool(specs) and getattr(
+        ctx.role_adapter("subagent").capabilities, "native_tools", False
+    )
+    loop = _native_tool_loop if native else _directive_tool_loop
+    response, total_tokens, usage, messages = await loop(
+        ctx, messages, member=member, index=index, specs=specs
+    )
+    # The budget guard inside the loop has already forced a final answer once
+    # the task's cap is spent; nudging past it would be spend nobody authorized.
+    if response.content.strip() or budget.budget_exceeded(ctx):
+        return response, total_tokens, usage
+
+    logger.warning(
+        "subtask answer was blank; asking once more: member=%s",
+        member.id,
+        extra={"member_id": member.id},
+    )
+    # The blank reply itself is deliberately not appended: an empty assistant
+    # turn is rejected outright by some providers, and every provider we target
+    # accepts consecutive user messages.
+    messages.append(ChatMessage("user", SUBAGENT_EMPTY_ANSWER_NUDGE))
+    retry = await ctx.role_adapter("subagent").chat(
+        messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
+    )
+    return retry, total_tokens + retry.tokens_used, usage
+
+
+async def _directive_tool_loop(
+    ctx: AgentContext,
+    messages: list[ChatMessage],
+    *,
+    member: SubagentSpec,
+    index: int,
+    specs: dict[str, ToolSpec],
+) -> tuple[LLMResponse, int, dict[str, int], list[ChatMessage]]:
+    """Provider-agnostic loop: the model asks for tools in JSON, we execute them.
 
     Any reply that is not a valid directive is treated as the final answer, so
     models that answer directly are unaffected. Hard bound:
-    ``max_tool_calls + max_original_request_views + 2`` LLM calls per run.
-    Returns ``(final_response, total_tokens, usage_per_tool)``.
+    ``max_tool_calls + max_original_request_views + 2`` LLM calls per run. The
+    transcript comes back with the response so the caller can keep the
+    conversation going (see the blank-answer nudge above).
     """
-    # Providers with real function calling take the native path; everyone else
-    # (Ollama/qwen by default) uses the provider-agnostic directive loop below.
-    if specs and getattr(
-        ctx.role_adapter("subagent").capabilities, "native_tools", False
-    ):
-        return await _native_tool_loop(
-            ctx, messages, member=member, index=index, specs=specs
-        )
     enabled = frozenset(specs)
     total_tokens = 0
     usage: dict[str, int] = {}
@@ -271,7 +381,7 @@ async def _chat_with_tools(
                 messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
             )
             total_tokens += response.tokens_used
-            return response, total_tokens, usage
+            return response, total_tokens, usage, messages
         messages = _compact_transcript(messages)
         response = await ctx.role_adapter("subagent").chat(
             messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
@@ -283,7 +393,7 @@ async def _chat_with_tools(
             else None
         )
         if directive is None:
-            return response, total_tokens, usage
+            return response, total_tokens, usage, messages
 
         messages.append(ChatMessage("assistant", response.content))
         over_tool_budget = usage.get(directive.action, 0) >= _tool_budget(
@@ -310,7 +420,7 @@ async def _chat_with_tools(
                 messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
             )
             total_tokens += response.tokens_used
-            return response, total_tokens, usage
+            return response, total_tokens, usage, messages
 
         usage[directive.action] = usage.get(directive.action, 0) + 1
         await _emit_tool(
@@ -330,7 +440,7 @@ async def _native_tool_loop(
     member: SubagentSpec,
     index: int,
     specs: dict[str, ToolSpec],
-) -> tuple[LLMResponse, int, dict[str, int]]:
+) -> tuple[LLMResponse, int, dict[str, int], list[ChatMessage]]:
     """Native function-calling variant of the directive loop.
 
     Passes the tools as :class:`ToolDef`s and reacts to ``response.tool_calls``;
@@ -344,11 +454,11 @@ async def _native_tool_loop(
     total_tokens = 0
     usage: dict[str, int] = {}
 
-    async def _final() -> tuple[LLMResponse, int, dict[str, int]]:
+    async def _final() -> tuple[LLMResponse, int, dict[str, int], list[ChatMessage]]:
         response = await ctx.role_adapter("subagent").chat(
             messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
         )
-        return response, total_tokens + response.tokens_used, usage
+        return response, total_tokens + response.tokens_used, usage, messages
 
     while True:
         if budget.budget_exceeded(ctx):
@@ -364,7 +474,7 @@ async def _native_tool_loop(
         )
         total_tokens += response.tokens_used
         if not response.tool_calls:
-            return response, total_tokens, usage
+            return response, total_tokens, usage, messages
         messages.append(ChatMessage("assistant", response.content))
         for call in response.tool_calls:
             spec = specs.get(call.name)
@@ -444,18 +554,29 @@ async def _emit_tool(
     specs: dict[str, ToolSpec],
     done: bool = False,
 ) -> None:
-    """Surface tool activity in the live Architect stream."""
+    """Surface tool activity in the live Architect stream.
+
+    Fired twice per call, before and after. ``done`` is on the payload because
+    without it the two events differ only in the ``content`` prose, which the
+    frontend does not parse — so a client could not tell an in-flight call from
+    a finished one, and the Architect rail could never show a live edge.
+    """
     spec = specs[directive.action]
-    payload = {
+    payload: dict[str, object] = {
         "role": AgentRole.SUBAGENT.value,
         "index": index,
         "member": member.name,
         "member_id": member.id,
         "action": directive.action,
+        "done": done,
         "content": spec.describe(directive, done),
     }
     if spec.event_arg:
         payload[spec.event_arg] = directive.args.get(spec.event_arg, "")
+    # Only the connected-API tools carry a provider; the keyless ones report
+    # None and get no lane on the canvas.
+    if spec.provider_of is not None:
+        payload["provider"] = spec.provider_of(directive)
     await ctx.emit(EventType.AGENT_MESSAGE, payload)
 
 
