@@ -465,9 +465,9 @@ fake-useragent==2.2.0 \
     --hash=sha256:4e6ab6571e40cc086d788523cf9e018f618d07f9050f822ff409a4dfe17c16b2 \
     --hash=sha256:67f35ca4d847b0d298187443aaf020413746e56acd985a611908c73dba2daa24
     # via ddgs
-fastapi==0.139.0 \
-    --hash=sha256:99ab7b2d92223c76d6cf10757ab3f89d45b38267fc20b2a136cf02f6beac3145 \
-    --hash=sha256:cf15e1e9e667ddb0ad63811e60bd11390d1aac838ca4a7a23f421807b2308189
+fastapi==0.140.0 \
+    --hash=sha256:e951c0a0d9540bf5d9a2a9e078fd415da2ab7e312d435139e7d9e2e7fe9f0b23 \
+    --hash=sha256:f338951b82fd74ca8f843163aec43ea1a1ce84d515415a50fa98fa25572a5544
     # via
     #   -r requirements.in
     #   sentry-sdk
@@ -1616,9 +1616,9 @@ scrapling==0.4.11 \
     --hash=sha256:10b781f9214502f293a46048062c4d3c211e9a05a897559f674edcbea1876e56 \
     --hash=sha256:92500fe60b601a52279842fa2505fcddd3954f14f657bd38d7e6ba09f02da947
     # via -r requirements.in
-sentry-sdk==2.65.0 \
-    --hash=sha256:3595169677a808e4d0e1ea6ffb89443459549c7a98392ed71c77c847182ab6bf \
-    --hash=sha256:c94dc945d54bad49d4f20448b1e6b217ca2f92f46d05c3e83d41764af685c3d1
+sentry-sdk==2.66.1 \
+    --hash=sha256:86002793161d9a95ef04bdd8d442e9bfece5d989b755f05d6360215094a7aff6 \
+    --hash=sha256:f882fb08710c5f8bfc603aafa3e901b384009a19cc3f76a572b863392ee81cdc
     # via -r requirements.in
 socksio==1.0.0 \
     --hash=sha256:95dc1f15f9b34e8d7b16f06d74b8ccf48f609af32ab33c608d08761c5dcbb1f3 \
