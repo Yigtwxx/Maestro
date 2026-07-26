@@ -139,4 +139,4 @@ environment variables.
 
 Deployment-specific settings — domain, TLS, backups, the purge cron — live in
 [`DEPLOYMENT.md`](./DEPLOYMENT.md). Architectural rationale for the non-obvious settings is
-in [`CLAUDE.md`](../CLAUDE.md) §11.
+in [`CLAUDE.md`](https://github.com/Yigtwxx/Maestro/blob/main/CLAUDE.md) §11.

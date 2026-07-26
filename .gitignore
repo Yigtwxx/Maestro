@@ -83,3 +83,12 @@ OVERNIGHT-QUALITY-REPORT.md
 
 # Superpowers SDD scratch (plans/specs live under docs/, this is transient)
 .superpowers/
+
+# --- Documentation site (MkDocs) ---
+# Build output.
+/site/
+# CONTRIBUTING.md and SECURITY.md live in the repository root because GitHub
+# looks for them there; the docs build copies them into docs_dir. The copies
+# are generated, so only the root originals are tracked.
+/docs/CONTRIBUTING.md
+/docs/SECURITY.md

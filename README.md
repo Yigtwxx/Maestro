@@ -16,6 +16,7 @@ live over WebSocket, backed by per-user RAG memory and a community Marketplace.
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)](https://nextjs.org)
 [![Discussions](https://img.shields.io/github/discussions/Yigtwxx/Maestro?color=0a7ea4)](https://github.com/Yigtwxx/Maestro/discussions)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Yigtwxx/Maestro/badge)](https://scorecard.dev/viewer/?uri=github.com/Yigtwxx/Maestro)
+[![Documentation](https://img.shields.io/badge/docs-yigtwxx.github.io-d3cbc0?logo=materialformkdocs&logoColor=white)](https://yigtwxx.github.io/Maestro/)
 
 **Fair-code, not OSI open source:** read it, run it, modify it, and self-host it for free —
 the one thing you may not do is offer Maestro to third parties as a hosted service
@@ -359,6 +360,10 @@ maestro/
 ```
 
 ## Documentation
+
+The full documentation site is at **[yigtwxx.github.io/Maestro](https://yigtwxx.github.io/Maestro/)**
+— the same files rendered with search, navigation and a
+[comparison against CrewAI, AutoGen, LangGraph and n8n](https://yigtwxx.github.io/Maestro/comparison/).
 
 | Document | Contents |
 |---|---|

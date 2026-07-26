@@ -5,10 +5,10 @@ the stack running locally to what CI will check before your pull request can mer
 
 ## Before you start
 
-- **[`CLAUDE.md`](./CLAUDE.md) is the single source of truth** for architecture,
+- **[`CLAUDE.md`](https://github.com/Yigtwxx/Maestro/blob/main/CLAUDE.md) is the single source of truth** for architecture,
   conventions, and code standards. When this file and `CLAUDE.md` disagree, `CLAUDE.md`
   wins — please open an issue so we can fix the drift.
-- Participation is governed by our [Code of Conduct](./CODE_OF_CONDUCT.md).
+- Participation is governed by our [Code of Conduct](https://github.com/Yigtwxx/Maestro/blob/main/CODE_OF_CONDUCT.md).
 - Found a security vulnerability? **Do not open an issue.** Follow
   [`SECURITY.md`](./SECURITY.md) instead.
 
@@ -74,7 +74,7 @@ Google Gemini also has a free tier if you prefer a hosted model
 ## Verification before you open a pull request
 
 CI runs on every push and pull request to `main`. Run the same commands locally first —
-these are copied verbatim from [`.github/workflows/ci.yml`](./.github/workflows/ci.yml):
+these are copied verbatim from [`.github/workflows/ci.yml`](https://github.com/Yigtwxx/Maestro/blob/main/.github/workflows/ci.yml):
 
 ```bash
 # Backend (Python 3.11)
@@ -119,7 +119,7 @@ feature PR.
 
 ## Code standards
 
-Condensed from [`CLAUDE.md`](./CLAUDE.md) §5. Read that section before your first PR.
+Condensed from [`CLAUDE.md`](https://github.com/Yigtwxx/Maestro/blob/main/CLAUDE.md) §5. Read that section before your first PR.
 
 - **English only** in code, identifiers, comments, and commit messages. User-facing UI
   strings may be localized.
@@ -176,12 +176,12 @@ Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`. Keep the subject unde
 characters and use the imperative mood ("add", not "added").
 
 Branch off `main`, keep one logical change per pull request, and fill in the
-[pull request template](./.github/pull_request_template.md). Link the issue your PR
+[pull request template](https://github.com/Yigtwxx/Maestro/blob/main/.github/pull_request_template.md). Link the issue your PR
 closes.
 
 ## Licensing of contributions
 
-Maestro is distributed under the [Sustainable Use License](./LICENSE) (fair-code). By
+Maestro is distributed under the [Sustainable Use License](https://github.com/Yigtwxx/Maestro/blob/main/LICENSE) (fair-code). By
 intentionally submitting a contribution for inclusion, you agree that:
 
 1. Your contribution is licensed to the project under the same Sustainable Use License.

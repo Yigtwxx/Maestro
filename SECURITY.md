@@ -88,5 +88,5 @@ The short version:
 - **Card PANs are never stored, logged, or returned.** Only brand, last four digits, and
   expiry persist.
 
-The full policy lives in [`CLAUDE.md`](./CLAUDE.md) §9, and the user-facing version — with
+The full policy lives in [`CLAUDE.md`](https://github.com/Yigtwxx/Maestro/blob/main/CLAUDE.md) §9, and the user-facing version — with
 the reasoning behind each decision — is on the platform's `/security` page.
