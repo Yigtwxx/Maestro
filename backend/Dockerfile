@@ -2,9 +2,16 @@
 # Maestro backend — FastAPI on uvicorn.
 # The same image serves the API, the `alembic upgrade head` migration job and
 # the account-purge cron, so alembic/ and alembic.ini must ship with it.
+#
+# The base image is pinned by digest, not just by tag: official images are
+# rebuilt under the same version tag whenever the Debian layer gets a security
+# update, so a tag alone does not describe a fixed set of bytes. The digest is
+# a multi-arch OCI index (amd64 + arm64/v8), which the arm64 release build
+# needs. Dependabot watches this file and opens a PR when it moves -- that PR
+# is how OS patches arrive now, so do not let it go stale.
 # =========================================================================
 
-FROM python:3.11.15-slim-bookworm AS builder
+FROM python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS builder
 
 WORKDIR /app
 ENV PIP_NO_CACHE_DIR=1 \
@@ -20,7 +27,7 @@ COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
 
-FROM python:3.11.15-slim-bookworm AS runtime
+FROM python:3.11.15-slim-bookworm@sha256:b18992999dbe963a45a8a4da40ac2b1975be1a776d939d098c647482bcad5cba AS runtime
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

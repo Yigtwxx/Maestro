@@ -3,9 +3,14 @@
 # NEXT_PUBLIC_* values are inlined at build time. They default to empty, which
 # means same-origin, so one image works behind any domain. Override them only
 # when the API lives on a different host than the app.
+#
+# The base image is pinned by digest for the reasons given in
+# backend/Dockerfile: a version tag is a mutable pointer, the digest is not.
+# Both stages must stay on the same digest -- mixing musl and glibc breaks the
+# native modules in the standalone trace at runtime.
 # =========================================================================
 
-FROM node:20.20.2-bookworm-slim AS builder
+FROM node:20.20.2-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS builder
 
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -25,7 +30,7 @@ ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL \
 RUN npm run build
 
 
-FROM node:20.20.2-bookworm-slim AS runner
+FROM node:20.20.2-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production \
