@@ -20,6 +20,11 @@ the one thing you may not do is offer Maestro to third parties as a hosted servi
 
 [Overview](#overview) · [Architecture](#architecture) · [Features](#features) · [Getting Started](#getting-started) · [Configuration](#configuration) · [API Reference](#api-reference) · [Security](#security) · [Deployment](#deployment) · [Roadmap](#roadmap)
 
+![The Architect view during a live run: the Orchestrator routes the prompt to the opensource domain, the Main Agent fans the work out to six specialist subagents, GitHub calls register on the connected rail, and the Reviewer audits the results.](./docs/assets/architect-live.gif)
+
+*A real run on a local Ollama model: one prompt in, an Orchestrator routes it, a Main Agent
+plans it, six subagents execute it, and a Reviewer audits every output — streamed live.*
+
 </div>
 
 ---
