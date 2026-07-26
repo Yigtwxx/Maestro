@@ -1,0 +1,110 @@
+# =========================================================================
+# Documentation site (GitHub Pages) — https://yigtwxx.github.io/Maestro/
+#
+# docs_dir is the repository's existing docs/ folder, so every page stays
+# readable on GitHub and there is no second copy to keep in sync. Filenames are
+# deliberately unchanged: README links, issue links and bookmarks pointing at
+# docs/CONFIGURATION.md must keep resolving.
+#
+# CONTRIBUTING.md and SECURITY.md live in the repository root because GitHub
+# looks for them there. The build workflow copies them into docs/ before
+# running mkdocs; to preview locally, do the same first:
+#   cp CONTRIBUTING.md SECURITY.md docs/ && mkdocs serve
+# =========================================================================
+
+site_name: Maestro
+site_url: https://yigtwxx.github.io/Maestro/
+site_description: >-
+  Maestro is a self-hostable AI agent orchestration platform. One prompt is
+  routed to a domain squad of agents that plan, execute and review the work.
+  Bring your own model keys, encrypted at rest, or run entirely on a local
+  Ollama model at zero cost.
+site_author: Yigit Erdogan
+
+repo_url: https://github.com/Yigtwxx/Maestro
+repo_name: Yigtwxx/Maestro
+edit_uri: edit/main/docs/
+
+copyright: Released under the Sustainable Use License v1.0
+
+docs_dir: docs
+# Fail the build on a broken internal link or a page missing from the nav.
+# The workflow also passes --strict; this makes a local build behave the same.
+strict: true
+
+theme:
+  name: material
+  custom_dir: overrides
+  language: en
+  # Material defaults to Roboto from fonts.googleapis.com: a render-blocking
+  # third-party request on every page load. The system font stack costs one
+  # less round trip, helps the LCP that search ranking actually measures, and
+  # keeps the site's promise of no third-party egress -- it sets no cookies,
+  # runs no analytics, and now contacts no other host at all.
+  font: false
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: grey
+      toggle:
+        icon: material/weather-night
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: grey
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.sections
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Yigtwxx/Maestro
+      name: Maestro on GitHub
+  # Material ships a cookie-consent banner and feedback widget that both phone
+  # home; neither is enabled. The site sets no cookies and runs no analytics.
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Quick Start: quickstart.md
+  - Architecture: architecture.md
+  - Comparison: comparison.md
+  - Configuration: CONFIGURATION.md
+  - Deployment: DEPLOYMENT.md
+  - API Reference: API.md
+  - Security: SECURITY.md
+  - Contributing: CONTRIBUTING.md

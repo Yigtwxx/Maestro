@@ -1,0 +1,93 @@
+name: Docs
+
+# Builds the MkDocs Material site and publishes it to GitHub Pages.
+#
+# Pages must be configured with "Build and deployment > Source: GitHub Actions"
+# once, in repository settings; deploy-pages fails with a clear error until it
+# is. Nothing else about the site is configured outside this repository.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - overrides/**
+      - mkdocs.yml
+      - requirements-docs.txt
+      # Both are copied into docs/ at build time (see the copy step below), so
+      # editing them in the repository root has to rebuild the site too.
+      - CONTRIBUTING.md
+      - SECURITY.md
+      - .github/workflows/docs.yml
+  pull_request:
+    paths:
+      - docs/**
+      - overrides/**
+      - mkdocs.yml
+      - requirements-docs.txt
+      - CONTRIBUTING.md
+      - SECURITY.md
+      - .github/workflows/docs.yml
+  workflow_dispatch:
+
+permissions: {}
+
+# Let a running deploy finish rather than cancelling it half-published; queue
+# the newer one behind it. Pull request builds are throwaway, so those cancel.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      # requirements-docs.txt is hash-pinned, which puts pip into
+      # --require-hashes mode on its own. Deliberately separate from the
+      # backend locks: this toolchain never ships in the application image.
+      - name: Install toolchain
+        run: pip install -r requirements-docs.txt
+
+      # GitHub looks for these two in the repository root, and MkDocs only
+      # renders what is inside docs_dir. Copying is cheaper than a plugin and
+      # keeps a single copy of each under version control.
+      - name: Stage root documents
+        run: cp CONTRIBUTING.md SECURITY.md docs/
+
+      # --strict turns a broken internal link or a page missing from the nav
+      # into a failed build rather than a quietly wrong site.
+      - name: Build
+        run: mkdocs build --strict
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  deploy:
+    name: Deploy
+    # A pull request proves the site still builds; only main publishes it.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
