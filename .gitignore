@@ -71,6 +71,8 @@ desktop.ini
 .claude/
 # Private engineering log: build history, open defects, roadmap. CLAUDE.md is public.
 CLAUDE.local.md
+# Transient quality-sweep working notes: verbatim prompts and model output.
+OVERNIGHT-QUALITY-REPORT.md
 
 # --- Docker volumes (local data) ---
 .data/

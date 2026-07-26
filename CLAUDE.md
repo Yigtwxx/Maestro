@@ -255,6 +255,14 @@ dropped **individually** rather than blanking the whole block, and every block s
 carries `UNTRUSTED_CONTENT_NOTICE`. Telegram is the one provider that puts its token in
 the URL path, so that call passes an explicit redacted log label.
 
+The shared client follows no redirects. `repo_intel` is the single exception and opts in
+per call via `request_api(follow_redirect_host=...)`: GitHub answers a renamed repository
+with 301, so refusing to follow one turns every moved project into a missing one. It is
+**one** hop, to **one** hard-coded host, and a `Location` pointing anywhere else is
+refused before the request is built — which is also what keeps the `Authorization` header
+from ever reaching another origin. Widening this to a general "follow redirects" flag
+would reintroduce the SSRF surface the paragraph above says these tools do not have.
+
 **General.** JWT on every non-public endpoint, including WebSockets. Rate limiting on
 every route. Pydantic validation on every input. In the single-origin production topology
 CORS does not apply; in split deployments only known origins are allowed. Secrets live in
@@ -346,6 +354,28 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
   refused if `WEB_CONCURRENCY > 1` while this is empty.
 - `TRUST_PROXY_HEADERS` — see rule 13 above.
 - `EMBEDDING_ENDPOINT` — separate from `FREE_MODEL_ENDPOINT`; falls back to it when empty.
+- `OLLAMA_NATIVE_API` — the Ollama adapter drives Ollama's own `/api/chat` rather than its
+  OpenAI-compatible `/v1` shim, because three controls exist only there. Set `false` to
+  force the shim; the adapter also falls back on its own if `/api/chat` answers 404, so a
+  non-Ollama OpenAI-compatible server behind `FREE_MODEL_ENDPOINT` keeps working. The
+  native path is also what makes `json_schema` a real capability for this provider:
+  `format` compiles the schema into a grammar, so `structured_call` is enforced rather
+  than parsed back out of prose.
+- `OLLAMA_THINK` — on by default, and *always* suppressed for schema-constrained calls
+  regardless of the setting. Two opposing facts pin it there. Reasoning is charged against
+  `max_tokens` while being returned in a field Maestro never reads, so a quarter to a third
+  of replies used to arrive with **empty content** and `finish_reason=length` (raising
+  `max_tokens` does not help — the model reasons longer). But thinking is also what makes a
+  member use its tools: with it off, the model must choose between emitting a bare tool
+  directive and writing prose in one shot, and it reliably writes prose — 0 tool calls over
+  18 cases, and 0 again after four escalating prompt rules. The empty-reply cost is now
+  absorbed in code (schema calls never think; an empty free-form reply is retried once
+  without it), so the setting can stay on for the capability. The `/v1` shim ignores every
+  thinking-control parameter, which is the main reason the native endpoint is used at all.
+- `OLLAMA_NUM_CTX` — Ollama loads a model with a 4096-token context unless told otherwise
+  and truncates a longer prompt **from the front**, which is where the system prompt is. A
+  subagent carrying a fetched page plus a teammate's output passes that easily, so the
+  member would silently lose its role, output format and grounding rules first.
 - `SITE_URL` — server-only and read at request time, never `NEXT_PUBLIC_*`, so the built
   image stays domain-agnostic. The backend reads its own copy for building email links.
 - `PAYMENT_PROVIDER` — only `mock` is implemented here. `BILLING_LIVE` gates the honesty
