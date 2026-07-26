@@ -1,0 +1,35 @@
+/*
+ * Brand accent only. The product's champagne (#d3cbc0, the tailwind primary in
+ * frontend/tailwind.config.ts) is a light warm tone: it reaches ~10:1 against
+ * the slate background but only ~1.4:1 against white, so the light scheme uses
+ * a darkened version of the same hue at ~5.7:1. Both clear WCAG AA for body
+ * text. No glows, gradients or motion -- the docs site is not the product UI.
+ */
+
+/*
+ * Both selectors carry two attributes on purpose. Material sets the link colour
+ * from `[data-md-color-scheme=slate][data-md-color-primary=black]`, which is
+ * specificity (0,2,0); a single-attribute rule here loses no matter how late it
+ * loads. Matching the specificity and coming after in the cascade is what wins.
+ */
+
+[data-md-color-scheme="slate"][data-md-color-primary="black"] {
+  --md-accent-fg-color: #d3cbc0;
+  --md-typeset-a-color: #d3cbc0;
+}
+
+[data-md-color-scheme="default"][data-md-color-primary="black"] {
+  --md-accent-fg-color: #6f6558;
+  --md-typeset-a-color: #6f6558;
+}
+
+/*
+ * docs/assets/architect-live.gif is 5.9 MB. It is embedded as raw <img> with
+ * loading="lazy" so it never blocks first paint; this keeps it from spilling
+ * out of the content column on small viewports.
+ */
+.md-typeset img[loading="lazy"] {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}

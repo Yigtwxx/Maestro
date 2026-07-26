@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+<!--
+  Open Graph and Twitter card tags.
+
+  Material only emits these through its social plugin, which renders card
+  images with Cairo and Pillow and therefore needs system libraries in the
+  build container. Verified against material/templates/base.html: it sets
+  `description` and `canonical` itself and no og:/twitter: tags at all, so
+  nothing below is a duplicate. A single static preview image is enough for
+  link unfurls and costs no build dependencies.
+-->
+{% block extrahead %}
+  {% if page and page.meta and page.meta.title %}
+    {% set og_title = page.meta.title %}
+  {% elif page and page.title and not page.is_homepage %}
+    {% set og_title = page.title ~ " - " ~ config.site_name %}
+  {% else %}
+    {% set og_title = config.site_name %}
+  {% endif %}
+
+  {% if page and page.meta and page.meta.description %}
+    {% set og_description = page.meta.description %}
+  {% else %}
+    {% set og_description = config.site_description %}
+  {% endif %}
+
+  {% set og_image = config.site_url ~ "assets/social-preview.png" %}
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="{{ config.site_name }}">
+  <meta property="og:title" content="{{ og_title }}">
+  <meta property="og:description" content="{{ og_description | striptags | trim }}">
+  <meta property="og:image" content="{{ og_image }}">
+  <meta property="og:url" content="{{ page.canonical_url }}">
+
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ og_title }}">
+  <meta name="twitter:description" content="{{ og_description | striptags | trim }}">
+  <meta name="twitter:image" content="{{ og_image }}">
+{% endblock %}
