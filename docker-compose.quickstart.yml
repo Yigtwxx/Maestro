@@ -146,9 +146,13 @@ services:
       MONGODB_DB_NAME: maestro
       QDRANT_URL: http://qdrant:6333
       REDIS_URL: redis://redis:6379/0
-      # Local-trial values only — see the header.
+      # Local-trial values only — see the header. Both are deliberately
+      # readable rather than random: the master key loader accepts base64, hex
+      # or raw UTF-8 as long as it decodes to 32 bytes, and a plain 32-character
+      # string cannot be mistaken for a real credential by a human or by a
+      # secret scanner. Count the characters before changing this line.
       JWT_SECRET: quickstart-insecure-jwt-secret-not-for-any-real-deployment
-      API_KEY_MASTER_KEY: cXVpY2tzdGFydC1pbnNlY3VyZS1tYXN0ZXIta2V5MDA=
+      API_KEY_MASTER_KEY: quickstart-insecure-master-key00
       # Console provider: verification links are printed to the backend log.
       # Verification is off here so the trial needs no mail round-trip at all.
       EMAIL_PROVIDER: console
