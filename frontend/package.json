@@ -12,16 +12,16 @@
     "clean": "node -e \"const fs=require('fs');for(const p of ['.next','tsconfig.tsbuildinfo'])fs.rmSync(p,{recursive:true,force:true})\""
   },
   "dependencies": {
-    "@sentry/nextjs": "10.65.0",
+    "@sentry/nextjs": "10.68.0",
     "animejs": "4.5.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "lucide-react": "1.25.0",
+    "lucide-react": "1.27.0",
     "motion": "12.42.2",
-    "next": "16.2.10",
+    "next": "16.2.12",
     "ogl": "1.0.11",
-    "react": "19.2.7",
-    "react-dom": "19.2.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
     "react-markdown": "10.1.0",
     "rehype-slug": "6.0.0",
     "remark-gfm": "4.0.1",
@@ -35,8 +35,8 @@
     "@types/react-dom": "19.2.3",
     "autoprefixer": "10.5.4",
     "eslint": "9.18.0",
-    "eslint-config-next": "16.2.10",
-    "postcss": "8.5.19",
+    "eslint-config-next": "16.2.12",
+    "postcss": "8.5.23",
     "tailwindcss": "3.4.17",
     "typescript": "5.7.3"
   }
