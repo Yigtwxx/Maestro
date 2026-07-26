@@ -1,0 +1,6 @@
+# Documentation site toolchain (GitHub Pages), deliberately separate from the
+# backend locks: this never ships in the application image and must not drag
+# the hash-pinned backend resolution around. Regenerate with:
+#   uv pip compile --universal --python-version 3.11 --generate-hashes \
+#     requirements-docs.in -o requirements-docs.txt
+mkdocs-material
