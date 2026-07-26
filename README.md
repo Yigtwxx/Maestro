@@ -15,6 +15,7 @@ live over WebSocket, backed by per-user RAG memory and a community Marketplace.
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)](https://nextjs.org)
 [![Discussions](https://img.shields.io/github/discussions/Yigtwxx/Maestro?color=0a7ea4)](https://github.com/Yigtwxx/Maestro/discussions)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Yigtwxx/Maestro/badge)](https://scorecard.dev/viewer/?uri=github.com/Yigtwxx/Maestro)
 
 **Fair-code, not OSI open source:** read it, run it, modify it, and self-host it for free —
 the one thing you may not do is offer Maestro to third parties as a hosted service
