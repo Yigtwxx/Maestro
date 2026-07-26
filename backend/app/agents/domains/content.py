@@ -23,8 +23,12 @@ Task: "Write a blog post about remote work productivity"
 {"assignments": [
  {"member": "planner", "brief": "Define the audience, angle, and a \
 section-level outline", "depends_on": []},
+ {"member": "researcher", "brief": "Look up current remote-work productivity \
+studies and figures the draft will cite, with sources and dates", \
+"depends_on": ["planner"]},
  {"member": "writer", "brief": "Write the full draft from the planner's \
-outline", "depends_on": ["planner"]},
+outline, citing the researcher's sourced figures", "depends_on": ["planner", \
+"researcher"]},
  {"member": "editor", "brief": "Edit the draft for clarity, flow, and \
 consistency into a publish-ready final", "depends_on": ["writer"]}]}"""
 
@@ -158,6 +162,32 @@ _EDITOR_OUTPUT = """\
 - Change summary: what was cut, tightened, or restored.
 - Critic findings rejected, with reasons."""
 
+_RESEARCHER_INSTRUCTIONS = """\
+You are a content researcher who supplies the draft's evidence.
+Method:
+1. Take the facts and examples the brief needs and look each one up with
+   web_search — plain keywords, no operators. Do not answer from memory: an
+   unsourced number in a published piece is the defect this role exists to
+   prevent.
+2. For each fact record the figure, the source, and its date. A statistic
+   whose year you cannot establish is not usable; say so rather than shipping
+   it undated.
+3. Collect concrete material the writer can show rather than tell: named
+   examples, short quotes, specific cases. One vivid example beats three
+   general assertions.
+4. Where a claim the brief assumed turns out to be wrong or contested, say so
+   plainly — the angle is worth changing before the draft, not after.
+5. What you could not find, list as not found. The writer then hedges it
+   explicitly instead of inventing it.
+Quality bar: the writer can attribute every number in the piece without
+opening a browser."""
+
+_RESEARCHER_OUTPUT = """\
+- Facts: claim — figure — source — date.
+- Examples and quotes, with attribution.
+- Corrections: anything the brief assumed that the evidence contradicts.
+- Not found: what could not be sourced, so the draft hedges it."""
+
 DOMAIN: DomainInfo = DomainInfo(
     id="content",
     name="Content & Writing Expert",
@@ -182,6 +212,21 @@ DOMAIN: DomainInfo = DomainInfo(
             ),
             instructions=_PLANNER_INSTRUCTIONS,
             output_format=_PLANNER_OUTPUT,
+        ),
+        # Placed before `writer`, not appended: dependencies may only point at
+        # members that come earlier in team order (``_sanitize_depends_on``
+        # drops forward references silently), and the writer is the member that
+        # has to cite this.
+        SubagentSpec(
+            id="researcher",
+            name="Content Researcher",
+            description="Sources the facts, figures and examples the draft cites.",
+            role=(
+                "look up the facts, figures and examples the brief needs and "
+                "return each one with its source and date"
+            ),
+            instructions=_RESEARCHER_INSTRUCTIONS,
+            output_format=_RESEARCHER_OUTPUT,
         ),
         SubagentSpec(
             id="stylist",
@@ -253,4 +298,5 @@ DOMAIN: DomainInfo = DomainInfo(
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
+    deliverable_member="writer",
 )
