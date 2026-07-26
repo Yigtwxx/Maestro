@@ -6,11 +6,19 @@ loop (no native function calling required): the model replies with a directive
 instead of an answer, we execute the tool and feed the result back, bounded by
 per-tool budgets and a total tool-call cap.
 
-Subagents never receive the raw user message in their prompt: they work from
-the Main Agent's decomposed brief, plus (when dependencies were declared) the
-finished outputs of the teammates they build on. A subagent that needs more
-context can fetch the original user request on demand via the built-in
-``view_original_request`` directive.
+A subagent executes the Main Agent's decomposed brief, plus (when dependencies
+were declared) the finished outputs of the teammates it builds on. The user's
+request travels alongside as *delimited context*, never as the member's own
+instruction — the brief is what it executes, and the prompt says so before the
+request is shown.
+
+That request used to be available only on demand, behind the
+``view_original_request`` directive. Small local models do not issue it: they
+answer the brief without ever learning what was asked, which produced fluent,
+confidently off-topic deliverables whenever planning had degraded, and left the
+member with no way to know what language to reply in — every prompt and every
+planner-written brief is English. The directive is still registered, and is
+still how a request too long to embed gets read in full.
 """
 
 from __future__ import annotations
@@ -31,6 +39,8 @@ from app.agents.base import (
 )
 from app.agents.prompts import (
     SUBAGENT_EMPTY_ANSWER_NUDGE,
+    SUBAGENT_NO_RETRIEVAL_NUDGE,
+    SUBAGENT_OBJECTIVE_HEADER,
     SUBAGENT_SYSTEM,
     SUBAGENT_TOOLS_RULE,
     SUBAGENT_UPSTREAM_HEADER,
@@ -42,6 +52,10 @@ from app.core.constants import (
     COMPACTION_KEEP_CHARS,
     COMPACTION_THRESHOLD_TOKENS,
     EMPTY_SUBAGENT_ANSWER,
+    OBJECTIVE_MAX_CHARS,
+    ORIGINAL_REQUEST_CLOSE,
+    ORIGINAL_REQUEST_OPEN,
+    RETRIEVAL_TOOL_IDS,
     SUBAGENT_MAX_TOKENS,
     SUBAGENT_SUMMARY_MAX_CHARS,
     TOKEN_ESTIMATE_CHARS_PER_TOKEN,
@@ -173,6 +187,16 @@ async def _run_subtask(
     upstream_block = format_optional_block(
         SUBAGENT_UPSTREAM_HEADER, _format_upstream(upstream or [])
     )
+    # The request travels with the brief instead of waiting behind a tool call.
+    # Delimited and labelled as context, so the brief stays the instruction.
+    objective_block = format_optional_block(
+        SUBAGENT_OBJECTIVE_HEADER,
+        f"{ORIGINAL_REQUEST_OPEN}\n"
+        f"{truncate_text(objective.strip(), OBJECTIVE_MAX_CHARS)}\n"
+        f"{ORIGINAL_REQUEST_CLOSE}"
+        if objective.strip()
+        else "",
+    )
     system_prompt = SUBAGENT_SYSTEM.format(
         name=member.name,
         domain=domain,
@@ -181,6 +205,7 @@ async def _run_subtask(
         output_format=format_optional_block(
             "Format your output as:", member.output_format
         ),
+        objective=objective_block,
         upstream=upstream_block,
         review_hints=hints_block,
         memory_context=format_memory_block(ctx.memory_context),
@@ -331,8 +356,21 @@ async def _chat_with_tools(
     )
     # The budget guard inside the loop has already forced a final answer once
     # the task's cap is spent; nudging past it would be spend nobody authorized.
-    if response.content.strip() or budget.budget_exceeded(ctx):
+    if budget.budget_exceeded(ctx):
         return response, total_tokens, usage
+
+    if response.content.strip():
+        return await _nudge_if_nothing_retrieved(
+            ctx,
+            messages,
+            member=member,
+            index=index,
+            specs=specs,
+            loop=loop,
+            response=response,
+            total_tokens=total_tokens,
+            usage=usage,
+        )
 
     logger.warning(
         "subtask answer was blank; asking once more: member=%s",
@@ -347,6 +385,65 @@ async def _chat_with_tools(
         messages, temperature=0.3, max_tokens=SUBAGENT_MAX_TOKENS
     )
     return retry, total_tokens + retry.tokens_used, usage
+
+
+async def _nudge_if_nothing_retrieved(
+    ctx: AgentContext,
+    messages: list[ChatMessage],
+    *,
+    member: SubagentSpec,
+    index: int,
+    specs: dict[str, ToolSpec],
+    loop: Any,
+    response: LLMResponse,
+    total_tokens: int,
+    usage: dict[str, int],
+) -> tuple[LLMResponse, int, dict[str, int]]:
+    """Ask once more when a member holding retrieval tools never used one.
+
+    Only fires when the member *could* have retrieved and did not: a domain with
+    no retrieval tool, or a run that already made a call, is left alone. The loop
+    is re-entered rather than a bare chat issued, so a directive the model emits
+    in response is actually executed.
+
+    The model is explicitly allowed to repeat its answer unchanged, because for a
+    genuine general-knowledge question ("why do batteries wear out") not
+    searching is correct — the nudge is there to catch the case where it is not,
+    and one wasted turn is a cheap price for that. If the second attempt comes
+    back blank or errors, the first answer stands: this must never turn a
+    usable answer into a failed subtask.
+    """
+    retrievable = {action for action in specs if action in RETRIEVAL_TOOL_IDS}
+    external_calls = sum(
+        count
+        for action, count in usage.items()
+        if action != VIEW_ORIGINAL_REQUEST_ACTION
+    )
+    if not retrievable or external_calls:
+        return response, total_tokens, usage
+
+    logger.info(
+        "subtask answered without retrieving; nudging once: member=%s",
+        member.id,
+        extra={"member_id": member.id},
+    )
+    messages.append(ChatMessage("assistant", response.content))
+    messages.append(ChatMessage("user", SUBAGENT_NO_RETRIEVAL_NUDGE))
+    try:
+        retry, retry_tokens, retry_usage, _ = await loop(
+            ctx, messages, member=member, index=index, specs=specs
+        )
+    except LLMError as exc:
+        # The first answer was fine; a failed second opinion must not lose it.
+        logger.warning("retrieval nudge failed: member=%s error=%s", member.id, exc)
+        return response, total_tokens, usage
+
+    if not retry.content.strip():
+        return response, total_tokens + retry_tokens, usage
+    merged = dict(usage)
+    for action, count in retry_usage.items():
+        merged[action] = merged.get(action, 0) + count
+    return retry, total_tokens + retry_tokens, merged
 
 
 async def _directive_tool_loop(
