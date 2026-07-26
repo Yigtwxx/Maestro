@@ -1,0 +1,10 @@
+# Historical false positives, pinned to the exact commit and line that produced
+# them. This is deliberately not a file- or rule-level allowlist: a new secret
+# in the same file would still fail the scan.
+#
+# 792710a: the quickstart trial master key was base64, so gitleaks scored it as
+# a generic-api-key on entropy alone. It was never a real credential -- it is a
+# fixed, publicly documented placeholder for a loopback-only trial stack, and
+# d4982ec replaced it with a plain-text value that no longer looks like one.
+# The old blob stays in history, so a full-history scan would still find it.
+792710ab13c2991090a344b49e6ee0614c1396db:docker-compose.quickstart.yml:generic-api-key:151
