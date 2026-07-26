@@ -10,9 +10,13 @@ sandboxed code execution), and an optional Reviewer audits the results. Everythi
 live over WebSocket, backed by per-user RAG memory and a community Marketplace.
 
 [![CI](https://github.com/Yigtwxx/Maestro/actions/workflows/ci.yml/badge.svg)](https://github.com/Yigtwxx/Maestro/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Sustainable_Use-blue)](./LICENSE)
+[![License](https://img.shields.io/badge/License-fair--code_(SUL_1.0)-blue)](./LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=nextdotjs)](https://nextjs.org)
+
+**Fair-code, not OSI open source:** read it, run it, modify it, and self-host it for free —
+the one thing you may not do is offer Maestro to third parties as a hosted service
+([Sustainable Use License](./LICENSE)).
 
 [Overview](#overview) · [Architecture](#architecture) · [Features](#features) · [Getting Started](#getting-started) · [Configuration](#configuration) · [API Reference](#api-reference) · [Security](#security) · [Deployment](#deployment) · [Roadmap](#roadmap)
 
@@ -30,14 +34,19 @@ before returning a synthesized answer. The full run streams to the client over W
 and the Main Agent can pause mid-task to ask the user a clarifying question
 (human-in-the-loop).
 
-The platform is **bring-your-own-key**: users connect credentials for any of a dozen
-providers — OpenAI, Anthropic, Google Gemini, Groq, DeepSeek, Mistral, xAI, OpenRouter,
-Together, Perplexity, or any custom OpenAI-compatible endpoint — encrypted at rest with
-AES-256-GCM. It also runs with **no paid key at all**: Gemini offers a free tier (no
-credit card, [aistudio.google.com/apikey](https://aistudio.google.com/apikey)), and tasks
-fall back to **Qwen3.5 via a local Ollama endpoint** when a quota is exhausted or no key
-is connected. RAG embeddings are generated locally with `nomic-embed-text`, so the entire
-pipeline can run offline and free.
+The platform is **bring-your-own-key**: users connect credentials for any of **25 chat
+providers** — OpenAI, Anthropic, Google Gemini, Groq, DeepSeek, Mistral, xAI, OpenRouter,
+Together, Perplexity, Cerebras, Fireworks, Moonshot, Qwen and Z.ai among them, with a
+`custom` entry for any other OpenAI-compatible endpoint — encrypted at rest with
+AES-256-GCM. A further **42 service integrations** (GitHub, X, Slack, Discord, Telegram,
+Google Places and more) live in the same vault and drive the connected-API tools.
+
+It also runs with **no paid key at all**: with no provider selected, tasks run on
+**Qwen3.5 via a local Ollama endpoint**, which needs no key, and Gemini offers a genuine
+free tier (no credit card,
+[aistudio.google.com/apikey](https://aistudio.google.com/apikey)). RAG embeddings are
+generated locally with `nomic-embed-text`, so the entire pipeline can run offline and
+free.
 
 Architecture, conventions, and code standards live in a single source of truth:
 [`CLAUDE.md`](./CLAUDE.md).
@@ -159,7 +168,7 @@ feedback format are defined in [`CLAUDE.md`](./CLAUDE.md) §5.4.
 | Email verification | Verify / resend / forgot / reset flows via pluggable email providers (console, Resend); soft-gates task start and key creation | Live |
 | Two-factor auth | TOTP with QR provisioning and single-use recovery codes | Live |
 | Session management | List active sessions, revoke one or all others | Live |
-| BYOK key management | AES-256-GCM encrypted storage for 12 LLM providers, incl. custom endpoints | Live |
+| BYOK key management | AES-256-GCM encrypted storage for 67 providers — 25 chat brains (incl. custom endpoints) and 42 service integrations | Live |
 | Task flow | Orchestrator → Main Agent → Subagents → optional Reviewer, live over WebSocket | Live |
 | Durable task engine | Postgres-checkpointed steps with lease + heartbeat — a crashed worker's tasks resume instead of hanging; runs multi-worker over a Redis event bus | Live |
 | Task history | List, inspect, cancel, and delete past tasks | Live |
