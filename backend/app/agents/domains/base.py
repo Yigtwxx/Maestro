@@ -112,3 +112,20 @@ class DomainInfo:
     # renders them as a scored checklist and computes a weighted approval; when
     # empty, the string ``review_rubric`` path above is used unchanged.
     review_criteria: tuple[ReviewCriterion, ...] = ()
+    # The member whose output *is* the user-facing answer, used when the effort
+    # cap allows exactly one member.
+    #
+    # Every domain declares a preparatory member first — architect, collector,
+    # keywords, query_planner, researcher — so a one-member plan kept whichever
+    # id happened to come first and the user received working notes: a search
+    # plan for "how long should a title tag be", a "Key facts / Assumptions /
+    # Open questions" digest for "why do batteries wear out". Ranking the cap by
+    # the planner's own ordering fixed the truncation but not the choice; the
+    # planner kept picking the research member on its own, through three
+    # successive prompt rules telling it not to. Hence a declared id rather than
+    # an instruction.
+    #
+    # Left empty where the right single member genuinely depends on the task —
+    # software (coder or architect or debugger), seo and marketing all have no
+    # one answer — and there the planner's choice stands.
+    deliverable_member: str = ""
