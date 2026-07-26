@@ -39,5 +39,14 @@
     "postcss": "8.5.23",
     "tailwindcss": "3.4.17",
     "typescript": "5.7.3"
+  },
+  "//overrides": "Transitive advisories that no direct dependency has released a fix for yet. Each entry is the lowest patched version inside the same major, so the parent's declared range still holds. Drop an entry once the parent ships a version that pulls the fix on its own -- `npm ls <name>` shows whether it is still needed. Pinned exactly, like every other version here (.npmrc sets save-exact).",
+  "overrides": {
+    "postcss": "8.5.23",
+    "sharp": "0.35.3",
+    "fast-uri": "3.1.4",
+    "minimatch": "10.2.5",
+    "brace-expansion": "5.0.8",
+    "@eslint/plugin-kit": "0.3.5"
   }
 }
