@@ -1,0 +1,221 @@
+# =========================================================================
+# Maestro — zero-configuration local trial.
+#
+#   docker compose -f docker-compose.quickstart.yml up -d
+#   open http://localhost:8080
+#
+# Runs the published GHCR images, so nothing is built locally. Everything is
+# published on 127.0.0.1 only. If something already owns port 8080, pick
+# another one — MAESTRO_PORT=8090 docker compose -f ... up -d — it is applied
+# to the proxy, the site address, and the link-building SITE_URL together.
+#
+# NOT A DEPLOYMENT. The credentials below are fixed, public, and identical on
+# every machine that runs this file. They are safe here for exactly two
+# reasons: nothing is reachable from outside the loopback interface, and
+# ENVIRONMENT stays `development` — the backend refuses to boot in production
+# with secrets this weak. To run Maestro for real, use
+# docker-compose.prod.yml plus your own .env.prod (see docs/DEPLOYMENT.md).
+#
+# Chat runs on whichever provider key you add under Settings > API Keys;
+# Google Gemini has a genuine free tier (no card). Embeddings run locally in
+# the bundled Ollama service, so RAG needs no key. To run chat locally too:
+#
+#   docker compose -f docker-compose.quickstart.yml exec ollama ollama pull qwen3.5:9b
+#
+# and restart the backend — OLLAMA_CHAT_ENABLED is already true.
+#
+# Requires Compose v2.17+ for `service_completed_successfully`.
+# =========================================================================
+name: maestro-quickstart
+
+x-trial-logging: &trial-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *trial-logging
+    environment:
+      POSTGRES_USER: maestro
+      POSTGRES_PASSWORD: maestro
+      POSTGRES_DB: maestro
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maestro -d maestro"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    logging: *trial-logging
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: maestro
+      MONGO_INITDB_ROOT_PASSWORD: maestro
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - -u
+        - maestro
+        - -p
+        - maestro
+        - --authenticationDatabase
+        - admin
+        - --eval
+        - db.adminCommand('ping').ok
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.2
+    restart: unless-stopped
+    logging: *trial-logging
+    volumes:
+      - qdrantdata:/qdrant/storage
+    # No healthcheck: the image is distroless, so no in-container probe can run.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    logging: *trial-logging
+    command:
+      - redis-server
+      - --maxmemory
+      - 128mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Embeddings for RAG. A chat model is not pulled here — see the header for
+  # the one command that adds it.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    logging: *trial-logging
+    volumes:
+      - ollamadata:/root/.ollama
+    healthcheck:
+      test: ["CMD", "/bin/ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Idempotent: exits immediately once the model is in the volume.
+  ollama-pull:
+    image: ollama/ollama:latest
+    restart: "no"
+    logging: *trial-logging
+    entrypoint: ["/bin/ollama"]
+    command: ["pull", "nomic-embed-text"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+  # Runs `alembic upgrade head` and exits; the API waits for it to succeed.
+  migrate:
+    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.0}
+    restart: "no"
+    logging: *trial-logging
+    command: ["alembic", "upgrade", "head"]
+    environment: &backend-env
+      ENVIRONMENT: development
+      POSTGRES_URL: postgresql+asyncpg://maestro:maestro@postgres:5432/maestro
+      MONGODB_URL: mongodb://maestro:maestro@mongo:27017/?authSource=admin
+      MONGODB_DB_NAME: maestro
+      QDRANT_URL: http://qdrant:6333
+      REDIS_URL: redis://redis:6379/0
+      # Local-trial values only — see the header.
+      JWT_SECRET: quickstart-insecure-jwt-secret-not-for-any-real-deployment
+      API_KEY_MASTER_KEY: cXVpY2tzdGFydC1pbnNlY3VyZS1tYXN0ZXIta2V5MDA=
+      # Console provider: verification links are printed to the backend log.
+      # Verification is off here so the trial needs no mail round-trip at all.
+      EMAIL_PROVIDER: console
+      EMAIL_VERIFICATION_REQUIRED: "false"
+      SITE_URL: http://localhost:${MAESTRO_PORT:-8080}
+      FREE_MODEL_ENDPOINT: http://ollama:11434/v1
+      EMBEDDING_ENDPOINT: http://ollama:11434/v1
+      OLLAMA_CHAT_ENABLED: "true"
+      # The Docker socket is not mounted here, so the sandbox stays off.
+      CODE_EXECUTION_ENABLED: "false"
+      TRUST_PROXY_HEADERS: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.0}
+    restart: unless-stopped
+    logging: *trial-logging
+    environment: *backend-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      ollama-pull:
+        condition: service_completed_successfully
+
+  frontend:
+    image: ghcr.io/yigtwxx/maestro-frontend:${MAESTRO_TAG:-0.1.0}
+    restart: unless-stopped
+    logging: *trial-logging
+    environment:
+      INTERNAL_API_ORIGIN: http://backend:8000
+      SITE_URL: http://localhost:${MAESTRO_PORT:-8080}
+    depends_on:
+      - backend
+
+  # Single origin, so the browser needs no baked-in API URL and there is no
+  # CORS. The shared Caddyfile skips certificate provisioning when DOMAIN
+  # carries an explicit http:// scheme.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *trial-logging
+    ports:
+      - "127.0.0.1:${MAESTRO_PORT:-8080}:${MAESTRO_PORT:-8080}"
+    environment:
+      DOMAIN: http://localhost:${MAESTRO_PORT:-8080}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  pgdata:
+  mongodata:
+  qdrantdata:
+  ollamadata:
+  caddydata:
+  caddyconfig:
