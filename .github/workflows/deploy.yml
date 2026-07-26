@@ -20,6 +20,14 @@ jobs:
   deploy:
     name: Roll out to production
     runs-on: ubuntu-latest
+    # A release tag must not attempt a rollout on a repository that has no host
+    # yet. Without DEPLOY_HOST and its sibling secrets this job can only fail,
+    # and it fails against the tag itself -- so every published release carries
+    # a red Deploy run for a deployment nobody asked for. Set the repository
+    # variable DEPLOY_ENABLED to "true" once the host and secrets exist.
+    # A variable rather than a secret because the `secrets` context is not
+    # available in a job-level `if`.
+    if: vars.DEPLOY_ENABLED == 'true'
     # Configure required reviewers on this environment to gate the rollout.
     environment: production
     steps:

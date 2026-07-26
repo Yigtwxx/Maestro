@@ -24,6 +24,11 @@
 #
 # and restart the backend — OLLAMA_CHAT_ENABLED is already true.
 #
+# The image tag is pinned to a release rather than `latest` or `main`, so a
+# clone of any tag runs the code that tag actually shipped. It must be bumped
+# in the same commit as the release, or the trial silently runs older code than
+# the README describes. MAESTRO_TAG=main overrides it to the newest build.
+#
 # Requires Compose v2.17+ for `service_completed_successfully`.
 # =========================================================================
 name: maestro-quickstart
@@ -135,7 +140,7 @@ services:
 
   # Runs `alembic upgrade head` and exits; the API waits for it to succeed.
   migrate:
-    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.0}
+    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.1}
     restart: "no"
     logging: *trial-logging
     command: ["alembic", "upgrade", "head"]
@@ -169,7 +174,7 @@ services:
         condition: service_healthy
 
   backend:
-    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.0}
+    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.1}
     restart: unless-stopped
     logging: *trial-logging
     environment: *backend-env
@@ -188,7 +193,7 @@ services:
         condition: service_completed_successfully
 
   frontend:
-    image: ghcr.io/yigtwxx/maestro-frontend:${MAESTRO_TAG:-0.1.0}
+    image: ghcr.io/yigtwxx/maestro-frontend:${MAESTRO_TAG:-0.1.1}
     restart: unless-stopped
     logging: *trial-logging
     environment:
