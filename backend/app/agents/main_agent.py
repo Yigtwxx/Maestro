@@ -26,8 +26,10 @@ from app.agents.base import (
     SubagentResult,
     format_memory_block,
     format_optional_block,
+    truncate_text,
     with_current_date,
 )
+from app.agents.domains.base import DomainInfo
 from app.agents.prompts import (
     FALLBACK_BRIEF_TEMPLATE,
     MAIN_AGENT_CLARIFY_RULE,
@@ -40,9 +42,13 @@ from app.agents.structured import structured_call
 from app.core.constants import (
     MAX_SUBTASKS,
     MAX_SUBTASKS_BY_COMPLEXITY,
+    OBJECTIVE_MAX_CHARS,
+    ORIGINAL_REQUEST_CLOSE,
+    ORIGINAL_REQUEST_OPEN,
     PLAN_MAX_TOKENS,
     STREAM_DELTA_FLUSH_CHARS,
     SYNTHESIS_MAX_TOKENS,
+    SYNTHESIS_MEMBER_OUTPUT_MAX_CHARS,
     UPSTREAM_OUTPUT_MAX_CHARS,
     AgentRole,
     EventType,
@@ -65,23 +71,52 @@ class Assignment:
     member: SubagentSpec
     brief: str
     depends_on: tuple[str, ...] = ()
+    # Position in the planner's own list. Assignments execute in team order, so
+    # that ordering is lost by the time the effort cap truncates — and cutting by
+    # team order keeps whichever member happens to be listed first in the domain
+    # module, which is the preparatory role almost everywhere. Kept so the cap
+    # can drop the members the planner cared least about instead.
+    rank: int = 0
 
 
-def _fallback_assignments(team: tuple[SubagentSpec, ...]) -> list[Assignment]:
+def _fallback_assignments(
+    team: tuple[SubagentSpec, ...], prompt: str, deliverable: str = ""
+) -> list[Assignment]:
     """Every member gets a role-scoped brief — the pipeline never stalls.
 
-    The raw user message is never used as a member's own instruction; each
-    member is told to fetch it via the view_original_request directive and
-    execute only its role's share. Members chain in team order (each depends
-    on all previous ones) so teams laid out as a pipeline — e.g. software's
-    architect → coder → tester — still hand their work forward even without
-    an explicit plan.
+    The user's request is carried into the brief as delimited context so a member
+    still knows what the task is. It is never the member's own instruction: the
+    role sentence after the delimiters is what it is told to execute. Relying on
+    the member to fetch the request itself via ``view_original_request`` was the
+    previous design and it failed on small models, which simply never issued the
+    directive and answered their bare role description instead.
+
+    Members chain in team order (each depends on all previous ones) so teams laid
+    out as a pipeline — e.g. software's architect → coder → tester — still hand
+    their work forward even without an explicit plan.
+
+    ``deliverable`` ranks first. There is no planner here to order the list, so
+    every assignment used to share ``rank = 0`` and the effort cap's stable sort
+    degraded to team-order slicing — keeping the preparatory members that lead
+    almost every roster and dropping the one whose output *is* the answer. That
+    is precisely the failure ``Assignment.rank`` exists to prevent, and it bites
+    hardest here: this path runs when planning already failed.
     """
+    request = truncate_text(prompt.strip(), OBJECTIVE_MAX_CHARS)
+    ordered = [member.id for member in team if member.id != deliverable]
+    ranks = {member_id: index + 1 for index, member_id in enumerate(ordered)}
+    ranks[deliverable] = 0
     return [
         Assignment(
             member=member,
-            brief=FALLBACK_BRIEF_TEMPLATE.format(role=member.role),
+            brief=FALLBACK_BRIEF_TEMPLATE.format(
+                open=ORIGINAL_REQUEST_OPEN,
+                request=request,
+                close=ORIGINAL_REQUEST_CLOSE,
+                role=member.role,
+            ),
             depends_on=tuple(previous.id for previous in team[:index]),
+            rank=ranks[member.id],
         )
         for index, member in enumerate(team)
     ]
@@ -99,7 +134,13 @@ def _sanitize_depends_on(assignments: list[Assignment]) -> list[Assignment]:
         deps = tuple(dict.fromkeys(dep for dep in assignment.depends_on if dep in seen))
         sanitized.append(
             Assignment(
-                member=assignment.member, brief=assignment.brief, depends_on=deps
+                member=assignment.member,
+                brief=assignment.brief,
+                depends_on=deps,
+                # Carried, not defaulted: this runs before the effort cap, and a
+                # reset rank would put every assignment back in team order —
+                # silently restoring the behaviour the rank exists to replace.
+                rank=assignment.rank,
             )
         )
         seen.add(assignment.member.id)
@@ -107,7 +148,10 @@ def _sanitize_depends_on(assignments: list[Assignment]) -> list[Assignment]:
 
 
 def _parse_assignments(
-    proposed: list[PlanAssignment], team: tuple[SubagentSpec, ...]
+    proposed: list[PlanAssignment],
+    team: tuple[SubagentSpec, ...],
+    prompt: str,
+    deliverable: str = "",
 ) -> list[Assignment]:
     """Map LLM assignments onto the fixed team, in deterministic team order.
 
@@ -117,6 +161,7 @@ def _parse_assignments(
     """
     briefs: dict[str, str] = {}
     depends: dict[str, tuple[str, ...]] = {}
+    ranks: dict[str, int] = {}
     for item in proposed:
         member_id = item.member.strip()
         brief = item.brief.strip()
@@ -125,20 +170,35 @@ def _parse_assignments(
             depends[member_id] = tuple(
                 dep.strip() for dep in item.depends_on if dep.strip()
             )
+            ranks[member_id] = len(ranks)
     assignments = [
         Assignment(
-            member=member, brief=briefs[member.id], depends_on=depends[member.id]
+            member=member,
+            brief=briefs[member.id],
+            depends_on=depends[member.id],
+            rank=ranks[member.id],
         )
         for member in team
         if member.id in briefs
     ]
     if not assignments:
-        return _fallback_assignments(team)
+        return _fallback_assignments(team, prompt, deliverable)
     return _sanitize_depends_on(assignments)
 
 
-async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: bool):
+async def _plan(
+    ctx: AgentContext,
+    domain: str,
+    prompt: str,
+    *,
+    allow_clarify: bool,
+    max_members: int = MAX_SUBTASKS,
+):
     """Ask the Main Agent LLM to brief its team, or a clarifying question (HITL).
+
+    ``max_members`` is the effort cap the caller will enforce anyway. Telling the
+    planner about it lets it choose which members matter; without it the planner
+    briefs the whole team and the cap decides for it, by list position.
 
     Returns ``("assignments", list[Assignment])`` or ``("question", str)``.
     """
@@ -153,6 +213,7 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
         planning_example=format_optional_block("Example:", info.planning_example),
         clarify_rule=clarify_rule,
         memory_context=format_memory_block(ctx.memory_context),
+        max_members=max_members,
     )
     messages = [
         ChatMessage("system", with_current_date(system)),
@@ -182,12 +243,16 @@ async def _plan(ctx: AgentContext, domain: str, prompt: str, *, allow_clarify: b
                 ),
             },
         )
-        return "assignments", _fallback_assignments(info.team)
+        return "assignments", _fallback_assignments(
+            info.team, prompt, info.deliverable_member
+        )
 
     question = plan.question.strip()
     if allow_clarify and question:
         return "question", question
-    return "assignments", _parse_assignments(plan.assignments, info.team)
+    return "assignments", _parse_assignments(
+        plan.assignments, info.team, prompt, info.deliverable_member
+    )
 
 
 async def _assign(
@@ -195,7 +260,10 @@ async def _assign(
 ) -> list[Assignment]:
     """Brief the team, optionally asking the user one clarifying question first."""
     can_ask = ctx.allow_questions and ctx.ask_user is not None
-    kind, value = await _plan(ctx, domain, prompt, allow_clarify=can_ask)
+    limit = min(ctx.max_iterations, max_subtasks, MAX_SUBTASKS)
+    kind, value = await _plan(
+        ctx, domain, prompt, allow_clarify=can_ask, max_members=limit
+    )
 
     if kind == "question" and ctx.ask_user is not None:
         await ctx.emit(
@@ -205,18 +273,141 @@ async def _assign(
         answer = await ctx.ask_user(value)
         # Re-plan once with the answer folded in; no further clarifications.
         enriched = f"{prompt}\n\nClarification — Q: {value}\nA: {answer}"
-        _, value = await _plan(ctx, domain, enriched, allow_clarify=False)
+        _, value = await _plan(
+            ctx, domain, enriched, allow_clarify=False, max_members=limit
+        )
 
+    info = ctx.domain_info or get_domain_info(domain)
     assignments = (
         value
         if isinstance(value, list)
-        else _fallback_assignments((ctx.domain_info or get_domain_info(domain)).team)
+        else _fallback_assignments(info.team, prompt, info.deliverable_member)
     )
     # Loop protection + effort scaling: never exceed the iteration budget or the
     # complexity-scaled cap, whichever is lower. Deps are re-sanitized so nothing
     # references a member the cap removed.
-    limit = min(ctx.max_iterations, max_subtasks, MAX_SUBTASKS)
-    return _sanitize_depends_on(assignments[:limit])
+    #
+    # Which members the cap drops is decided by the planner's ordering, not the
+    # team's. Slicing the team-ordered list kept whichever member the domain
+    # module happens to declare first, and that is the preparatory role in almost
+    # every domain — general's researcher, research's collector, content's
+    # planner, software's architect. A "simple" task caps at one member, so it
+    # reliably returned working notes and never the deliverable the user asked
+    # for. The surviving members are then put back in team order, because that is
+    # what makes the dependency sanitisation below meaningful.
+    #
+    # The cap must also never drop the member whose output *is* the answer. A
+    # planner that simply enumerates its roster in team order — which small
+    # models routinely do — puts the deliverable member last, because that is
+    # where a domain declares it. Truncating by that ordering left seo's
+    # `standard` plan as four specialist reports with no strategist to merge
+    # them: every input to the answer, and no answer. So the deliverable buys
+    # back the least important surviving slot.
+    if len(assignments) > limit:
+        ordered = sorted(assignments, key=lambda a: a.rank)
+        kept = [a.member.id for a in ordered[:limit]]
+        target = info.deliverable_member
+        if (
+            target
+            and target not in kept
+            and any(a.member.id == target for a in ordered)
+        ):
+            kept[-1] = target
+        keep = set(kept)
+        assignments = [a for a in assignments if a.member.id in keep]
+    # Keyed on the plan's actual size, not on the cap: a planner given a budget
+    # of three that briefs only one member has still produced a single-member
+    # plan, and that member's output is still the entire answer. Observed on
+    # legal, which came back as one `researcher` under a standard budget.
+    if len(assignments) == 1:
+        assignments = [_as_deliverable(assignments[0], info)]
+    # After the swap above, never before it. A lone member is better *retargeted*
+    # than joined: the swap hands the deliverable the planner's own task-specific
+    # brief, where appending would give it a generic role-scoped one and spend a
+    # second member to say the same thing.
+    assignments = _ensure_deliverable(assignments, info, prompt, limit)
+    return _sanitize_depends_on(assignments)
+
+
+def _ensure_deliverable(
+    assignments: list[Assignment], info: DomainInfo, prompt: str, limit: int
+) -> list[Assignment]:
+    """Add the answer-producing member when the plan simply left it out.
+
+    Truncation is not the only way to lose it. An `opensource` plan came back as
+    three members — profiler, health, risk — with no `verdict` at all, because
+    the planner never named it. Nothing was over the cap, so the promotion above
+    never fired, and the run produced a report of risks with no adopt/avoid call
+    and no data-coverage ledger: sections 5 and 6 of the domain's own output
+    format, both missing. The one-member rule below could not help either, since
+    three is not one.
+
+    Appending is what the raised cap bought. It goes last with a dependency on
+    everything already planned — which is what a deliverable is. Its brief is
+    role-scoped from the original request, the same construction
+    ``_fallback_assignments`` uses, because the planner wrote no brief for it.
+
+    A plan that fills the budget exactly and still names no deliverable pays for
+    it by dropping its least important member, so the effort cap is never
+    exceeded either way.
+    """
+    target = info.deliverable_member
+    if not target:
+        return assignments
+    if any(assignment.member.id == target for assignment in assignments):
+        return assignments
+    member = next((spec for spec in info.team if spec.id == target), None)
+    if member is None:  # pragma: no cover - guarded by test_domain_catalog
+        return assignments
+    kept = assignments
+    if len(kept) >= limit:
+        weakest = max(kept, key=lambda assignment: assignment.rank)
+        kept = [a for a in kept if a is not weakest]
+    return [
+        *kept,
+        Assignment(
+            member=member,
+            brief=FALLBACK_BRIEF_TEMPLATE.format(
+                open=ORIGINAL_REQUEST_OPEN,
+                request=truncate_text(prompt.strip(), OBJECTIVE_MAX_CHARS),
+                close=ORIGINAL_REQUEST_CLOSE,
+                role=member.role,
+            ),
+            depends_on=tuple(assignment.member.id for assignment in kept),
+            # Ahead of every planned member: the truncation above has already
+            # run, so this only matters if something re-sorts later, and the
+            # deliverable is never the right thing to drop.
+            rank=-1,
+        ),
+    ]
+
+
+def _as_deliverable(assignment: Assignment, info: DomainInfo) -> Assignment:
+    """Point a lone assignment at the member that produces the answer.
+
+    A one-member plan is the whole answer, so it has to come from the member
+    whose output the user can read. The planner kept choosing the research
+    member instead — through three successive prompt rules asking it not to —
+    and the result was a search plan for "how long should a title tag be" and a
+    "Key facts / Assumptions / Open questions" digest for "why do batteries wear
+    out". Both were the right subject matter in the wrong shape.
+
+    The brief is kept as written: it describes the task, and the deliverable
+    member's own instructions are what turn it into prose rather than notes.
+    Domains that leave ``deliverable_member`` empty keep the planner's choice.
+    """
+    target = info.deliverable_member
+    if not target or assignment.member.id == target:
+        return assignment
+    member = next((m for m in info.team if m.id == target), None)
+    if member is None:  # pragma: no cover - guarded by test_domain_catalog
+        return assignment
+    return Assignment(
+        member=member,
+        brief=assignment.brief,
+        depends_on=(),
+        rank=assignment.rank,
+    )
 
 
 async def _run_with_review(
@@ -413,14 +604,31 @@ async def _synthesize(
     subtasks that failed so the answer acknowledges holes instead of papering
     over them (D7).
     """
-    if len(outputs) == 1:
-        # Single-member plans (every "simple" task) skip synthesis entirely, so
-        # SYNTHESIS_MERGE_RULES never runs for them. The uncertainty markers and
-        # inline "Not found:" lines survive regardless — they come from the
-        # subagent, which carries GROUNDING_POLICY of its own. What is missing on
-        # this path is only the collected "## Not found" section at the end.
+    if len(outputs) == 1 and not known_gaps:
+        # A genuinely single-member plan (every "simple" task) needs no merge, and
+        # forcing the domain's output_format onto one member's deliverable makes
+        # the answer worse, not better: that format describes what the whole team
+        # produces, so a lone member would be pushed to emit — and therefore to
+        # invent — sections it never had the data for. The member's own
+        # output_format already shaped this text, and GROUNDING_POLICY already put
+        # the uncertainty markers and inline "Not found:" lines in it.
+        #
+        # ``known_gaps`` is the exception, and it is why this is not a bare
+        # ``len(outputs) == 1``. One surviving output with failed siblings is a
+        # partial failure: skipping synthesis there returned that member's answer
+        # with no mention of what was missing, while the task was reported as
+        # completed_with_warnings. The answer contradicted its own status.
         return outputs[0][1]
-    joined = "\n\n".join(f"### {name}\n{text}" for name, text in outputs)
+    # Capped per member, not in total: the synthesis prompt is the one place the
+    # whole team's work meets, so it grows with team size while the model's
+    # context does not. Ollama truncates an over-length prompt from the *front*,
+    # which drops the system prompt — synthesis would then merge outputs with no
+    # idea what shape the answer should take. Trimming the tail of one long
+    # member's text is the far cheaper loss.
+    joined = "\n\n".join(
+        f"### {name}\n{truncate_text(text, SYNTHESIS_MEMBER_OUTPUT_MAX_CHARS)}"
+        for name, text in outputs
+    )
     system = SYNTHESIS_SYSTEM.format(
         domain=domain,
         output_format=format_optional_block(
