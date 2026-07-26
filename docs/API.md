@@ -138,4 +138,4 @@ Reviewer feedback:
 
 Memory and vectors are partitioned per user; data never crosses accounts.
 
-See [`CLAUDE.md`](../CLAUDE.md) §6 for column-level detail.
+See [`CLAUDE.md`](https://github.com/Yigtwxx/Maestro/blob/main/CLAUDE.md) §6 for column-level detail.
