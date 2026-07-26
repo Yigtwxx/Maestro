@@ -32,8 +32,10 @@ Task: "What is our Discord community complaining about this month?"
 {"assignments": [
  {"member": "themes", "brief": "Cluster the last 30 days of channel messages \
 into recurring pain points and requests", "depends_on": []},
+ {"member": "sentiment", "brief": "Classify the tone behind each cluster and \
+flag churn-risk language", "depends_on": ["themes"]},
  {"member": "severity", "brief": "Score each cluster by frequency, severity \
-and recency with the arithmetic shown", "depends_on": ["themes"]},
+and recency with the arithmetic shown", "depends_on": ["themes", "sentiment"]},
  {"member": "trends", "brief": "Separate new spikes from chronic complaints \
 across the window", "depends_on": ["themes"]},
  {"member": "product", "brief": "Turn the top-scoring clusters into backlog \
@@ -145,11 +147,48 @@ Method:
    be specific enough that they know exactly what to reproduce.
 4. Separate quick fixes from structural work, and say which is which.
 5. Close with what you would watch next window to know whether it worked.
-Quality bar: an engineer could open each item as a ticket unchanged."""
+6. Write the Data coverage section, reconciling it across every member's work:
+   which channels were actually read, over what window, how many messages, and
+   which figures were inferred rather than counted. You are the last member the
+   reader sees, so if you do not account for coverage nobody does — and a run
+   that fell back to web_search must say so here rather than letting inferred
+   counts read as measured ones.
+Quality bar: an engineer could open each item as a ticket unchanged, and the
+reader can tell exactly what the conclusions were built from."""
 
 _PRODUCT_OUTPUT = """\
 - Backlog items: statement, evidence, area, urgency, quick-fix or structural.
-- What to watch next window, per item."""
+- What to watch next window, per item.
+- Data coverage: channels read, window, message counts, and which figures were
+  inferred rather than counted."""
+
+_SENTIMENT_INSTRUCTIONS = """\
+You are a community sentiment analyst.
+Method:
+1. Classify the tone of the messages behind each cluster — frustrated,
+   confused, disappointed, enthusiastic — and give the split with counts, not
+   an overall mood word.
+2. Judge sentiment and emotion directly in your reasoning; no external tool is
+   needed for it.
+3. Separate intensity from volume. Five furious messages about billing and
+   fifty mild ones about a colour are different signals, and ranking by volume
+   alone hides the first.
+4. Track how tone moves across the window: a complaint souring from confused
+   to angry is an escalation the raw count does not show.
+5. Name the churn-risk language explicitly — people announcing they are
+   leaving, comparing you to an alternative, or asking how to export their
+   data.
+6. Quote the messages that carry each tone. A sentiment label with no verbatim
+   behind it is an assertion.
+Quality bar: the prioritisation analyst can tell which cluster is merely
+frequent and which one is actually costing users."""
+
+_SENTIMENT_OUTPUT = """\
+- Tone split per cluster: label, count, share of that cluster.
+- Intensity vs volume: which clusters are hot but small.
+- Tone movement across the window, per cluster.
+- Churn-risk signals, with verbatim quotes.
+- Sample: how many messages were classified."""
 
 DOMAIN: DomainInfo = DomainInfo(
     id="community",
@@ -177,6 +216,23 @@ DOMAIN: DomainInfo = DomainInfo(
             ),
             instructions=_THEMES_INSTRUCTIONS,
             output_format=_THEMES_OUTPUT,
+        ),
+        # Ahead of `severity`, not appended: dependencies may only point at
+        # earlier members (``_sanitize_depends_on`` drops forward references),
+        # and tone is an input to the priority score — a small furious cluster
+        # outranks a large indifferent one only if the scorer can see that.
+        SubagentSpec(
+            id="sentiment",
+            name="Sentiment Analyst",
+            description=(
+                "Reads the tone behind each cluster and flags churn-risk language."
+            ),
+            role=(
+                "classify the tone behind each cluster with counts, separate "
+                "intensity from volume, and flag churn-risk language"
+            ),
+            instructions=_SENTIMENT_INSTRUCTIONS,
+            output_format=_SENTIMENT_OUTPUT,
         ),
         SubagentSpec(
             id="severity",
@@ -230,4 +286,5 @@ DOMAIN: DomainInfo = DomainInfo(
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
     review_criteria=_REVIEW_CRITERIA,
+    deliverable_member="product",
 )
