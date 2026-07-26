@@ -131,11 +131,15 @@ class OneMemberCrashesAdapter(ConcurrencyTrackingAdapter):
         )
 
 
+# `analyst` is finance's deliverable member. Both plans below name it, so these
+# tests measure crash isolation and result ordering rather than tripping the
+# guarantee that a plan without an answer-producing member gains one.
 async def test_sibling_crash_becomes_error_result_not_task_failure():
     adapter = OneMemberCrashesAdapter(
         [
             {"member": "market_data", "brief": "b1", "depends_on": []},
             {"member": "news", "brief": "b2", "depends_on": []},
+            {"member": "analyst", "brief": "b3", "depends_on": ["market_data", "news"]},
         ]
     )
     ctx = AgentContext(adapter=adapter)
@@ -146,7 +150,8 @@ async def test_sibling_crash_becomes_error_result_not_task_failure():
     assert statuses == [
         SubagentStatus.ERROR.value,
         SubagentStatus.SUCCESS.value,
-    ], f"Expected one error + one success, got {statuses}"
+        SubagentStatus.SUCCESS.value,
+    ], f"Expected one error + two successes, got {statuses}"
 
 
 async def test_results_keep_assignment_order_despite_parallelism():
@@ -154,6 +159,7 @@ async def test_results_keep_assignment_order_despite_parallelism():
         [
             {"member": "market_data", "brief": "b1", "depends_on": []},
             {"member": "news", "brief": "b2", "depends_on": []},
+            {"member": "analyst", "brief": "b3", "depends_on": ["market_data", "news"]},
         ]
     )
     ctx = AgentContext(adapter=adapter)
@@ -161,4 +167,6 @@ async def test_results_keep_assignment_order_despite_parallelism():
         ctx, domain="finance", prompt="task", reviewer_enabled=False
     )
     members = [s["data"]["member"] for s in result["subtasks"]]
-    assert members == ["market_data", "news"], f"Order must be deterministic: {members}"
+    assert members == ["market_data", "news", "analyst"], (
+        f"Order must be deterministic: {members}"
+    )

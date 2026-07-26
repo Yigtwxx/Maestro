@@ -106,10 +106,10 @@ endpoint validates its input against a strict schema before any handler sees it.
 
 ## Staying local
 
-You do not have to give us any provider key at all. ${brand} ships with a free
-local tier: an open-weights model served on the machine that runs the platform,
-with a local embedding model for retrieval. On that tier, no prompt of yours ever
-leaves the infrastructure you are running.
+You do not have to give us any provider key at all. ${brand} ships with a local
+model: an open-weights model served on the machine that runs the platform, with a
+local embedding model for retrieval. With it, no prompt of yours ever leaves the
+infrastructure you are running.
 
 ## What we do not claim
 

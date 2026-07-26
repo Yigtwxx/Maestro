@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/Card';
 import { buttonVariants } from '@/components/ui/Button';
 import { MarketingPage, PageHeader } from '@/components/landing/MarketingSection';
 import { domainColor } from '@/lib/agent-colors';
-import { AGENT_LOCALE_TR } from '@/lib/agent-locale';
+import { AGENT_LOCALE } from '@/lib/agent-locale';
 import { USE_CASES } from '@/lib/marketing-content';
 import { cn } from '@/lib/cn';
 import { buildPageMetadata } from '@/lib/seo/metadata';
@@ -31,7 +31,7 @@ export default function UseCasesPage() {
       <div className="mt-16 grid gap-4 sm:grid-cols-2">
         {USE_CASES.map((useCase, i) => {
           const dc = domainColor(useCase.domain);
-          const expert = AGENT_LOCALE_TR[useCase.domain];
+          const expert = AGENT_LOCALE[useCase.domain];
           return (
             <Reveal key={useCase.domain} delay={(i % 2) * 0.05}>
               <Card domain={useCase.domain} className="flex h-full flex-col p-5">

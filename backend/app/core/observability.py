@@ -3,7 +3,8 @@
 Both are opt-in and degrade to no-ops so local development and the test suite
 need no extra services:
 
-* ``configure_logging`` picks a plain or JSON formatter from ``LOG_FORMAT``.
+* ``configure_logging`` picks a colourised console or JSON formatter from
+  ``LOG_FORMAT``.
 * ``init_sentry`` is a no-op unless ``SENTRY_DSN`` is set; when it is, it wires
   the FastAPI and logging integrations and scrubs PII before events leave the
   process (CLAUDE.md §9.1/§15 — API keys, prompts and card data never leave).
@@ -13,7 +14,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+import os
+import sys
+from typing import IO, Any
 
 from app.core.config import settings
 
@@ -56,6 +59,115 @@ _RESERVED_LOG_ATTRS = frozenset(
 )
 
 
+# ANSI SGR codes. Kept as literals rather than pulling in a colour library: the
+# console formatter is a development convenience and must not add a dependency.
+_RESET = "\033[0m"
+_DIM = "\033[2m"
+_GREEN = "\033[32m"
+_CYAN = "\033[36m"
+_YELLOW = "\033[33m"
+_RED = "\033[31m"
+_BOLD_RED = "\033[1;31m"
+
+_LEVEL_STYLES = {
+    logging.DEBUG: _DIM,
+    logging.INFO: "",  # No colour: healthy noise should not compete with status codes.
+    logging.WARNING: _YELLOW,
+    logging.ERROR: _RED,
+    logging.CRITICAL: _BOLD_RED,
+}
+
+
+def _status_style(status: int) -> str:
+    """Colour for an HTTP status: green 2xx, cyan 3xx, yellow 4xx, red 5xx."""
+    if status < 300:
+        return _GREEN
+    if status < 400:
+        return _CYAN
+    if status < 500:
+        return _YELLOW
+    return _BOLD_RED
+
+
+def _enable_windows_ansi() -> None:
+    """Turn on virtual-terminal processing so ANSI codes render on Windows.
+
+    Legacy ``conhost`` prints the escape sequences literally otherwise. Best
+    effort: colour is cosmetic, so any failure here must never break logging.
+    """
+    try:  # pragma: no cover - platform specific
+        from colorama import just_fix_windows_console
+
+        just_fix_windows_console()
+    except Exception:  # pragma: no cover - colorama is a win32-only click dep
+        pass
+
+
+def supports_color(stream: IO[str]) -> bool:
+    """Whether ANSI colour should be written to ``stream``.
+
+    Honours the ``NO_COLOR`` / ``FORCE_COLOR`` conventions so piping logs into a
+    file or an aggregator yields clean text.
+    """
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("FORCE_COLOR"):
+        return True
+    try:
+        if not stream.isatty():
+            return False
+    except (AttributeError, ValueError):  # detached or closed stream
+        return False
+    if sys.platform == "win32":
+        _enable_windows_ansi()
+    return True
+
+
+class ConsoleLogFormatter(logging.Formatter):
+    """Human-readable, colour-coded console output for local development.
+
+    Access records — the ones ``main._log_access`` tags with ``status`` — are
+    rendered as ``GET /api/v1/tasks 200 12.4ms`` with the status colour-coded,
+    so a healthy run is legible at a glance instead of a wall of
+    ``INFO:maestro.access:request``. Every other record keeps its logger name
+    and message.
+    """
+
+    def __init__(self, *, color: bool) -> None:
+        super().__init__(datefmt="%H:%M:%S")
+        self._color = color
+
+    def _paint(self, text: str, style: str) -> str:
+        if not self._color or not style:
+            return text
+        return f"{style}{text}{_RESET}"
+
+    def format(self, record: logging.LogRecord) -> str:
+        stamp = self._paint(self.formatTime(record, self.datefmt), _DIM)
+        level_style = _LEVEL_STYLES.get(record.levelno, "")
+        level = self._paint(f"{record.levelname:<8}", level_style)
+        line = f"{stamp} {level}{self._render_message(record)}"
+        if record.exc_info:
+            line = f"{line}\n{self.formatException(record.exc_info)}"
+        if record.stack_info:
+            line = f"{line}\n{self.formatStack(record.stack_info)}"
+        return line
+
+    def _render_message(self, record: logging.LogRecord) -> str:
+        status = getattr(record, "status", None)
+        if not isinstance(status, int):
+            return f"{self._paint(record.name, _DIM)}  {record.getMessage()}"
+        parts = [
+            str(getattr(record, "method", "")),
+            str(getattr(record, "path", "")),
+            self._paint(str(status), _status_style(status)),
+        ]
+        duration = getattr(record, "duration_ms", None)
+        if duration is not None:
+            parts.append(self._paint(f"{duration}ms", _DIM))
+        return " ".join(part for part in parts if part)
+
+
 class JsonLogFormatter(logging.Formatter):
     """Render each log record as a single-line JSON object.
 
@@ -80,22 +192,44 @@ class JsonLogFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, default=str)
 
 
+def _route_uvicorn_logs() -> None:
+    """Fold uvicorn's own loggers into the root handler.
+
+    Uvicorn installs its handlers with ``propagate=False``, so without this its
+    lines keep a second format — plain text even under ``LOG_FORMAT=json``.
+    ``uvicorn.access`` is silenced outright rather than reformatted: the
+    ``maestro.access`` middleware line reports the same request plus a request
+    id and a duration, so keeping both would double every request.
+    """
+    for name in ("uvicorn", "uvicorn.error"):
+        uvicorn_logger = logging.getLogger(name)
+        uvicorn_logger.handlers.clear()
+        uvicorn_logger.propagate = True
+    # No handlers and no propagation: records are dropped before any output.
+    access = logging.getLogger("uvicorn.access")
+    access.handlers.clear()
+    access.propagate = False
+
+
 def configure_logging() -> None:
     """Install the root logging handler for the configured ``LOG_FORMAT``.
 
-    ``json`` swaps in :class:`JsonLogFormatter`; anything else keeps the plain
-    ``basicConfig`` text format used during local development.
+    ``json`` swaps in :class:`JsonLogFormatter`; anything else installs
+    :class:`ConsoleLogFormatter`, which colour-codes HTTP status codes for local
+    development. Either way uvicorn's loggers are folded into the same handler
+    so the terminal carries one consistent stream.
     """
     level = settings.log_level.upper()
+    handler = logging.StreamHandler()
     if settings.log_format.lower() == "json":
-        handler = logging.StreamHandler()
         handler.setFormatter(JsonLogFormatter())
-        root = logging.getLogger()
-        root.handlers.clear()
-        root.addHandler(handler)
-        root.setLevel(level)
     else:
-        logging.basicConfig(level=level)
+        handler.setFormatter(ConsoleLogFormatter(color=supports_color(handler.stream)))
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(level)
+    _route_uvicorn_logs()
 
 
 def _scrub_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any]:

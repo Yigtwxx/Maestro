@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef } from 'react';
 import type { CSSProperties } from 'react';
 import { cn } from '@/lib/cn';
 import { formatTime, useTimeZone } from '@/lib/date';
+import { describeSubagentActivity } from '@/lib/agent-locale';
 import type { AgentEvent } from '@/types';
 
 /** Distance from the bottom (px) within which the log still counts as "at bottom". */
@@ -11,14 +12,30 @@ function describe(event: AgentEvent): string {
   switch (event.type) {
     case 'task_started':
       return 'Task started';
-    case 'node_update':
-      return `${event.role ?? 'agent'}${
+    case 'node_update': {
+      const who = `${event.role ?? 'agent'}${
         event.index !== undefined ? ` #${event.index}` : ''
-      } → ${event.state ?? ''}${event.domain ? ` (domain: ${event.domain})` : ''}`;
+      }`;
+      // A failed node names its cause; every other transition is just a state.
+      const detail = event.error
+        ? `: ${event.error}`
+        : event.domain
+          ? ` (domain: ${event.domain})`
+          : '';
+      return `${who} → ${event.state ?? ''}${detail}`;
+    }
+    case 'agent_warning':
+      return event.message ?? 'Degraded';
     case 'agent_message':
-      return event.subtasks
-        ? `Subtasks: ${event.subtasks.join(', ')}`
-        : 'Agent message';
+      if (event.subtasks) return `Subtasks: ${event.subtasks.join(', ')}`;
+      // Connected-API calls are named rather than collapsed to "Agent message",
+      // so the log agrees with the rail on the canvas. The keyless tools keep
+      // the old generic line — they have no lane and no provider.
+      if (event.provider) {
+        const label = describeSubagentActivity(event);
+        return event.done ? `${label} — done` : label;
+      }
+      return 'Agent message';
     case 'review_result':
       return `Review: ${event.approved ? 'approved' : 'rejected'}`;
     case 'agent_question':
@@ -47,7 +64,10 @@ function eventColor(event: AgentEvent): string {
       return 'text-warning';
     case 'task_failed':
       return 'text-danger';
+    case 'agent_warning':
+      return 'text-warning';
     case 'node_update':
+      return event.state === 'error' ? 'text-danger' : 'text-accent';
     case 'agent_question':
       return 'text-accent';
     case 'review_result':
@@ -67,9 +87,12 @@ function eventRgb(event: AgentEvent): string {
       return '255 122 69';
     case 'task_failed':
       return '255 77 109';
+    case 'agent_warning':
+      return '255 122 69';
     case 'review_result':
       return event.approved ? '211 203 192' : '255 77 109';
     case 'node_update':
+      return event.state === 'error' ? '255 77 109' : '34 211 238';
     case 'agent_question':
       return '34 211 238';
     default:
@@ -88,6 +111,10 @@ function eventGlyph(event: AgentEvent): string {
       return '⊘';
     case 'task_failed':
       return '✕';
+    case 'agent_warning':
+      return '⚠';
+    case 'node_update':
+      return event.state === 'error' ? '✕' : '›';
     case 'review_result':
       return event.approved ? '✓' : '✕';
     case 'agent_question':

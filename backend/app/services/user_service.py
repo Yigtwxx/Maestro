@@ -136,6 +136,7 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
             "avatar_emoji": user.avatar_emoji,
             "timezone": user.timezone,
             "default_reviewer_enabled": user.default_reviewer_enabled,
+            "default_tracing_enabled": user.default_tracing_enabled,
             # Status only. The TOTP secret and recovery-code hashes are never
             # exported (they are credentials, not personal data to hand back).
             "two_factor_enabled": user.totp_enabled,

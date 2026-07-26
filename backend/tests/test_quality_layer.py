@@ -12,6 +12,11 @@ from datetime import UTC, datetime, timedelta
 
 from app.agents import main_agent, orchestrator, validators
 from app.agents.base import AgentContext, SubagentResult
+from app.agents.prompts import (
+    GROUNDING_POLICY,
+    SUBAGENT_SYSTEM,
+    SUBAGENT_TOOLS_RULE,
+)
 from app.agents.registry import get_domain_info
 from app.agents.schemas import RouteDecision
 from app.core.constants import (
@@ -82,6 +87,35 @@ def test_json_validator_flags_data_without_json() -> None:
     prose = "A long data description that contains no JSON object at all here."
     hints = validators.validate("data", None, prose)
     assert any("JSON" in h for h in hints), hints
+
+
+def test_uncertainty_validator_passes_balanced_markers() -> None:
+    output = "The project was archived [? in late 2023 ?] and is unmaintained now."
+    assert validators.validate("general", None, output) == []
+
+
+def test_uncertainty_validator_flags_unclosed_marker() -> None:
+    output = "The project was archived [? in late 2023 and is unmaintained now."
+    hints = validators.validate("general", None, output)
+    assert any("never closed" in h for h in hints), hints
+
+
+def test_uncertainty_validator_ignores_code_spans() -> None:
+    """``[?`` is a regex character class; a software deliverable may contain it."""
+    fenced = (
+        "Strip the optional marker with this pattern:\n"
+        "```python\n"
+        'PATTERN = re.compile(r"[?!]+")\n'
+        "```\n"
+        "It matches a run of `[?]` punctuation."
+    )
+    assert validators.validate("software", None, fenced) == []
+
+
+def test_uncertainty_validator_ignores_a_stray_close() -> None:
+    """Only open-without-close fires; a lone ``?]`` is harmless punctuation."""
+    output = "The maintainer asked what the plan was ?] and never got an answer."
+    assert validators.validate("general", None, output) == []
 
 
 async def test_reviewer_short_circuits_without_llm_on_validator_failure() -> None:
@@ -314,3 +348,77 @@ async def test_resolve_budget_is_zero_when_quota_exhausted(db_session) -> None:
     user = await _make_user(db_session, used=plan_quota + 1)
     budget = await quota_service.resolve_task_token_budget(user.id)
     assert budget == 0, "an over-quota user gets a zero budget (subagents skipped)"
+
+
+def test_tools_rule_requires_retrieval_before_asserting_a_current_fact():
+    """Availability is not enough; the model has to be told to reach for a tool.
+
+    The rule used to say only "You can use tools." Across four end-to-end runs
+    after the Ollama endpoint switch, subagents issued zero tool calls — the
+    finance squad included, in a domain declaring web_search and data_fetch, on a
+    prompt that asked for real data. The answer invented Bitcoin prices and then
+    attributed them to an API it never called. Adding the obligation below took
+    tool use from 0/4 runs to 3/3 with no other change.
+    """
+    rule = SUBAGENT_TOOLS_RULE.format(tool_lines="- x", max_tool_calls=6)
+
+    assert "Use them before you answer" in rule, rule
+    # The specific trigger matters more than the general exhortation: these are
+    # the answer elements a local model will otherwise supply from memory.
+    for trigger in ("price", "count", "date", "version"):
+        assert trigger in rule, f"{trigger} missing from the retrieval rule: {rule}"
+
+
+def test_grounding_policy_forbids_inventing_a_source_trail():
+    """An invented provenance is worse than an openly unsourced answer.
+
+    Observed: a run with no tool calls wrote "retrieved from the CoinGecko API"
+    and noted the API had been rate-limited. Both were fiction, and both made the
+    figures look checked.
+    """
+    assert "Never describe work you did not do" in GROUNDING_POLICY
+    assert "invents an audit trail" in GROUNDING_POLICY
+
+
+def test_finance_hard_fails_on_invented_figures_and_sources():
+    """Finance is where an invented number costs the most.
+
+    The string rubric already asked for sourcing and did not stop it, because
+    without structured criteria the verdict is one boolean a fluent answer earns
+    easily.
+    """
+    criteria = {c.id: c for c in get_domain_info("finance").review_criteria}
+
+    assert "no_invented_provenance" in criteria, criteria
+    assert "figures_sourced_or_withheld" in criteria, criteria
+    for criterion_id in ("no_invented_provenance", "figures_sourced_or_withheld"):
+        assert criteria[criterion_id].hard_fail, (
+            f"{criterion_id} must reject on its own, not be outvoted by weight"
+        )
+
+
+def test_subagent_prompt_forbids_deliberating_in_the_answer():
+    """With thinking off, a reasoning model deliberates in the deliverable.
+
+    Observed on a live lookup: the answer argued with itself line by line
+    ("No, that is incorrect", "Wait, let's re-verify via search results"), and
+    closed by announcing a search it never performed. The conclusion may have
+    been reachable, but the text was unusable — and a sentence saying it will
+    check something is strictly worse than the tool call it replaces.
+    """
+    system = SUBAGENT_SYSTEM.format(
+        name="X",
+        domain="general",
+        role="r",
+        instructions="",
+        output_format="",
+        objective="",
+        upstream="",
+        review_hints="",
+        memory_context="",
+    )
+    assert "Your reply is the deliverable, not a workspace" in system, system
+    assert "no thinking aloud" in system, system
+
+    rule = SUBAGENT_TOOLS_RULE.format(tool_lines="- x", max_tool_calls=6)
+    assert "a sentence announcing a" in rule and "search" in rule, rule

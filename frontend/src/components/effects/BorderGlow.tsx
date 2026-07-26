@@ -5,6 +5,10 @@
 // arc that follows the cursor along the card edge. The original's mesh
 // gradients and wrapper card are dropped so this renders as a pure overlay
 // inside the existing Card; the hue comes from the module/domain rgb triplet.
+//
+// The layer is a `span`, not a `div`, so it is also valid inside the
+// `<button>`-based cards (agent catalog). Absolute positioning blockifies it,
+// so the rendered result is identical either way.
 
 import { useEffect, useRef } from 'react';
 import { useReducedMotion } from '@/lib/motion';
@@ -14,7 +18,19 @@ interface BorderGlowProps {
   rgb: string;
   /** Edge proximity (0-1) where the glow starts appearing. */
   sensitivity?: number;
+  /**
+   * Scales the arc's line weight, its angular width and the bloom around it.
+   * `1` is the restrained default used by content cards; raise it where the
+   * card is the primary thing being chosen and the glow has to read clearly.
+   */
+  intensity?: number;
 }
+
+/** Line weight, arc width and bloom radius at `intensity = 1`. */
+const BASE_THICKNESS_PX = 1;
+const BASE_ARC_DEG = 60;
+const BASE_BLOOM_PX = 8;
+const BASE_BLOOM_ALPHA = 0.6;
 
 /**
  * Cursor-proximity border glow. Mount inside a `relative` parent with a
@@ -22,8 +38,12 @@ interface BorderGlowProps {
  * intercepts events and the host component stays server-safe. Writes CSS
  * vars directly (no re-renders per pointer move).
  */
-export function BorderGlow({ rgb, sensitivity = 0.35 }: BorderGlowProps) {
-  const ref = useRef<HTMLDivElement>(null);
+export function BorderGlow({
+  rgb,
+  sensitivity = 0.35,
+  intensity = 1,
+}: BorderGlowProps) {
+  const ref = useRef<HTMLSpanElement>(null);
   const reduced = useReducedMotion();
 
   useEffect(() => {
@@ -56,21 +76,28 @@ export function BorderGlow({ rgb, sensitivity = 0.35 }: BorderGlowProps) {
   }, [reduced, sensitivity]);
 
   if (reduced) return null;
+  // Arc width is capped so a high intensity cannot wrap it into a solid ring.
+  const arc = Math.min(BASE_ARC_DEG * intensity, 150);
+  const bloomAlpha = Math.min(BASE_BLOOM_ALPHA * intensity, 1);
+  // `--bg-angle` is measured from east (atan2) while a conic gradient starts at
+  // north, and the gradient peaks `arc` degrees after its start — so the start
+  // offset that lands the peak on the cursor is `90 - arc`.
+  const startOffset = 90 - arc;
   return (
-    <div
+    <span
       ref={ref}
       aria-hidden
       className="pointer-events-none absolute -inset-px rounded-[inherit]"
       style={{
         ['--bg-angle' as string]: '45deg',
         ['--bg-opacity' as string]: '0',
-        padding: '1px',
-        background: `conic-gradient(from calc(var(--bg-angle) + 30deg), transparent 0deg, rgb(${rgb}) 60deg, transparent 120deg 360deg)`,
+        padding: `${BASE_THICKNESS_PX * intensity}px`,
+        background: `conic-gradient(from calc(var(--bg-angle) + ${startOffset}deg), transparent 0deg, rgb(${rgb}) ${arc}deg, transparent ${arc * 2}deg 360deg)`,
         WebkitMask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
         WebkitMaskComposite: 'xor',
         mask: 'linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0)',
         maskComposite: 'exclude',
-        filter: `drop-shadow(0 0 8px rgb(${rgb} / 0.6))`,
+        filter: `drop-shadow(0 0 ${BASE_BLOOM_PX * intensity}px rgb(${rgb} / ${bloomAlpha}))`,
         opacity: 'var(--bg-opacity)',
         transition: 'opacity 0.3s ease-out',
       }}

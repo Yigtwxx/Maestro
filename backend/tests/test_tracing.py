@@ -139,6 +139,33 @@ async def test_spans_nest_and_flush(tracing_on) -> None:
     assert by_name["step:route"]["user_id"] == "u1"
 
 
+async def test_span_override_records_while_server_setting_is_off(
+    monkeypatch,
+) -> None:
+    """A task that opted in traces even though TRACING_ENABLED is false."""
+    monkeypatch.setattr(settings, "tracing_enabled", False)
+    fake = _FakeSpans()
+    monkeypatch.setattr(tracing, "tracer", tracing.Tracer())
+    monkeypatch.setattr(tracing, "_spans_collection", lambda: fake)
+
+    tracing.tracer.set_enabled(True)
+    async with tracing.tracer.span("task", SpanKind.TASK, trace_id="t-on"):
+        pass
+    await tracing.force_flush()
+    assert len(fake.docs) == 1, f"Expected 1 span, got {fake.docs}"
+
+
+async def test_span_override_suppresses_while_server_setting_is_on(
+    tracing_on,
+) -> None:
+    """A task that opted out records nothing, server-wide setting notwithstanding."""
+    tracing.tracer.set_enabled(False)
+    async with tracing.tracer.span("task", SpanKind.TASK, trace_id="t-off"):
+        pass
+    await tracing.force_flush()
+    assert tracing_on.docs == [], f"Expected no spans, got {tracing_on.docs}"
+
+
 async def test_span_records_error_status(tracing_on) -> None:
     with pytest.raises(RuntimeError):
         async with tracing.tracer.span("task", SpanKind.TASK, trace_id="t"):

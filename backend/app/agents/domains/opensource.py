@@ -25,8 +25,14 @@ _OUTPUT_FORMAT = """\
 1. Project summary (what it is, license, maturity)
 2. Health metrics (cadence, contributors, backlog, releases)
 3. Risks (maintenance, security, licensing)
-4. Verdict: adopt / watch / avoid, with the decisive metric
-5. Data coverage (which sources were live, which figures are inferred)"""
+4. Alternatives and switching cost — only from the alternatives member's
+   measured findings. If no alternatives research was carried out, this
+   section reads exactly "Not researched for this question" and nothing
+   more. Naming replacement libraries from background knowledge is the
+   defect this line exists to prevent: an adoption call is precisely where
+   a remembered recommendation gets acted on.
+5. Verdict: adopt / watch / avoid, with the decisive metric
+6. Data coverage (which sources were live, which figures are inferred)"""
 
 _PLANNING_EXAMPLE = """\
 Task: "Should we depend on psf/requests?"
@@ -37,8 +43,10 @@ release history", "depends_on": []},
 concentration and issue close times for psf/requests", "depends_on": []},
  {"member": "risk", "brief": "Assess maintenance, security and license risk \
 from the profile and health findings", "depends_on": ["profiler", "health"]},
+ {"member": "alternatives", "brief": "Find and measure the credible \
+alternatives to psf/requests and the cost of switching", "depends_on": []},
  {"member": "verdict", "brief": "Give an adopt/watch/avoid call with the \
-decisive metric", "depends_on": ["risk"]}]}"""
+decisive metric", "depends_on": ["risk", "alternatives"]}]}"""
 
 _REVIEW_RUBRIC = """\
 - Every health or risk claim must cite the metric behind it, with its number.
@@ -47,7 +55,10 @@ _REVIEW_RUBRIC = """\
 - A Data coverage section is mandatory: which figures were measured live and
   which were inferred. Presenting an inferred number as measured is a defect.
 - Security findings must distinguish "no advisories published" from "no
-  vulnerabilities"."""
+  vulnerabilities".
+- Named alternatives must come from measured findings. A replacement library
+  suggested from background knowledge, with no license or activity figure
+  behind it, is a defect — the section must say it was not researched."""
 
 _REVIEW_CRITERIA: tuple[ReviewCriterion, ...] = (
     ReviewCriterion(
@@ -73,6 +84,13 @@ _REVIEW_CRITERIA: tuple[ReviewCriterion, ...] = (
         id="no_popularity_proxy",
         description="Stars and forks are not used as evidence of maintenance "
         "or quality.",
+        weight=1,
+    ),
+    ReviewCriterion(
+        id="alternatives_measured_or_declared",
+        description="Named alternatives carry a measured figure (license, last "
+        "release, activity). If no alternatives research was carried out, the "
+        "section says so instead of naming libraries from background knowledge.",
         weight=1,
     ),
 )
@@ -159,6 +177,32 @@ _RISK_OUTPUT = """\
 - License: compatibility verdict and any blocker.
 - Abandonment scenario and its cost."""
 
+_ALTERNATIVES_INSTRUCTIONS = """\
+You are a dependency alternatives researcher.
+Method:
+1. Find what teams actually use instead of this project. Search for the
+   project name alongside its problem domain; do not assemble a competitor
+   list from memory, and never invent a repository slug — get the real
+   owner/name from the project's own page before calling repo_intel.
+2. Profile the two or three serious contenders with repo_intel: license,
+   last release, commit cadence. One live metric each beats five names with
+   no evidence behind them.
+3. Compare on what would actually decide the choice — maintenance, license,
+   API surface, migration cost — not on stars.
+4. Include the "do nothing" option honestly: staying on the current
+   dependency, or writing the small part of it you actually use.
+5. If the project has no real alternative, say so and name what a team would
+   have to build. That is a finding, and it changes the verdict.
+Quality bar: a reader can see what they would switch to, what it would cost,
+and on which metric the alternative is genuinely better."""
+
+_ALTERNATIVES_OUTPUT = """\
+- Candidates: name, repo, license, last release, activity signal.
+- Comparison against the subject project on the deciding metrics.
+- Migration cost: API differences and the work a switch implies.
+- Recommendation: the strongest alternative, or "none credible" with reasons.
+- Which figures were measured live and which were not."""
+
 _VERDICT_INSTRUCTIONS = """\
 You are the adoption decision maker.
 Method:
@@ -168,13 +212,26 @@ Method:
 3. List the conditions under which you would revisit, with thresholds.
 4. If the evidence is thin because tools were unavailable, say so and lower
    your stated confidence rather than hedging the verdict itself.
-Quality bar: a reader can act on this today and knows exactly what to watch."""
+5. Where the analysed repository is not the slug that was asked about — GitHub
+   resolved a rename or a search — repeat that here. Silently judging a
+   different project than the one asked about is worse than failing.
+6. Write the Data coverage section, reconciled across every member's work:
+   which figures came back from repo_intel live, which were inferred from
+   web_search, and which could not be established at all. A confidence
+   statement is not a substitute — that is your judgement, this is the ledger
+   it rests on. You are the last member the reader sees, so if you do not
+   account for coverage nobody does.
+Quality bar: a reader can act on this today, knows exactly what to watch, and
+can tell which number was measured and which was estimated."""
 
 _VERDICT_OUTPUT = """\
 - Verdict: adopt / watch / avoid.
 - Decisive metric and its current value.
 - Revisit conditions with thresholds.
-- Confidence, and what would raise it."""
+- Confidence, and what would raise it.
+- Data coverage: which figures were measured live via repo_intel, which were
+  inferred, and which could not be established. Name the repository actually
+  analysed if it differs from the one requested."""
 
 DOMAIN: DomainInfo = DomainInfo(
     id="opensource",
@@ -240,6 +297,24 @@ DOMAIN: DomainInfo = DomainInfo(
             instructions=_RISK_INSTRUCTIONS,
             output_format=_RISK_OUTPUT,
         ),
+        # Ahead of `verdict`, not appended: dependencies may only point at
+        # earlier members (``_sanitize_depends_on`` drops forward references),
+        # and an adopt/avoid call that has not seen the alternatives is the
+        # thing this member exists to prevent.
+        SubagentSpec(
+            id="alternatives",
+            name="Alternatives Researcher",
+            description=(
+                "Finds and measures what a team would use instead, and what "
+                "switching would cost."
+            ),
+            role=(
+                "find the credible alternatives to the project, measure them "
+                "with repo_intel, and state the migration cost"
+            ),
+            instructions=_ALTERNATIVES_INSTRUCTIONS,
+            output_format=_ALTERNATIVES_OUTPUT,
+        ),
         SubagentSpec(
             id="verdict",
             name="Adoption Verdict",
@@ -259,14 +334,24 @@ DOMAIN: DomainInfo = DomainInfo(
     ),
     # Contrastive on purpose: routing_hint is the orchestrator's only signal,
     # and "repository" alone would pull tasks away from the software domain.
+    #
+    # The second NOT is the newer one. "Is this repo still active?" reads like a
+    # fact to look up, and it was being routed to searching — which answered with
+    # a search plan and never touched repo_intel, the one connected tool that
+    # works with no key at all. Whether a project is alive is a judgement built
+    # from commit cadence, maintainer count and issue latency; it is this team's
+    # entire job, not a lookup.
     routing_hint=(
         "evaluating an existing third-party library, dependency or open-source "
         "project — maintenance health, bus factor, license risk, whether to "
-        "adopt it; NOT writing, debugging or designing code yourself"
+        "adopt it, whether it is still active or maintained; NOT writing, "
+        "debugging or designing code yourself, and NOT a plain web lookup even "
+        "when the question sounds like one"
     ),
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
     review_criteria=_REVIEW_CRITERIA,
+    deliverable_member="verdict",
 )

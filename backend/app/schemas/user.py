@@ -40,6 +40,7 @@ class UserUpdate(BaseModel):
     avatar_emoji: str | None = Field(default=None, max_length=AVATAR_EMOJI_MAX_LEN)
     timezone: str | None = Field(default=None, max_length=64)
     default_reviewer_enabled: bool | None = None
+    default_tracing_enabled: bool | None = None
     model_preferences: dict[str, str] | None = None
 
     @field_validator("default_provider")

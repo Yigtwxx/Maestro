@@ -9,6 +9,7 @@ import pytest
 
 from app.agents import subagent
 from app.agents.base import AgentContext
+from app.agents.prompts import SUBAGENT_NO_RETRIEVAL_NUDGE
 from app.agents.registry import get_domain_info
 from app.core.constants import (
     WEB_SEARCH_RESULTS_OPEN,
@@ -18,7 +19,7 @@ from app.core.constants import (
 )
 from app.services import web_search_service
 from app.services.llm_service import ChatMessage, LLMAdapter, LLMResponse
-from app.services.web_search_service import SearchResult
+from app.services.web_search_service import SearchOutcome, SearchResult
 
 SEARCH_DOMAIN = "searching"  # declares the web_search tool
 NO_SEARCH_DOMAIN = "software"  # does not declare web_search
@@ -58,14 +59,18 @@ def search_calls(monkeypatch) -> list[tuple[str, str]]:
 
     async def fake_search(query: str, *, category: str = "text"):
         calls.append((query, category))
-        return [
-            SearchResult(
-                title="Anthropic ships new model",
-                url="https://news.example/a",
-                snippet="Fresh news snippet.",
-                date="2026-07-01",
-            )
-        ]
+        return SearchOutcome(
+            results=[
+                SearchResult(
+                    title="Anthropic ships new model",
+                    url="https://news.example/a",
+                    snippet="Fresh news snippet.",
+                    date="2026-07-01",
+                )
+            ],
+            query=query,
+            attempted=[query],
+        )
 
     monkeypatch.setattr(web_search_service, "search", fake_search)
     return calls
@@ -108,14 +113,42 @@ async def test_subagent_directive_triggers_search_and_returns_final_answer(
     assert [p["query"] for p in search_events] == ["latest claude news"] * 2, events
 
 
-async def test_subagent_plain_answer_skips_search(search_calls):
+async def test_subagent_plain_answer_is_nudged_once_but_never_forced_to_search(
+    search_calls,
+):
+    """A member holding search and never using it gets one question, not a search.
+
+    Four escalating system-prompt rules failed to make a local model retrieve
+    before asserting a fact, and it kept describing sources it had never opened.
+    The nudge is a user-role turn asking it to either retrieve or stand behind
+    the answer unchanged — deliberately not a forced search, because for a
+    general-knowledge question not searching is the right call.
+
+    So: exactly one extra call, no search executed when the model declines, and
+    the original answer preserved.
+    """
     adapter = ScriptedAdapter(["Just a direct answer."])
     result = await _run(_ctx(adapter, []), domain=SEARCH_DOMAIN)
 
     assert result.data["output"] == "Just a direct answer."
     assert result.metadata["searches_used"] == 0, result.metadata
-    assert len(adapter.calls) == 1, f"Expected 1 LLM call, got {len(adapter.calls)}"
+    assert len(adapter.calls) == 2, f"Expected 1 nudge, got {len(adapter.calls)}"
     assert search_calls == [], "Search must not run without a directive"
+    assert adapter.calls[1][-1].content == SUBAGENT_NO_RETRIEVAL_NUDGE, adapter.calls[
+        1
+    ][-1]
+
+
+async def test_a_member_that_already_searched_is_not_nudged(search_calls):
+    """The nudge exists for a member that retrieved nothing, not for every member."""
+    adapter = ScriptedAdapter([DIRECTIVE, "Answer from the results."])
+    result = await _run(
+        _ctx(adapter, [{"title": "t", "url": "u", "snippet": "s"}]),
+        domain=SEARCH_DOMAIN,
+    )
+
+    assert result.metadata["searches_used"] == 1, result.metadata
+    assert len(adapter.calls) == 2, f"No nudge expected, got {len(adapter.calls)}"
 
 
 async def test_subagent_search_budget_exhaustion_forces_final_answer(search_calls):
@@ -132,7 +165,7 @@ async def test_subagent_search_budget_exhaustion_forces_final_answer(search_call
 
 async def test_subagent_empty_results_appends_no_results_notice(monkeypatch):
     async def empty_search(query: str, *, category: str = "text"):
-        return []
+        return SearchOutcome(query=query, attempted=[query, "relaxed variant"])
 
     monkeypatch.setattr(web_search_service, "search", empty_search)
     adapter = ScriptedAdapter([DIRECTIVE, FINAL_ANSWER])
@@ -140,9 +173,12 @@ async def test_subagent_empty_results_appends_no_results_notice(monkeypatch):
 
     assert result.data["output"] == FINAL_ANSWER
     second_call_texts = [m.content for m in adapter.calls[1]]
-    assert any("No web results were found" in t for t in second_call_texts), (
-        second_call_texts
+    notice = next(
+        (t for t in second_call_texts if "No web results for any of these" in t), ""
     )
+    assert notice, second_call_texts
+    # Naming the exhausted variants is what stops the model resending them.
+    assert '"relaxed variant"' in notice, notice
 
 
 async def test_subagent_domain_without_web_search_tool_gets_no_tool_prompt(

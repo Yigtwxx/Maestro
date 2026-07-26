@@ -27,6 +27,10 @@ class TaskCreate(BaseModel):
     reviewer_enabled: bool | None = None
     # Human-in-the-loop: allow an agent to ask the user one clarifying question.
     allow_questions: bool = False
+    # Record an execution trace (span waterfall, per-call tokens and cost).
+    # None falls back to users.default_tracing_enabled, then to the server-wide
+    # TRACING_ENABLED; resolved in the start-task handler before the task runs.
+    tracing_enabled: bool | None = None
     max_iterations: int = Field(default=settings.max_iterations, ge=1, le=50)
     max_review_iterations: int = Field(
         default=settings.max_review_iterations, ge=0, le=10

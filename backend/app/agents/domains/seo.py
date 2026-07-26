@@ -27,13 +27,17 @@ a bakery", "depends_on": []},
  {"member": "content_audit", "brief": "Audit on-page basics of the key pages; \
 fetch them with data_fetch", "depends_on": []},
  {"member": "technical", "brief": "Check crawlability, indexing, and speed \
-issues on the fetched pages", "depends_on": []}]}"""
+issues on the fetched pages", "depends_on": []},
+ {"member": "strategist", "brief": "Merge the findings into one prioritized \
+action plan for the bakery site", "depends_on": ["keywords", "content_audit", \
+"technical"]}]}"""
 
 _REVIEW_RUBRIC = """\
 - Every recommendation must name the metric it should move.
 - Advice must be white-hat only; reject link schemes or keyword stuffing.
 - Page-level findings must reference actually inspected content, not guesses.
-- The action plan must be prioritized by impact vs effort.
+- The action plan must be prioritized by impact vs effort, as one ranked list
+  across all areas — four separate per-area lists are not a plan.
 - Difficulty/value estimates must be labeled as estimates."""
 
 _KEYWORDS_INSTRUCTIONS = """\
@@ -95,6 +99,29 @@ _BACKLINKS_OUTPUT = """\
 - Link-earning tactics: tactic, target, expected effort.
 - Assets to create."""
 
+_STRATEGIST_INSTRUCTIONS = """\
+You are the SEO strategist who turns the specialists' findings into one plan.
+Method:
+1. Read the keyword, on-page, technical and authority findings together and
+   name the single constraint holding the site back. A site that cannot be
+   crawled does not have a keyword problem yet.
+2. Rank every recommendation across all four areas on one list — impact vs
+   effort — rather than leaving four separate lists the reader must merge.
+   Estimate impact as the metric it moves and by roughly how much.
+3. Sequence the plan: what to do this week, this quarter, and what is only
+   worth doing once the earlier items have landed.
+4. State what would change the plan: the measurement that would reorder it.
+5. Where a specialist could not inspect something live, carry that limitation
+   into the plan rather than quietly presenting an estimate as a finding.
+Quality bar: a site owner can start on Monday knowing exactly what to do
+first and which number tells them it worked."""
+
+_STRATEGIST_OUTPUT = """\
+- Executive summary: the constraint, and the one action that matters most.
+- Prioritized plan: action, area, impact (named metric), effort, sequence.
+- This week / this quarter / later.
+- What would change this plan, and what could not be verified live."""
+
 DOMAIN: DomainInfo = DomainInfo(
     id="seo",
     name="SEO Expert",
@@ -153,6 +180,21 @@ DOMAIN: DomainInfo = DomainInfo(
             instructions=_BACKLINKS_INSTRUCTIONS,
             output_format=_BACKLINKS_OUTPUT,
         ),
+        SubagentSpec(
+            id="strategist",
+            name="SEO Strategist",
+            description=(
+                "Merges the specialists' findings into one prioritized, "
+                "sequenced action plan."
+            ),
+            role=(
+                "merge the keyword, on-page, technical and authority findings "
+                "into one impact-vs-effort prioritized action plan with an "
+                "executive summary"
+            ),
+            instructions=_STRATEGIST_INSTRUCTIONS,
+            output_format=_STRATEGIST_OUTPUT,
+        ),
     ),
     tools=("web_search", "data_fetch", "summarize"),
     expertise=(
@@ -166,4 +208,9 @@ DOMAIN: DomainInfo = DomainInfo(
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
+    # Left empty until this round, which is why a one-member SEO run answered
+    # "how long should a title tag be" with a keyword cluster table: the planner
+    # kept choosing `keywords`, the first member declared. `strategist` is the
+    # only member whose output is the answer rather than an input to it.
+    deliverable_member="strategist",
 )

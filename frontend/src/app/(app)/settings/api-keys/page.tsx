@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { BrainCircuit, Cable } from 'lucide-react';
+import { BrainCircuit, Cable, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
@@ -9,6 +9,7 @@ import { SkeletonList } from '@/components/ui/Skeleton';
 import DecryptedText from '@/components/DecryptedText';
 import { ProviderIcon } from '@/components/ProviderIcon';
 import { ModelPreferencesCard } from '@/components/settings/ModelPreferencesCard';
+import { ProviderPicker } from '@/components/settings/ProviderPicker';
 import { PageShell } from '@/components/layout/PageShell';
 import { cn } from '@/lib/cn';
 import { api, ApiError } from '@/lib/api';
@@ -17,6 +18,7 @@ import {
   BRAIN_KEY_PROVIDERS,
   BRAIN_OPTIONS,
   CONNECTED_KEY_PROVIDERS,
+  PROVIDER_MAP,
   type ProviderMeta,
 } from '@/lib/providers';
 import { MODULE_COLOR } from '@/lib/module-colors';
@@ -39,6 +41,8 @@ function endpointHost(url: string): string {
 function KeySection({
   heading,
   providers,
+  defaultProviderId,
+  pickerLabel,
   keys,
   loading,
   onCreated,
@@ -47,6 +51,10 @@ function KeySection({
 }: {
   heading: string;
   providers: ProviderMeta[];
+  /** Preselected option. Explicit, so reordering the catalog cannot change it. */
+  defaultProviderId: LLMProvider;
+  /** Accessible name for the provider radiogroup. */
+  pickerLabel: string;
   keys: ApiKeyPublic[];
   loading: boolean;
   onCreated: () => Promise<void>;
@@ -54,7 +62,7 @@ function KeySection({
   /** `data-onboarding` id for the submit button, when this section is a tour target. */
   anchor?: string;
 }) {
-  const [provider, setProvider] = useState<LLMProvider>(providers[0].id);
+  const [provider, setProvider] = useState<LLMProvider>(defaultProviderId);
   const [label, setLabel] = useState('');
   const [secret, setSecret] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
@@ -103,37 +111,27 @@ function KeySection({
         <p className={`text-micro sm:col-span-2 ${mc.text}`}>[ {heading} ]</p>
 
         <div className="sm:col-span-2">
-          <p className="mb-2 text-micro text-muted">Provider</p>
-          <div
-            role="radiogroup"
-            aria-label="Provider"
-            className="grid grid-cols-2 gap-2 sm:grid-cols-3"
-          >
-            {providers.map((p) => {
-              const active = p.id === provider;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  onClick={() => setProvider(p.id)}
-                  className={cn(
-                    'flex items-center gap-2 rounded-lg border p-2.5 text-left text-sm transition-all',
-                    active
-                      ? 'border-module-api-keys bg-surface-2 text-white shadow-glow-mod-api-keys'
-                      : 'border-border bg-surface text-muted hover:border-border-bright hover:bg-surface-2',
-                  )}
-                >
-                  <ProviderIcon
-                    provider={p.id}
-                    className={cn('h-6 w-6 shrink-0', active ? mc.text : 'text-muted')}
-                  />
-                  <span className="truncate">{p.label}</span>
-                </button>
-              );
-            })}
-          </div>
+          <ProviderPicker
+            providers={providers}
+            value={provider}
+            onChange={setProvider}
+            label={pickerLabel}
+          />
+          {providerMeta?.docsUrl && (
+            <a
+              href={providerMeta.docsUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              className={cn(
+                'mt-3 inline-flex items-center gap-1 rounded-sm text-xs transition-colors',
+                mc.text,
+                'hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-module-api-keys',
+              )}
+            >
+              Get your {providerMeta.label} key
+              <ExternalLink className="h-3 w-3" aria-hidden />
+            </a>
+          )}
         </div>
 
         <Input
@@ -220,8 +218,8 @@ function KeySection({
                   />
                   <p className="truncate text-sm font-bold text-white">{key.label}</p>
                 </div>
-                <Badge module="api-keys" className="uppercase">
-                  {key.provider}
+                <Badge module="api-keys">
+                  {PROVIDER_MAP[key.provider]?.label ?? key.provider}
                 </Badge>
               </div>
               {key.model && (
@@ -382,6 +380,8 @@ export default function ApiKeysPage() {
       <KeySection
         heading="NEW AI KEY"
         providers={BRAIN_KEY_PROVIDERS}
+        defaultProviderId="openai"
+        pickerLabel="AI provider"
         keys={brainKeys}
         loading={loading}
         onCreated={load}
@@ -395,12 +395,16 @@ export default function ApiKeysPage() {
         <h2 className="text-lg font-bold text-white">Connected APIs</h2>
       </div>
       <p className="mb-4 text-sm text-muted">
-        External service keys your agents can use — Slack, Notion, GitHub, and more.
+        Service keys, encrypted at rest and never returned to the browser. Agents can
+        read from GitHub, X, Google Maps, Discord, Slack and Telegram today; the rest
+        are stored ready for upcoming integrations.
       </p>
 
       <KeySection
         heading="NEW SERVICE KEY"
         providers={CONNECTED_KEY_PROVIDERS}
+        defaultProviderId="github"
+        pickerLabel="service"
         keys={connectedKeys}
         loading={loading}
         onCreated={load}

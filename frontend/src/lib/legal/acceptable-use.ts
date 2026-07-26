@@ -63,8 +63,7 @@ yours.
   access another tenant's data.
 - Do not deliberately construct agent loops or forks to consume compute you have
   not paid for.
-- Do not create multiple accounts to evade quota, a suspension, or the one-time
-  first-month discount.
+- Do not create multiple accounts to evade quota or a suspension.
 - Do not resell access to ${brand} without a written agreement with us.
 - Do not use the Service to build a directly competing service by extracting its
   behaviour at scale.

@@ -42,6 +42,8 @@ interface TaskStoreState {
   events: AgentEvent[];
   status: TaskStatus | undefined;
   answer: string | undefined;
+  /** Live synthesis preview accumulated from agent_delta chunks while running. */
+  streamingAnswer: string;
   error: string | undefined;
   question: string | undefined;
   /** Rows delivered in bulk (snapshot/replay); EventLog skips their animation. */
@@ -62,7 +64,10 @@ interface TaskStoreState {
   openTask: (taskId: string) => Promise<void>;
   restore: () => Promise<void>;
   cancelTask: () => Promise<void>;
+  deleteTask: (taskId: string) => Promise<void>;
   replyToQuestion: (text: string) => void;
+  /** Detach from the watched task and clear its canvas, keeping `history`. */
+  clearActive: () => void;
   reset: () => void;
 }
 
@@ -71,6 +76,7 @@ const initialTaskState = {
   events: [],
   status: undefined,
   answer: undefined,
+  streamingAnswer: '',
   error: undefined,
   question: undefined,
   staticEventCount: 0,
@@ -90,7 +96,12 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   // path when the socket (re)connects after the task already finished, so the
   // terminal events inside it must update state the same way live ones do.
   applyEvent: (event) => {
-    if (event.type === 'agent_question') {
+    if (event.type === 'agent_delta') {
+      // Live synthesis preview: concatenate the streamed chunks. The final
+      // answer arrives whole on task_completed(_with_warnings) and replaces this.
+      const chunk = String(event.text ?? '');
+      if (chunk) set((state) => ({ streamingAnswer: state.streamingAnswer + chunk }));
+    } else if (event.type === 'agent_question') {
       set({ question: String(event.question ?? '') });
     } else if (event.type === 'user_answer') {
       set({ question: undefined });
@@ -100,11 +111,43 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
         status: 'completed',
         question: undefined,
       });
-    } else if (event.type === 'task_failed') {
+    } else if (event.type === 'task_completed_with_warnings') {
+      // Partial subtask failure still yields an answer. Without this branch the
+      // task carried a non-terminal status forever (spinner never stops, answer
+      // never renders) because completed_with_warnings isn't in TERMINAL_STATUSES.
       set({
-        error: String(event.error ?? 'Task failed.'),
-        status: 'failed',
+        answer: String(event.answer ?? ''),
+        status: 'completed_with_warnings',
         question: undefined,
+      });
+    } else if (event.type === 'task_cancelled') {
+      // A user-initiated cancel is its own event type (distinct from task_failed)
+      // so the client can settle even when another client triggered it. The
+      // clicking client already set 'cancelled' optimistically; this makes the
+      // cross-client and snapshot-replay paths settle too, with a neutral notice.
+      set({
+        error: String(event.error ?? 'Task cancelled.'),
+        status: 'cancelled',
+        question: undefined,
+      });
+    } else if (event.type === 'task_failed') {
+      // Timeout and failure arrive as task_failed (user cancels come through
+      // task_cancelled above). Prefer the true terminal status the backend
+      // carries on the event; fall back to the optimistic-cancel heuristic for
+      // older events without it.
+      set((state) => {
+        const wire = event.status;
+        const next: TaskStatus =
+          wire === 'cancelled' || wire === 'timeout' || wire === 'failed'
+            ? wire
+            : state.status === 'cancelled'
+              ? 'cancelled'
+              : 'failed';
+        return {
+          error: String(event.error ?? 'Task failed.'),
+          status: next,
+          question: undefined,
+        };
       });
     }
   },
@@ -205,6 +248,14 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
   cancelTask: async () => {
     const taskId = get().activeTaskId;
     if (!taskId) return;
+    // A user cancel is the only place the frontend knows for certain the stop
+    // was intentional (the backend reports it on the wire as task_failed), so
+    // optimistically mark it 'cancelled' — this drives the orange frozen nodes
+    // and cancelled badge. Skip if the task already reached a terminal status
+    // (it may have finished in the same instant).
+    if (isTaskRunning(get().status)) {
+      set({ status: 'cancelled' });
+    }
     try {
       await api.cancelTask(taskId);
     } catch {
@@ -212,9 +263,60 @@ export const useTaskStore = create<TaskStoreState>((set, get) => ({
     }
   },
 
+  deleteTask: async (taskId) => {
+    // Optimistically drop the row; the sidebar shouldn't wait on the network.
+    set((state) => ({
+      history: state.history.filter((task) => task.task_id !== taskId),
+    }));
+    // Deleting the task being watched clears the canvas and detaches its stream.
+    if (get().activeTaskId === taskId) {
+      const generation = get()._generation + 1;
+      get()._stream?.close();
+      persistActiveTaskId(undefined);
+      set({ ...initialTaskState, _generation: generation, _stream: undefined });
+    }
+    try {
+      await api.deleteTask(taskId);
+    } catch (err) {
+      // A 404 means it was already gone — the optimistic removal was right.
+      if (!(err instanceof ApiError && err.status === 404)) {
+        toast.error(
+          err instanceof ApiError ? err.message : 'Task could not be deleted.',
+        );
+        // Restore the true list; the delete did not take effect.
+        void get().loadHistory();
+      }
+    }
+  },
+
   replyToQuestion: (text) => {
-    get()._stream?.answer(text);
+    const stream = get()._stream;
+    const previousQuestion = get().question;
+    // Close the prompt optimistically as the answer is sent.
     set({ question: undefined });
+    if (!stream) return;
+    void stream.answer(text).catch(() => {
+      toast.error(
+        'Your answer could not be delivered. Please try again.',
+        'Answer not sent',
+      );
+      // Restore the prompt so the user can retry — unless a newer question has
+      // since arrived, which we must not clobber.
+      if (get().question === undefined) set({ question: previousQuestion });
+    });
+  },
+
+  // "New task": the canvas resets but the rail must keep showing past tasks,
+  // so this is deliberately not `reset()` (which also empties `history`).
+  clearActive: () => {
+    get()._stream?.close();
+    persistActiveTaskId(undefined);
+    set((state) => ({
+      ...initialTaskState,
+      _stream: undefined,
+      // Invalidate any in-flight request that would otherwise repopulate state.
+      _generation: state._generation + 1,
+    }));
   },
 
   reset: () => {
@@ -259,10 +361,19 @@ function attachStream(
       if (get()._generation !== generation) return;
       set((state) => ({ events: [...state.events, event] }));
       get().applyEvent(event);
-      // Live-only notice: a task can fail while the user is on another page.
-      // Snapshot replay skips this path, so reopening a failed task won't re-toast.
-      if (event.type === 'task_failed') {
-        toast.error(String(event.error ?? 'Task failed.'), 'Task failed');
+      // Live-only notice: a task can end while the user is on another page.
+      // Snapshot replay skips this path, so reopening a task won't re-toast.
+      // A user cancel arrives on its own event type, so it shows a neutral
+      // notice rather than an error.
+      if (event.type === 'task_cancelled') {
+        toast.info('Task cancelled.', 'Task cancelled');
+      } else if (event.type === 'task_failed') {
+        // Older events may still carry a cancelled status on task_failed.
+        if (get().status === 'cancelled') {
+          toast.info('Task cancelled.', 'Task cancelled');
+        } else {
+          toast.error(String(event.error ?? 'Task failed.'), 'Task failed');
+        }
       }
       // Live finish: refresh the sidebar so this row leaves the running state.
       // Snapshot replay deliberately skips this — reopening a task is not news.

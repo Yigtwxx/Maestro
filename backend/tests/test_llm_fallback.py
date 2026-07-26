@@ -68,7 +68,7 @@ async def test_chat_non_ascii_api_key_raises_clear_llm_error():
         LLMProvider.GEMINI, api_key="fake-gemini-key-ABCDEFGHIJKLMNOPQRSTUVWıXYZ"
     )
     with pytest.raises(LLMError):
-        await adapter.chat([ChatMessage("user", "merhaba")])
+        await adapter.chat([ChatMessage("user", "hi")])
 
 
 async def test_anthropic_non_ascii_api_key_raises_clear_llm_error():
@@ -77,7 +77,7 @@ async def test_anthropic_non_ascii_api_key_raises_clear_llm_error():
     # the only thing under test.
     adapter = get_adapter(LLMProvider.ANTHROPIC, api_key="fake-anthropic-key-ıllegal")
     with pytest.raises(LLMError):
-        await adapter.chat([ChatMessage("user", "merhaba")])
+        await adapter.chat([ChatMessage("user", "hi")])
 
 
 # --- Provider registry / new OpenAI-compatible brains -----------------------
@@ -89,18 +89,19 @@ def test_every_chat_provider_has_an_adapter():
     assert not missing, f"chat providers without adapters: {missing}"
 
 
-@pytest.mark.parametrize(
-    "provider",
-    [
-        LLMProvider.GROQ,
-        LLMProvider.DEEPSEEK,
-        LLMProvider.MISTRAL,
-        LLMProvider.XAI,
-        LLMProvider.OPENROUTER,
-        LLMProvider.TOGETHER,
-        LLMProvider.PERPLEXITY,
-    ],
+# Derived rather than listed, so a newly added brain is covered without editing
+# this test. The three exclusions are principled, not convenience: Ollama points
+# at a local http:// endpoint, Anthropic is not an _OpenAICompatAdapter and has
+# no base_url, and custom deliberately carries an empty one (it is filled per
+# stored key).
+_NAMED_OPENAI_COMPAT_BRAINS = sorted(
+    LLM_CHAT_PROVIDERS
+    - {LLMProvider.OLLAMA, LLMProvider.ANTHROPIC, LLMProvider.CUSTOM},
+    key=lambda provider: provider.value,
 )
+
+
+@pytest.mark.parametrize("provider", _NAMED_OPENAI_COMPAT_BRAINS)
 def test_get_adapter_named_openai_compat_has_endpoint_and_model(provider: LLMProvider):
     adapter = get_adapter(provider, api_key="k")
     assert adapter.provider is provider

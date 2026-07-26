@@ -16,13 +16,19 @@ import { isTaskRunning, useTaskStore } from '@/stores/tasks';
 // The frames redraw app/icon.svg (champagne square, navy-gloss signature "M")
 // from the same constants in lib/seo/config.ts, animating the stroke with a
 // dash offset: the signature draws itself, holds, erases, then loops.
+//
+// The loop is a fixed set of frames, each drawn and PNG-encoded the first time
+// it comes up and replayed from cache afterwards, so past the first cycle a
+// tick is one string assignment. Encoding on every tick instead made the
+// animation stutter on a busy main thread — exactly when a task is running.
 
 /**
- * Drawn at 4x the 32px icon box: the browser downsamples this to the 16px
+ * Drawn at 2x the 32px icon box: the browser downsamples this to the 16px
  * tab icon, and the extra resolution is what keeps the thin stroke from
- * looking ragged after that scale-down.
+ * looking ragged after that scale-down. Each doubling quadruples the encode
+ * cost of a frame, and 64px is already twice the retina tab slot.
  */
-const CANVAS_SIZE = 128;
+const CANVAS_SIZE = 64;
 const ICON_BOX = 32;
 const ICON_RADIUS = 7;
 /** Same offset icon.svg applies to center the 24-box monogram in the 32 box. */
@@ -32,8 +38,19 @@ const GRADIENT_TOP = 9;
 const GRADIENT_BOTTOM = 23;
 
 const CYCLE_MS = 2400;
-/** 30 fps — smooth to the eye, still cheap for a 128px canvas. */
-const FRAME_MS = 33;
+/**
+ * The cycle is quantised into this many cached frames. 20 fps reads as smooth
+ * in a 16px tab and is about as fast as the tab strip repaints a swapped icon
+ * anyway; a higher rate only spends encode time on frames the browser drops.
+ */
+const FRAME_COUNT = 48;
+const FRAME_MS = CYCLE_MS / FRAME_COUNT;
+/**
+ * Ticks arrive twice per frame, so timer jitter — or a main thread busy with
+ * the architect event stream — delays a frame instead of skipping it. A tick
+ * landing on the frame already shown costs a single comparison.
+ */
+const TICK_MS = FRAME_MS / 2;
 
 /** Measured ~57.8 in Chrome; used only if getTotalLength is unavailable. */
 const FALLBACK_PATH_LENGTH = 58;
@@ -130,15 +147,16 @@ export function TaskFavicon() {
 
     const pathLength = measurePathLength(MONOGRAM_PATH);
     const monogram = new Path2D(MONOGRAM_PATH);
-    // Gradient coordinates are read at stroke time, under the 4x transform.
+    // Gradient coordinates are read at stroke time, under the 2x transform.
     const gradient = ctx.createLinearGradient(0, GRADIENT_TOP, 0, GRADIENT_BOTTOM);
     gradient.addColorStop(0, MONOGRAM_GRADIENT[0]);
     gradient.addColorStop(0.5, MONOGRAM_GRADIENT[1]);
     gradient.addColorStop(1, MONOGRAM_GRADIENT[2]);
     const started = performance.now();
 
-    const drawFrame = () => {
-      const t = ((performance.now() - started) % CYCLE_MS) / CYCLE_MS;
+    /** Draws frame `index` of the cycle and returns it as a PNG data URL. */
+    const renderFrame = (index: number): string => {
+      const t = index / FRAME_COUNT;
       ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
       ctx.save();
       ctx.scale(CANVAS_SIZE / ICON_BOX, CANVAS_SIZE / ICON_BOX);
@@ -155,12 +173,32 @@ export function TaskFavicon() {
       ctx.lineDashOffset = dashOffsetAt(t, pathLength);
       ctx.stroke(monogram);
       ctx.restore();
-      link.setAttribute('type', 'image/png');
-      link.href = canvas.toDataURL('image/png');
+      return canvas.toDataURL('image/png');
     };
 
-    drawFrame();
-    const stopTicker = startTicker(drawFrame, FRAME_MS);
+    const frames = new Array<string | undefined>(FRAME_COUNT);
+    const frameAt = (index: number): string => {
+      const cached = frames[index];
+      if (cached !== undefined) return cached;
+      const rendered = renderFrame(index);
+      frames[index] = rendered;
+      return rendered;
+    };
+
+    // The frame is derived from elapsed time rather than a tick count, so a
+    // late tick resumes at the right point in the cycle instead of drifting.
+    let shownIndex = -1;
+    const showFrame = () => {
+      const elapsed = (performance.now() - started) % CYCLE_MS;
+      const index = Math.min(Math.floor(elapsed / FRAME_MS), FRAME_COUNT - 1);
+      if (index === shownIndex) return;
+      shownIndex = index;
+      link.href = frameAt(index);
+    };
+
+    link.setAttribute('type', 'image/png');
+    showFrame();
+    const stopTicker = startTicker(showFrame, TICK_MS);
     return () => {
       stopTicker();
       if (originalType === null) link.removeAttribute('type');

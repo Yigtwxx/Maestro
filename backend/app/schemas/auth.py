@@ -94,6 +94,7 @@ class UserPublic(BaseModel):
     # Account preferences.
     timezone: str | None = None
     default_reviewer_enabled: bool = False
+    default_tracing_enabled: bool = False
     # Whether TOTP two-factor auth is active (never exposes the secret).
     two_factor_enabled: bool = False
     # Whether the emailed verification link was redeemed. While false, task

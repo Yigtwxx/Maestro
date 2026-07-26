@@ -14,6 +14,7 @@ from app.agents.registry import get_domain_info
 from app.core.constants import (
     CODE_EXECUTION_ACTION,
     DATA_FETCH_ACTION,
+    DATA_FETCH_SELECTOR_MAX_CHARS,
     WEB_SEARCH_ACTION,
     LLMProvider,
 )
@@ -55,7 +56,9 @@ class ScriptedAdapter(LLMAdapter):
 def fetch_calls(monkeypatch) -> list[str]:
     calls: list[str] = []
 
-    async def fake_fetch(url: str) -> str:
+    async def fake_fetch(
+        url: str, *, selector: str | None = None, render: bool = False
+    ) -> str:
         calls.append(url)
         return "<fetched_content>\nPage text.\n</fetched_content>"
 
@@ -174,6 +177,55 @@ def test_parse_directive_known_actions(content: str, expected_action: str):
     directive = tool_directives.parse_directive(content, enabled)
     assert directive is not None, f"Expected directive for {content}"
     assert directive.action == expected_action, directive
+
+
+@pytest.mark.parametrize(
+    ("render_value", "expected"),
+    [
+        ("true", True),
+        (True, True),
+        ("yes", True),
+        (1, True),
+        ("false", False),
+        (False, False),
+        (None, False),
+    ],
+)
+def test_parse_directive_data_fetch_render_coercion(render_value, expected: bool):
+    """Models emit true/"true"/"yes"/1 interchangeably for a boolean flag."""
+    content = json.dumps(
+        {"action": "data_fetch", "url": "https://x.example", "render": render_value}
+    )
+    directive = tool_directives.parse_directive(content, frozenset({DATA_FETCH_ACTION}))
+    assert directive is not None, content
+    assert (directive.args.get("render") == "true") is expected, directive.args
+
+
+def test_parse_directive_data_fetch_keeps_selector():
+    content = json.dumps(
+        {"action": "data_fetch", "url": "https://x.example", "selector": "h2.title"}
+    )
+    directive = tool_directives.parse_directive(content, frozenset({DATA_FETCH_ACTION}))
+    assert directive is not None, content
+    assert directive.args["selector"] == "h2.title", directive.args
+
+
+@pytest.mark.parametrize(
+    "selector",
+    ["a" * (DATA_FETCH_SELECTOR_MAX_CHARS + 1), "h2\ninjected"],
+)
+def test_parse_directive_drops_malformed_selector_but_keeps_url(selector: str):
+    """A bad selector must degrade to a full-text fetch, not kill the directive.
+
+    Returning None here would make the loop read the JSON as the subagent's
+    final answer, which is strictly worse than fetching the whole page.
+    """
+    content = json.dumps(
+        {"action": "data_fetch", "url": "https://x.example", "selector": selector}
+    )
+    directive = tool_directives.parse_directive(content, frozenset({DATA_FETCH_ACTION}))
+    assert directive is not None, "The directive must survive a bad selector"
+    assert directive.args == {"url": "https://x.example"}, directive.args
 
 
 @pytest.mark.parametrize(

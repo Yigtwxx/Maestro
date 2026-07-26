@@ -45,17 +45,34 @@ export const PLACEHOLDER_SITE_URL = 'https://maestro.example.com';
  * and `background`.
  */
 export const BRAND = {
-  lime: '#a3e635',
+  primary: '#d3cbc0',
   background: '#0a0a10',
   black: '#000000',
   white: '#ffffff',
+  /**
+   * The monogram stroke. A single navy for satori-rendered marks (the OG card
+   * and Apple touch icon): satori's inline-SVG gradient support is unreliable,
+   * so those fall back to the middle stop of `MONOGRAM_GRADIENT`.
+   */
+  navy: '#3b5bdb',
 } as const;
 
 /**
- * The Maestro monogram: an "M" traced as two peaks and a valley. Identical to
- * the inline SVG in `components/landing/LandingNav.tsx`; drawn on a 24×24
- * viewBox with a stroke width of 2.4.
+ * The Maestro monogram: a bespoke, single-stroke signature "M" — an entry hook
+ * rising through two peaks and a rounded valley, closed by an upward flourish.
+ * Drawn on a 24×24 viewBox so `app/icon.svg` can center it with a translate and
+ * satori can size it directly. Mirrored, letter for letter, by the inline copy
+ * in `app/icon.svg`; every other surface renders it through the constants here
+ * (`components/brand/BrandMark.tsx` in the DOM, `og-monogram.tsx` in satori).
  */
-export const MONOGRAM_PATH = 'M5 17V7l7 6 7-6v10';
+export const MONOGRAM_PATH =
+  'M2.8 15.4C3.1 17.7 3.8 19 4.7 19C6 19 6.1 8.6 7.7 6C8.1 5.3 8.7 5.6 9 6.4C9.9 9 10.8 12.4 12 12.4C13.2 12.4 14.1 9 15 6.4C15.3 5.6 15.9 5.3 16.3 6C17.9 8.6 18 19 19.3 19C20.6 19 21.6 15.8 22.9 11.2';
 export const MONOGRAM_VIEWBOX = '0 0 24 24';
-export const MONOGRAM_STROKE_WIDTH = 2.4;
+export const MONOGRAM_STROKE_WIDTH = 2.1;
+
+/**
+ * Navy gloss gradient for the monogram stroke, top-lit (bright → dark). Used in
+ * the DOM by `BrandMark`; mirrored as static stops in `app/icon.svg` (a static
+ * file cannot import). satori marks use `BRAND.navy` instead — see above.
+ */
+export const MONOGRAM_GRADIENT = ['#4d7cff', '#3b5bdb', '#141a3c'] as const;

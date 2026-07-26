@@ -7,22 +7,44 @@
 import { ACCEPTABLE_USE } from './acceptable-use';
 import { COOKIES } from './cookies';
 import { PRIVACY } from './privacy';
+import { PRIVACY_TR } from './privacy.tr';
 import { SECURITY } from './security';
 import { TERMS } from './terms';
+import type { LegalSlug } from './slugs';
 
-/** Prepared for a Turkish translation; every document is English for now. */
-export type LegalLocale = 'en';
+/**
+ * Locales a document can be served in. `content` is always the canonical
+ * `en` version; additional locales live in {@link LegalDoc.translations}.
+ */
+export type LegalLocale = 'en' | 'tr';
+
+/** Human-readable label for a locale, used by the on-page language switcher. */
+export const LOCALE_LABELS: Record<LegalLocale, string> = {
+  en: 'English',
+  tr: 'Türkçe',
+};
 
 export interface LegalDoc {
-  /** Route segment: the document lives at `/{slug}`. */
-  slug: string;
+  /**
+   * Route segment: the document lives at `/{slug}`. Typed against the
+   * content-free slug list in `slugs.ts` (which client bundles import for
+   * route knowledge) so the two cannot drift apart.
+   */
+  slug: LegalSlug;
   title: string;
   /** One line, shown on the hub cards and as the page description. */
   description: string;
   /** ISO date of the last substantive revision. */
   updated: string;
+  /** Locale of {@link content} — the canonical, governing version. */
   locale: LegalLocale;
   content: string;
+  /**
+   * Optional additional-language versions, keyed by locale. The canonical
+   * `content` above still governs; translations are provided so users can read
+   * the document in their own language (e.g. the KVKK notice in Turkish).
+   */
+  translations?: Partial<Record<LegalLocale, string>>;
 }
 
 export const LEGAL_DOCS: readonly LegalDoc[] = [
@@ -40,9 +62,10 @@ export const LEGAL_DOCS: readonly LegalDoc[] = [
     title: 'Privacy Policy',
     description:
       'What we collect, why, who we share it with, how long we keep it, and your rights under GDPR and KVKK.',
-    updated: '2026-07-10',
+    updated: '2026-07-12',
     locale: 'en',
     content: PRIVACY,
+    translations: { tr: PRIVACY_TR },
   },
   {
     slug: 'security',
@@ -66,8 +89,8 @@ export const LEGAL_DOCS: readonly LegalDoc[] = [
     slug: 'cookies',
     title: 'Cookie Policy',
     description:
-      'We set no cookies and run no tracking. Here is the short list of what we do store, and why.',
-    updated: '2026-07-10',
+      'We set no cookies. Analytics is optional, self-hosted, and asks first. The full list of what we store, and why.',
+    updated: '2026-07-12',
     locale: 'en',
     content: COOKIES,
   },
@@ -97,4 +120,4 @@ export function formatLegalDate(iso: string): string {
   });
 }
 
-export { BILLING_LIVE, BILLING_PRERELEASE_NOTICE, KVKK_TURKISH_NOTICE, KVKK_TURKISH_PENDING, LEGAL_ENTITY } from './config';
+export { BILLING_LIVE, BILLING_PRERELEASE_NOTICE, LEGAL_ENTITY } from './config';

@@ -10,8 +10,21 @@ import { domainColor } from '@/lib/agent-colors';
 import { MODULE_COLOR } from '@/lib/module-colors';
 import { SPRING, useReducedMotion } from '@/lib/motion';
 import { FlowLayer, type FlowEdge } from '@/components/architect/FlowLayer';
+import {
+  ConnectedRail,
+  type ConnectedLane,
+} from '@/components/architect/ConnectedRail';
 
 export type NodeState = 'idle' | 'running' | 'done' | 'error' | 'cancelled';
+
+/** One subagent's use of one connected API — deduped per pair, not per call. */
+export interface ApiReach {
+  /** Graph node key of the subagent that made the call. */
+  nodeKey: string;
+  provider: string;
+  /** Still in flight: at least one start event has no matching completion. */
+  active: boolean;
+}
 
 export interface NodeDetails {
   /** Full brief/message the main agent sent to this subagent. */
@@ -117,17 +130,25 @@ function NodeDetailOverlay({
         {/* Same header as the node card, so the reveal reads as the card growing. */}
         <div className="flex items-center gap-2">
           <Icon className={cn('h-4 w-4 shrink-0', iconColor)} aria-hidden />
-          <span className="flex-1 truncate text-sm font-bold">{node.label}</span>
-          <span className={cn('text-micro shrink-0', stateLabelColor[node.state])}>
+          <span className="flex-1 truncate text-sm font-bold">
+            {node.label}
+          </span>
+          <span
+            className={cn('text-micro shrink-0', stateLabelColor[node.state])}
+          >
             {stateLabel[node.state]}
           </span>
         </div>
         <p className="mt-2.5 text-micro text-muted">[ TASK BRIEF ]</p>
-        <p className="mt-1 whitespace-pre-wrap font-mono text-xs">{details.brief}</p>
+        <p className="mt-1 whitespace-pre-wrap font-mono text-xs">
+          {details.brief}
+        </p>
         {details.activity && node.state !== 'idle' && (
           <>
             <p className="mt-2.5 text-micro text-muted">{activityLabel}</p>
-            <p className="mt-1 font-mono text-xs text-accent">{details.activity}</p>
+            <p className="mt-1 font-mono text-xs text-accent">
+              {details.activity}
+            </p>
           </>
         )}
         {details.dependsOn && details.dependsOn.length > 0 && (
@@ -205,13 +226,17 @@ function Node({ node, domain }: { node: GraphNode; domain?: string }) {
         </span>
       </div>
       {node.sublabel && (
-        <p className="mt-1.5 truncate font-mono text-xs text-muted">{node.sublabel}</p>
+        <p className="mt-1.5 truncate font-mono text-xs text-muted">
+          {node.sublabel}
+        </p>
       )}
       <ProgressBar
         className="mt-2.5"
         color={node.state === 'error' ? 'danger' : 'cyan'}
         hex={node.state === 'done' ? MODULE_COLOR.architect.hex : undefined}
-        value={node.state === 'running' ? undefined : node.state === 'done' ? 100 : 0}
+        value={
+          node.state === 'running' ? undefined : node.state === 'done' ? 100 : 0
+        }
       />
       {node.details && (
         <NodeDetailOverlay node={node} domain={domain} wrapperRef={overlayRef} />
@@ -226,6 +251,8 @@ export function AgentGraph({
   subagents,
   reviewer,
   domain,
+  lanes = [],
+  reaches = [],
 }: {
   orchestrator: GraphNode;
   main: GraphNode;
@@ -233,6 +260,10 @@ export function AgentGraph({
   reviewer?: GraphNode;
   /** Task domain — tints every node's icon with the domain hue. */
   domain?: string;
+  /** Connected-API lanes this squad can reach; empty hides the rail. */
+  lanes?: ConnectedLane[];
+  /** One entry per (subagent, provider) pair that actually called out. */
+  reaches?: ApiReach[];
 }) {
   const reduced = useReducedMotion();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -246,7 +277,12 @@ export function AgentGraph({
   const flowRgb = domain ? domainColor(domain).rgb : MODULE_COLOR.architect.rgb;
 
   const edges: FlowEdge[] = [
-    { from: 'orchestrator', to: 'main', active: main.state === 'running', done: main.state === 'done' },
+    {
+      from: 'orchestrator',
+      to: 'main',
+      active: main.state === 'running',
+      done: main.state === 'done',
+    },
     ...subagents.map((node) => ({
       from: 'main',
       to: node.key,
@@ -261,53 +297,78 @@ export function AgentGraph({
           done: reviewer.state === 'done',
         }))
       : []),
+    // One branch per (member, provider) pair — never per call, or a member
+    // making six lookups would draw six identical lines over each other.
+    ...reaches.map((reach) => ({
+      from: reach.nodeKey,
+      to: `api:${reach.provider}`,
+      active: reach.active,
+      done: !reach.active,
+      orientation: 'horizontal' as const,
+    })),
   ];
 
   return (
-    <div ref={containerRef} className="group/graph relative flex flex-col items-center gap-8">
-      <FlowLayer edges={edges} nodesRef={nodesRef} containerRef={containerRef} rgb={flowRgb} />
-      {/* Focus fog — while a subagent card is expanded, the rest of the node
+    <div ref={containerRef} className="relative flex w-full items-start gap-4">
+      <FlowLayer
+        edges={edges}
+        nodesRef={nodesRef}
+        containerRef={containerRef}
+        rgb={flowRgb}
+      />
+      <div className="group/graph relative flex min-w-0 flex-1 flex-col items-center gap-8">
+        {/* Focus fog — while a subagent card is expanded, the rest of the node
           cluster softly blurs and dims so attention lands on the hovered card.
           The hovered wrapper lifts to z-20, above this z-10 scrim. */}
-      <div
-        aria-hidden
-        className={cn(
-          'pointer-events-none absolute inset-0 z-10 opacity-0 backdrop-blur-sm',
-          'bg-background/40 transition-opacity duration-200 motion-reduce:transition-none',
-          'group-has-[[data-subnode]:hover]/graph:opacity-100',
-          'group-has-[[data-subnode]:focus-within]/graph:opacity-100',
-        )}
-      />
-      <div ref={registerNode('orchestrator')} className="relative w-72 max-w-full">
-        <Node node={orchestrator} domain={domain} />
-      </div>
-      <div ref={registerNode('main')} className="relative w-72 max-w-full">
-        <Node node={main} domain={domain} />
-      </div>
-      {subagents.length > 0 && (
-        <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
-          {/* The orchestrator visibly "spawns" its team: assignment cards pop in
+        <div
+          aria-hidden
+          className={cn(
+            'pointer-events-none absolute inset-0 z-10 opacity-0 backdrop-blur-sm',
+            'bg-background/40 transition-opacity duration-200 motion-reduce:transition-none',
+            'group-has-[[data-subnode]:hover]/graph:opacity-100',
+            'group-has-[[data-subnode]:focus-within]/graph:opacity-100',
+          )}
+        />
+        <div
+          ref={registerNode('orchestrator')}
+          className="relative w-72 max-w-full"
+        >
+          <Node node={orchestrator} domain={domain} />
+        </div>
+        <div ref={registerNode('main')} className="relative w-72 max-w-full">
+          <Node node={main} domain={domain} />
+        </div>
+        {subagents.length > 0 && (
+          <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
+            {/* The orchestrator visibly "spawns" its team: assignment cards pop in
               staggered as they stream over the socket. */}
-          {subagents.map((node, i) => (
-            <motion.div
-              key={node.key}
-              ref={registerNode(node.key)}
-              data-subnode
-              className="relative hover:z-20 focus-within:z-20"
-              initial={reduced ? false : { opacity: 0, y: 10, scale: 0.92 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              transition={reduced ? { duration: 0 } : { ...SPRING.pop, delay: i * 0.08 }}
-            >
-              <Node node={node} domain={domain} />
-            </motion.div>
-          ))}
-        </div>
-      )}
-      {reviewer && (
-        <div ref={registerNode('reviewer')} className="relative w-72 max-w-full">
-          <Node node={reviewer} domain={domain} />
-        </div>
-      )}
+            {subagents.map((node, i) => (
+              <motion.div
+                key={node.key}
+                ref={registerNode(node.key)}
+                data-subnode
+                className="relative hover:z-20 focus-within:z-20"
+                initial={reduced ? false : { opacity: 0, y: 10, scale: 0.92 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={
+                  reduced ? { duration: 0 } : { ...SPRING.pop, delay: i * 0.08 }
+                }
+              >
+                <Node node={node} domain={domain} />
+              </motion.div>
+            ))}
+          </div>
+        )}
+        {reviewer && (
+          <div
+            ref={registerNode('reviewer')}
+            className="relative w-72 max-w-full"
+          >
+            <Node node={reviewer} domain={domain} />
+          </div>
+        )}
+      </div>
+      <ConnectedRail lanes={lanes} registerNode={registerNode} rgb={flowRgb} />
     </div>
   );
 }

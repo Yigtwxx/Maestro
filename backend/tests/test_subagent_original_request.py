@@ -90,7 +90,11 @@ async def test_view_directive_feeds_back_objective_in_toolless_domain():
     assert result.data["output"] == FINAL_ANSWER, result.data
     assert result.metadata["original_request_views"] == 1, result.metadata
     system_prompt = adapter.calls[0][0].content
-    assert OBJECTIVE not in system_prompt, "Objective must not be in the prompt"
+    # The request now ships with the prompt as delimited context, so the model
+    # no longer has to ask for it. The directive is kept anyway: it is how a
+    # request longer than OBJECTIVE_MAX_CHARS gets read in full, and this test
+    # covers that it still executes and still feeds the objective back.
+    assert ORIGINAL_REQUEST_OPEN in system_prompt, system_prompt
     assert '"action": "view_original_request"' in system_prompt, system_prompt
     second_call_texts = [m.content for m in adapter.calls[1]]
     assert any(
@@ -112,7 +116,9 @@ async def test_view_second_request_exhausts_budget_and_forces_final_answer():
 async def test_view_does_not_consume_total_tool_budget(monkeypatch):
     fetch_calls: list[str] = []
 
-    async def fake_fetch(url: str) -> str:
+    async def fake_fetch(
+        url: str, *, selector: str | None = None, render: bool = False
+    ) -> str:
         fetch_calls.append(url)
         return "<fetched_content>\nPage text.\n</fetched_content>"
 

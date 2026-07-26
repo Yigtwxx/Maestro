@@ -7,7 +7,8 @@ const strokeColor = {
 } as const;
 
 interface SparklineProps {
-  values: number[];
+  /** One slot per period; null renders a gap (missing data, not a zero). */
+  values: (number | null)[];
   color?: keyof typeof strokeColor;
   /** Raw hue override (e.g. a per-domain hex); wins over `color` when set. */
   hex?: string;
@@ -16,10 +17,11 @@ interface SparklineProps {
   className?: string;
 }
 
-/** Tiny inline SVG bar series (mockup-style mini chart). Pure presentational. */
+/** Tiny inline SVG bar series. Pure presentational. */
 export function Sparkline({ values, color = 'lime', hex, animate, className }: SparklineProps) {
-  if (values.length === 0) return null;
-  const max = Math.max(...values, 1);
+  const numeric = values.filter((v): v is number => v !== null);
+  if (numeric.length === 0) return null;
+  const max = Math.max(...numeric, 1);
   const barWidth = 100 / values.length;
   // Whole series settles within ~0.6s regardless of bar count.
   const delayStep = Math.min(0.04, 0.6 / values.length);
@@ -32,6 +34,7 @@ export function Sparkline({ values, color = 'lime', hex, animate, className }: S
       aria-hidden
     >
       {values.map((v, i) => {
+        if (v === null) return null;
         const h = Math.max((v / max) * 30, 2);
         return (
           <rect

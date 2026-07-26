@@ -6,11 +6,11 @@
 
 export const LEGAL_ENTITY = {
   brand: 'Maestro',
-  /** TODO: replace with the registered legal entity name once incorporated. */
-  operatorName: 'Maestro',
+  /** Individual operator; replace with the registered legal entity name once incorporated. */
+  operatorName: 'Yiğit Erdoğan',
   /** e.g. 'Ltd. Şti.', 'Inc.' — left blank while operated by an individual. */
   operatorType: '',
-  /** TODO: registered address. */
+  /** No registered address — the service is operated by an individual; only the country is disclosed. */
   addressLine1: '',
   country: 'Türkiye',
   contactEmail: 'yigiterdogan023@gmail.com',
@@ -18,9 +18,13 @@ export const LEGAL_ENTITY = {
   privacyEmail: 'yigiterdogan023@gmail.com',
   securityEmail: 'yigiterdogan023@gmail.com',
   governingLaw: 'the Republic of Türkiye',
-  /** TODO: competent courts, e.g. 'the Istanbul Courts and Enforcement Offices'. */
+  /**
+   * No specific court is designated while the service is operated by an
+   * individual; name one (e.g. 'the Istanbul Courts and Enforcement Offices')
+   * once incorporated.
+   */
   jurisdiction: 'the competent courts of the Republic of Türkiye',
-  sourceUrl: 'https://github.com/Yigtwxx/maestro',
+  sourceUrl: 'https://github.com/Yigtwxx/Maestro',
 } as const;
 
 /**
@@ -38,14 +42,3 @@ export const BILLING_LIVE = false;
 export const BILLING_PRERELEASE_NOTICE =
   'Billing is in pre-release. No real payments are processed and no cards are charged. ' +
   'Do not enter real card details.';
-
-/**
- * The Turkish-language KVKK notice is not written yet. Turkish law expects the
- * aydınlatma metni in a language the data subject understands, so this gap is
- * surfaced rather than hidden. Remove the notice once `tr/` content ships.
- */
-export const KVKK_TURKISH_PENDING = true;
-
-export const KVKK_TURKISH_NOTICE =
-  'A Turkish-language KVKK aydınlatma metni is being prepared. Until it is published, ' +
-  `this English text governs. Turkish-speaking users may request clarification at ${LEGAL_ENTITY.privacyEmail}.`;

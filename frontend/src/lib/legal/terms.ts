@@ -1,11 +1,12 @@
 import { LEGAL_ENTITY } from './config';
 
-const { brand, operatorName, contactEmail, governingLaw, jurisdiction } = LEGAL_ENTITY;
+const { brand, operatorName, country, contactEmail, governingLaw, jurisdiction } = LEGAL_ENTITY;
 
 export const TERMS = `
 ## 1. Who we are and what this is
 
-${brand} is an AI agent orchestration platform operated by ${operatorName} ("we", "us").
+${brand} is an AI agent orchestration platform operated by ${operatorName}, an
+individual developer based in ${country} ("we", "us").
 These Terms of Service govern your access to and use of ${brand} (the "Service").
 By creating an account you accept these Terms. If you do not accept them, do not
 use the Service.
@@ -43,24 +44,19 @@ That means:
   a key you paste into ${brand} is a key you have chosen to entrust to us. Revoke
   it with your provider if you stop using the Service.
 
-A free local tier is available. It runs a locally hosted open model and calls no
-third-party provider, so it costs nothing beyond your own compute.
+A local model is available. It runs a locally hosted open model and calls no
+third-party provider, so it adds no provider cost beyond your own compute. On the
+hosted Service, running any task — including one driven by the local model —
+requires an active subscription.
 
 ## 4. Subscriptions, renewals, cancellation and refunds
 
-### 4.1 Plans and trials
+### 4.1 Plans
 
-The Service is offered on paid monthly plans. There is no permanently free plan.
-New accounts begin with a time-limited trial at Starter-tier quota. When the
-trial lapses, you must subscribe to start new tasks. Current prices and token
-quotas are shown on the [pricing page](/pricing) and are authoritative there.
-
-### 4.2 First-month discount
-
-A one-time first-month discount may be offered. It applies once per user, ever.
-Cancelling and resubscribing does not restore eligibility, and neither does
-deleting your account and registering again with a new address if we determine
-the accounts belong to the same person.
+The Service is offered on paid monthly plans. There is no free plan and no trial:
+you must subscribe to a plan before you can start any task. Current prices and
+token quotas are shown on the [pricing page](/pricing) and are authoritative
+there.
 
 ### 4.3 Renewal and cancellation
 

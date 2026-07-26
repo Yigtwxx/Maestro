@@ -252,7 +252,15 @@ DOMAIN: DomainInfo = DomainInfo(
         "software engineering: writing code, debugging, architecture design, "
         "APIs, and code review"
     ),
-    routing_hint="code, debugging, software architecture, APIs, technical builds",
+    # Subject matter alone pulled questions here that this team cannot serve: a
+    # "which Python version shipped free-threading?" lookup was routed to the
+    # architect, whose deliverable is a design document. This domain is for
+    # *building* something, not for facts about the tools used to build.
+    routing_hint=(
+        "building or fixing software: writing code, debugging, designing an "
+        "architecture or API, reviewing a codebase; NOT looking up a fact about "
+        "a language, library, version or tool, which belongs to searching"
+    ),
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

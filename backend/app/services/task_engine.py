@@ -38,7 +38,8 @@ from app.core.constants import (
 )
 from app.schemas.task import TaskCreate
 from app.services import checkpoint_store, quota_service, task_run_store, usage_service
-from app.services.llm_service import AdapterPool
+from app.services.llm_service import AdapterPool, set_retry_observer
+from app.services.service_key_service import load_service_credentials
 from app.utils import tracing
 from app.utils.events import event_bus
 
@@ -90,7 +91,10 @@ def _build_pool(rc: TaskRunContext, emit) -> AdapterPool:  # noqa: ANN001
         model=rc.model,
         overrides=rc.payload.model_overrides,
         on_fallback=_notify_fallback,
-        traced=settings.tracing_enabled,
+        # Frozen on the payload at task start (request > user default > server).
+        # TracedAdapter can only be installed here, so a run that opted out
+        # records no llm.chat spans even if the server-wide flag is on.
+        traced=bool(rc.payload.tracing_enabled),
     )
 
 
@@ -140,7 +144,27 @@ async def run(rc: TaskRunContext) -> None:
     """Execute (or resume) a task through the durable step loop."""
     from app.services import task_service  # lazy: avoids an import cycle
 
+    # Pin the run's tracing choice onto this asyncio task's context before any
+    # span opens, so the structural spans (task/step/agent) honour it too — not
+    # just the llm.chat spans that TracedAdapter contributes.
+    tracing.tracer.set_enabled(rc.payload.tracing_enabled)
     emit = task_service._make_emit(rc.task_id, rc.user_id)
+
+    async def _on_llm_retry(info: dict[str, Any]) -> None:
+        """Surface a degrading provider link while the task is still running."""
+        await emit(
+            EventType.AGENT_WARNING,
+            {
+                "kind": "retry",
+                "message": (
+                    f"Provider connection retry #{info['attempt']} ({info['cause']})"
+                ),
+            },
+        )
+
+    # Same context-pinning as tracing above: the observer rides this asyncio
+    # task's context down into every subagent it spawns.
+    set_retry_observer(_on_llm_retry)
     pool = _build_pool(rc, emit)
     if rc.resumed:
         # Seed billing with pre-crash spend so the pool's running total (and the
@@ -230,6 +254,11 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
 
     await _raise_if_cancelled(rc.task_id)
     memory_context = await task_service._gather_context(rc.user_id, rc.payload.prompt)
+    # Decrypt this user's BYOK service keys once, here at the engine edge, and
+    # hand the agent layer plain data — the same shape as memory_context and the
+    # LLM brain key. Never raises: an absent or unreadable key just means the
+    # connected tools are withheld and the squad works from web_search.
+    service_credentials = await load_service_credentials(rc.user_id)
     ctx = AgentContext(
         adapter=pool.for_role("main"),
         adapter_pool=pool,
@@ -242,8 +271,13 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
         max_web_searches=settings.web_search_max_uses_per_subtask,
         max_data_fetches=settings.data_fetch_max_uses_per_subtask,
         max_code_executions=settings.code_execution_max_uses_per_subtask,
+        max_repo_lookups=settings.repo_intel_max_uses_per_subtask,
+        max_social_searches=settings.social_search_max_uses_per_subtask,
+        max_community_reads=settings.community_read_max_uses_per_subtask,
+        max_places_lookups=settings.places_intel_max_uses_per_subtask,
         max_tool_calls=settings.subagent_max_tool_calls,
         max_parallel_subagents=settings.subagent_max_parallel,
+        service_credentials=service_credentials,
     )
 
     # --- ROUTE ---

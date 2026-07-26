@@ -1,9 +1,10 @@
 // Storage-consent store (Zustand). Persisted to localStorage under
-// CONSENT_KEY. See the Cookie Policy: today the platform stores nothing that
-// isn't strictly necessary, so `necessary` is not a choice and there is nothing
-// to reject. `analytics` exists so that adding telemetry later is a change of
-// component, not a change of data shape -- and it defaults to false, which is
-// what "we never asked, so we never assumed" has to mean.
+// CONSENT_KEY. See the Cookie Policy: `necessary` is not a choice (sign-in
+// tokens are exempt from consent), while `analytics` is a real one on
+// deployments that enable Umami -- asked by the cookie notice, changeable any
+// time on /cookies. It defaults to false, which is what "we never asked, so we
+// never assumed" has to mean, and nothing reads it as true without an explicit
+// decide() call.
 
 import { create } from 'zustand';
 import { CONSENT_KEY } from '@/lib/constants';
@@ -11,7 +12,11 @@ import { CONSENT_KEY } from '@/lib/constants';
 interface ConsentRecord {
   /** Sign-in tokens. Exempt from consent; recorded for completeness. */
   necessary: true;
-  /** Product telemetry. Nothing sets this yet; opt-in when something does. */
+  /**
+   * Self-hosted analytics (Umami) on the marketing pages. Set by the consent
+   * banner or the /cookies page on deployments that configure a website id;
+   * stays false everywhere else.
+   */
   analytics: boolean;
   /** ISO timestamp of when the user dismissed the notice, if they have. */
   acknowledgedAt?: string;
@@ -22,6 +27,7 @@ interface ConsentState extends ConsentRecord {
   hydrated: boolean;
   hydrate: () => void;
   acknowledge: () => void;
+  decide: (analytics: boolean) => void;
 }
 
 const DEFAULT: ConsentRecord = { necessary: true, analytics: false };
@@ -64,6 +70,18 @@ export const useConsentStore = create<ConsentState>((set, get) => ({
     const record: ConsentRecord = {
       necessary: true,
       analytics: get().analytics,
+      acknowledgedAt: new Date().toISOString(),
+    };
+    write(record);
+    set(record);
+  },
+
+  // An explicit analytics decision: Accept/Reject on the banner, or a change
+  // of mind on /cookies. Also acknowledges, so the banner never re-asks.
+  decide: (analytics: boolean) => {
+    const record: ConsentRecord = {
+      necessary: true,
+      analytics,
       acknowledgedAt: new Date().toISOString(),
     };
     write(record);

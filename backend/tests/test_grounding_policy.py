@@ -16,6 +16,8 @@ from app.agents import main_agent, orchestrator, subagent
 from app.agents.base import AgentContext
 from app.agents.prompts import (
     GROUNDING_POLICY,
+    LANGUAGE_RULE,
+    MAIN_AGENT_SYSTEM,
     SYNTHESIS_MERGE_RULES,
     SYNTHESIS_SYSTEM,
 )
@@ -108,3 +110,78 @@ def test_synthesis_prompt_carries_the_policy_and_the_merge_rules() -> None:
     # The merge is where a marker is most likely to be lost, so the instruction
     # to carry markers through verbatim must survive any reflow of the prompt.
     assert "unchanged" in SYNTHESIS_MERGE_RULES
+
+
+def test_policy_restricts_markers_to_specific_values() -> None:
+    """A marker around a concept tells the reader nothing.
+
+    Observed on a live run: four of five bullets in an answer carried markers,
+    and their contents were "specific mechanisms", "specific material types" and
+    "generally accepted electrochemistry principles" — established science and
+    descriptions of what the answer did not cover, not values in doubt. The
+    policy already warned that marking everything equals marking nothing; that
+    was too abstract to act on, so the permitted contents are now enumerated.
+    """
+    assert "Only a *specific value* can be marked" in GROUNDING_POLICY
+    # The counter-example is the load-bearing part: the model needs to see the
+    # shape it is producing, not just a category name.
+    assert f"{UNCERTAINTY_OPEN} specific\n  mechanisms {UNCERTAINTY_CLOSE}" in (
+        GROUNDING_POLICY
+    ), GROUNDING_POLICY
+
+
+def test_language_rule_covers_section_headings() -> None:
+    """Format headings are given in English and were copied through verbatim.
+
+    A Turkish answer came back with "Key facts", "Assumptions made" and "Open
+    questions" as its section titles, because the member's output_format is
+    written in English like every other instruction.
+    """
+    assert "includes the headings" in LANGUAGE_RULE, LANGUAGE_RULE
+
+
+def test_planner_must_assign_a_member_that_produces_the_deliverable() -> None:
+    """Effort scaling is only safe if the surviving member makes the answer.
+
+    Capping by planner rank fixed the truncation, but the planner still chose a
+    research member on its own for a one-member budget, so the user received
+    "Key facts / Assumptions / Open questions" instead of an explanation.
+    """
+    system = MAIN_AGENT_SYSTEM.format(
+        domain="general",
+        expertise="x",
+        team="- writer: write",
+        methodology="",
+        planning_example="",
+        clarify_rule="",
+        memory_context="",
+        max_members=1,
+    )
+    assert "the plan must include a member whose output *is* the" in system, system
+    assert "If your budget is one\nmember, it must be that one." in system, system
+
+
+def test_planner_writes_briefs_in_the_user_language() -> None:
+    """The brief is the only user-role message a member ever sees.
+
+    Six of fifteen Turkish prompts came back in English even with the reply-
+    language rule in the member's system prompt, and they were the single-member
+    runs — the ones with no synthesis pass to correct the language afterwards.
+    The member had an English brief as its task and English instructions around
+    it; matching that was the locally sensible thing to do. Fixing it at the
+    planner makes the whole chain speak the user's language.
+    """
+    system = MAIN_AGENT_SYSTEM.format(
+        domain="general",
+        expertise="x",
+        team="- writer: write",
+        methodology="",
+        planning_example="",
+        clarify_rule="",
+        memory_context="",
+        max_members=3,
+    )
+    assert "Write each brief in the same language as the user's request" in system
+    # Member ids reach a dict lookup in _parse_assignments; a translated id is
+    # dropped as unknown and the plan silently loses that member.
+    assert "those are identifiers, not words to translate" in system, system

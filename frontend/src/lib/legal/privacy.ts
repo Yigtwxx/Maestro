@@ -13,7 +13,7 @@ Regulation (GDPR) and Turkish Law No. 6698 on the Protection of Personal Data
 
 ## 2. Who is responsible
 
-${operatorName}, established in ${country}, is the **data controller** (KVKK: *veri
+${operatorName}, an individual based in ${country}, is the **data controller** (KVKK: *veri
 sorumlusu*) for the data described here. You can reach us about anything in this
 policy at ${privacyEmail}.
 
@@ -60,9 +60,26 @@ database, a log, or an API response.
 
 ### 3.3 What we do not collect
 
-We run no analytics, no advertising, and no third-party tracking. We do not build
-a profile of you. We do not sell personal data, and we never have. We do not use
-your content to train models.
+We run no third-party analytics, no advertising, and no cross-site tracking. We
+do not build a profile of you. We do not sell personal data, and we never have.
+We do not use your content to train models.
+
+### 3.4 Anonymous usage statistics (optional)
+
+Some deployments of the Service run [Umami](https://umami.is), an open-source
+analytics tool self-hosted on our own infrastructure, to count visits to the
+**public marketing pages only** — never inside the signed-in product.
+
+It runs only with your **consent** (GDPR Art. 6(1)(a); KVKK explicit consent),
+asked before anything loads, with refusing as easy as accepting. It is
+cookieless: no identifier is stored in your browser, visitors are distinguished
+by a salted, regularly rotating hash, and IP addresses are not stored. It
+records the page viewed, the referring page, browser, operating system, device
+type, country, and screen size — nothing that names you.
+
+Because it is self-hosted, this data never leaves our server and involves no
+additional subprocessor. You can withdraw consent at any time on the
+[Cookie Policy](/cookies) page; withdrawal stops collection immediately.
 
 ## 4. Legal bases (GDPR Art. 6 / KVKK Art. 5)
 
@@ -73,6 +90,7 @@ your content to train models.
 | Keeping the platform secure, preventing abuse | Legitimate interests | Legitimate interests |
 | Meeting tax, accounting and legal duties | Legal obligation | Explicitly provided for by law |
 | Answering your support requests | Legitimate interests | Legitimate interests |
+| Anonymous visit statistics on public pages (where enabled) | Consent (Art. 6(1)(a)) | Explicit consent (Md. 5/1) |
 
 Where we rely on legitimate interests, we have weighed them against your rights
 and freedoms and concluded they do not override them. You may object — see
@@ -93,7 +111,10 @@ advertisers.
 | Payment processor | Takes payment for subscriptions | Your card details and billing identifiers |
 
 Model providers are engaged **by you**, through the key you connected. If you use
-only the local free tier, no prompt of yours leaves our infrastructure.
+only the local model, no prompt of yours leaves our infrastructure.
+
+Analytics (section 3.4) adds nothing to this list: it is self-hosted on the same
+infrastructure, so no third party receives that data.
 
 We will publish material changes to this list before they take effect.
 
@@ -128,6 +149,7 @@ Standard Contractual Clauses or the equivalent KVKK undertaking.
 | Conversation memory, document chunks | Until you delete the document, or delete your account |
 | Usage records | Until you delete your account |
 | Invoicing and tax records | For as long as tax and accounting law requires, even after account deletion |
+| Anonymous visit statistics (where enabled) | Aggregate, anonymous counts; not linked to your account and not covered by account deletion because they contain nothing that identifies you |
 
 ### 7.1 Deleting your account
 

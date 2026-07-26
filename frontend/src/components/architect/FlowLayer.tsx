@@ -16,6 +16,15 @@ export interface FlowEdge {
   to: string;
   active: boolean;
   done: boolean;
+  /**
+   * Anchor geometry. 'vertical' (the default) leaves the bottom of `from` and
+   * enters the top of `to` — the top-down agent hierarchy. 'horizontal' leaves
+   * the right edge and enters the left, for the connected-API rail beside the
+   * graph. Defaulting keeps every existing call site unchanged.
+   */
+  orientation?: 'vertical' | 'horizontal';
+  /** Per-edge RGB triplet; falls back to the layer-wide `rgb` prop. */
+  rgb?: string;
 }
 
 interface FlowLayerProps {
@@ -36,10 +45,14 @@ interface EdgePath {
   d: string;
   active: boolean;
   done: boolean;
+  rgb?: string;
 }
 
 /** Layout-coordinate offset of `el` within `container` (transform-immune). */
-function offsetWithin(el: HTMLElement, container: HTMLElement): { x: number; y: number } {
+function offsetWithin(
+  el: HTMLElement,
+  container: HTMLElement,
+): { x: number; y: number } {
   let x = 0;
   let y = 0;
   let node: HTMLElement | null = el;
@@ -51,7 +64,12 @@ function offsetWithin(el: HTMLElement, container: HTMLElement): { x: number; y: 
   return { x, y };
 }
 
-export function FlowLayer({ edges, nodesRef, containerRef, rgb }: FlowLayerProps) {
+export function FlowLayer({
+  edges,
+  nodesRef,
+  containerRef,
+  rgb,
+}: FlowLayerProps) {
   const reduced = useReducedMotion();
   const [paths, setPaths] = useState<EdgePath[]>([]);
   const [size, setSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
@@ -59,7 +77,12 @@ export function FlowLayer({ edges, nodesRef, containerRef, rgb }: FlowLayerProps
   const pulseEls = useRef<Map<string, SVGCircleElement>>(new Map());
 
   // Signature of the edge topology + states — drives re-measure and the loop.
-  const signature = edges.map((e) => `${e.from}>${e.to}:${e.active ? 1 : e.done ? 2 : 0}`).join('|');
+  const signature = edges
+    .map(
+      (e) =>
+        `${e.from}>${e.to}:${e.active ? 1 : e.done ? 2 : 0}:${e.orientation ?? 'v'}`,
+    )
+    .join('|');
 
   const measure = useCallback(() => {
     const container = containerRef.current;
@@ -73,16 +96,30 @@ export function FlowLayer({ edges, nodesRef, containerRef, rgb }: FlowLayerProps
       if (!fromEl || !toEl) continue;
       const fo = offsetWithin(fromEl, container);
       const to = offsetWithin(toEl, container);
-      const x1 = fo.x + fromEl.offsetWidth / 2;
-      const y1 = fo.y + fromEl.offsetHeight;
-      const x2 = to.x + toEl.offsetWidth / 2;
-      const y2 = to.y;
-      const bend = Math.max((y2 - y1) * 0.6, 14);
+      let d: string;
+      if (edge.orientation === 'horizontal') {
+        // Right edge of `from` into the left edge of `to`, bending on X so the
+        // curve reads as a branch off the hierarchy rather than part of it.
+        const x1 = fo.x + fromEl.offsetWidth;
+        const y1 = fo.y + fromEl.offsetHeight / 2;
+        const x2 = to.x;
+        const y2 = to.y + toEl.offsetHeight / 2;
+        const bend = Math.max((x2 - x1) * 0.5, 18);
+        d = `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}`;
+      } else {
+        const x1 = fo.x + fromEl.offsetWidth / 2;
+        const y1 = fo.y + fromEl.offsetHeight;
+        const x2 = to.x + toEl.offsetWidth / 2;
+        const y2 = to.y;
+        const bend = Math.max((y2 - y1) * 0.6, 14);
+        d = `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`;
+      }
       next.push({
         key: `${edge.from}>${edge.to}`,
-        d: `M ${x1} ${y1} C ${x1} ${y1 + bend}, ${x2} ${y2 - bend}, ${x2} ${y2}`,
+        d,
         active: edge.active,
         done: edge.done,
+        rgb: edge.rgb,
       });
     }
     setPaths(next);
@@ -156,9 +193,11 @@ export function FlowLayer({ edges, nodesRef, containerRef, rgb }: FlowLayerProps
           strokeWidth={p.active ? 1.5 : 1}
           strokeLinecap="round"
           className={p.active && !reduced ? 'animate-flow-dash' : undefined}
-          stroke={p.active || p.done ? `rgb(${rgb})` : '#3d3d5c'}
+          stroke={p.active || p.done ? `rgb(${p.rgb ?? rgb})` : '#3d3d5c'}
           strokeOpacity={p.active ? 0.9 : p.done ? 0.45 : 0.5}
-          strokeDasharray={p.active && !reduced ? '6 6' : p.done ? undefined : '4 4'}
+          strokeDasharray={
+            p.active && !reduced ? '6 6' : p.done ? undefined : '4 4'
+          }
           filter={p.active ? 'url(#flow-glow)' : undefined}
         />
       ))}
@@ -174,7 +213,7 @@ export function FlowLayer({ edges, nodesRef, containerRef, rgb }: FlowLayerProps
                   else pulseEls.current.delete(`${p.key}#${i}`);
                 }}
                 r={2.5}
-                fill={`rgb(${rgb})`}
+                fill={`rgb(${p.rgb ?? rgb})`}
                 filter="url(#flow-glow)"
               />
             )),

@@ -104,8 +104,8 @@ export function CostExplorer() {
 
       {!loading && !error && !hasData && (
         <p className="text-sm text-muted">
-          &gt; No cost recorded. Enable server-side tracing (TRACING_ENABLED=true) and run a task to
-          populate this.
+          &gt; No cost recorded. Turn on &quot;Execution tracing&quot; before starting a task — per task
+          in Task Configuration, or for every task from Settings → Preferences.
         </p>
       )}
 

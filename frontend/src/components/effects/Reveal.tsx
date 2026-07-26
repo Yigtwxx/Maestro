@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { motion } from 'motion/react';
 import { cn } from '@/lib/cn';
 import { DUR, EASE, useReducedMotion } from '@/lib/motion';
@@ -16,6 +16,12 @@ interface RevealProps {
   blur?: number;
   /** Animate on mount instead of on scroll into view. */
   onMount?: boolean;
+  /**
+   * Outer element, for callers that need to measure or scroll to the revealed
+   * block. Set on both branches so a reduced-motion visitor is not the one case
+   * where the ref comes back null.
+   */
+  ref?: Ref<HTMLDivElement>;
 }
 
 /**
@@ -30,9 +36,15 @@ export function Reveal({
   y = 12,
   blur = 6,
   onMount = false,
+  ref,
 }: RevealProps) {
   const reduced = useReducedMotion();
-  if (reduced) return <div className={className}>{children}</div>;
+  if (reduced)
+    return (
+      <div ref={ref} className={className}>
+        {children}
+      </div>
+    );
 
   const initial = { opacity: 0, y, filter: `blur(${blur}px)` };
   const visible = {
@@ -43,6 +55,7 @@ export function Reveal({
   };
   return (
     <motion.div
+      ref={ref}
       className={cn(className)}
       initial={initial}
       {...(onMount

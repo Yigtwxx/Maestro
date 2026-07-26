@@ -9,14 +9,18 @@ All network calls are wrapped with exponential-backoff retries via ``tenacity``.
 
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from math import ceil
+from typing import Any
 
 import httpx
 from tenacity import (
+    RetryCallState,
     retry,
     retry_if_exception,
     stop_after_attempt,
@@ -25,21 +29,34 @@ from tenacity import (
 
 from app.core.config import settings
 from app.core.constants import (
+    AI21_API_BASE_URL,
     ANTHROPIC_API_URL,
     ANTHROPIC_DEFAULT_MAX_TOKENS,
     ANTHROPIC_VERSION,
+    CEREBRAS_API_BASE_URL,
+    COHERE_API_BASE_URL,
+    DEEPINFRA_API_BASE_URL,
     DEEPSEEK_API_BASE_URL,
+    FIREWORKS_API_BASE_URL,
     GEMINI_API_BASE_URL,
     GROQ_API_BASE_URL,
+    HUGGINGFACE_API_BASE_URL,
+    HYPERBOLIC_API_BASE_URL,
     LLM_CHAT_PROVIDERS,
     MISTRAL_API_BASE_URL,
     MODEL_TIER_DEFAULTS,
+    MOONSHOT_API_BASE_URL,
+    NEBIUS_API_BASE_URL,
+    NOVITA_API_BASE_URL,
     OPENROUTER_API_BASE_URL,
     PERPLEXITY_API_BASE_URL,
     PROVIDER_TIER_MODELS,
+    QWEN_API_BASE_URL,
+    SAMBANOVA_API_BASE_URL,
     TOGETHER_API_BASE_URL,
     TOKEN_ESTIMATE_CHARS_PER_TOKEN,
     XAI_API_BASE_URL,
+    ZAI_API_BASE_URL,
     LLMProvider,
 )
 from app.utils.url_guard import check_public_url
@@ -90,11 +107,46 @@ def _is_retryable(exc: BaseException) -> bool:
     return isinstance(exc, httpx.TransportError)
 
 
+# A retry is the only in-band signal that the link to a provider is degrading:
+# by the time the caller sees an LLMError the attempts are already spent. The
+# observer is a ContextVar so the running task can watch its own calls without
+# this module knowing anything about tasks or the event bus (same shape as the
+# per-run tracing override in utils/tracing.py). asyncio.create_task copies the
+# context, so parallel subagents inherit it and it cannot leak across tasks.
+RetryObserver = Callable[[dict[str, Any]], Awaitable[None]]
+
+_retry_observer: ContextVar[RetryObserver | None] = ContextVar(
+    "maestro_llm_retry_observer", default=None
+)
+
+
+def set_retry_observer(observer: RetryObserver | None) -> None:
+    """Pin a retry listener for the current asyncio task and everything it spawns."""
+    _retry_observer.set(observer)
+
+
+async def _notify_retry(retry_state: RetryCallState) -> None:
+    """Report one exhausted attempt to the current observer, if any."""
+    observer = _retry_observer.get()
+    if observer is None:
+        return
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    await observer(
+        {
+            "attempt": retry_state.attempt_number,
+            # Class name only. An exception message can carry a raw provider
+            # response body, and this payload is bound for the browser.
+            "cause": type(exc).__name__ if exc is not None else "unknown",
+        }
+    )
+
+
 _retry_policy = retry(
     reraise=True,
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=10),
     retry=retry_if_exception(_is_retryable),
+    before_sleep=_notify_retry,
 )
 
 
@@ -167,8 +219,6 @@ def _parse_openai_tool_calls(raw: object) -> list[ToolCall]:
     """
     if not isinstance(raw, list):
         return []
-    import json
-
     calls: list[ToolCall] = []
     for item in raw:
         function = (item or {}).get("function") or {}
@@ -411,19 +461,226 @@ class _OpenAICompatAdapter(LLMAdapter):
         )
 
 
+def _parse_ollama_tool_calls(raw: object) -> list[ToolCall]:
+    """Parse a native Ollama ``message.tool_calls`` array.
+
+    Deliberately not ``_parse_openai_tool_calls``: the OpenAI wire format sends
+    ``function.arguments`` as a JSON *string*, Ollama's native format sends it as
+    an already-decoded object. Feeding the latter to ``json.loads`` yields ``{}``
+    and every tool call silently loses its arguments. Native ids are absent, so
+    the index stands in — the directive loop does not use it, and the native loop
+    only needs it to be unique within one turn.
+    """
+    if not isinstance(raw, list):
+        return []
+    calls: list[ToolCall] = []
+    for index, item in enumerate(raw):
+        function = (item or {}).get("function") or {}
+        name = str(function.get("name", "")).strip()
+        if not name:
+            continue
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments or "{}")
+            except (json.JSONDecodeError, TypeError):
+                arguments = {}
+        calls.append(
+            ToolCall(
+                id=str(item.get("id") or index),
+                name=name,
+                arguments=arguments if isinstance(arguments, dict) else {},
+            )
+        )
+    return calls
+
+
 class OllamaAdapter(_OpenAICompatAdapter):
-    """Free/local tier via Ollama's OpenAI-compatible endpoint."""
+    """Free/local tier via Ollama, preferring its native ``/api/chat``.
+
+    The OpenAI-compatible shim is kept as the parent implementation and is still
+    used when ``ollama_native_api`` is off or when ``/api/chat`` is not there —
+    but it cannot express the three controls this model tier needs, all of which
+    were measured to matter on qwen3.5:9b:
+
+    * ``think`` — the shim reports a thinking model's reasoning in a field
+      Maestro never reads, while it still counts against ``max_tokens``. 25-33%
+      of replies arrived empty with ``finish_reason=length``. With thinking off:
+      6/6 non-empty, and 3.6s instead of 62.8s.
+    * ``format`` — a real JSON-schema constraint rather than prose parsing.
+      Every agent schema, including ``PlanResult`` with its ``$defs``, validated
+      5/5. This is why ``json_schema`` is now advertised as supported.
+    * ``num_ctx`` — the shim gives no way to raise the 4096-token default, past
+      which Ollama truncates the prompt from the front and the system prompt is
+      the first casualty.
+
+    Both endpoints live on the same host; the native root is ``base_url`` with
+    the OpenAI ``/v1`` suffix removed.
+    """
 
     provider = LLMProvider.OLLAMA
     base_url = settings.free_model_endpoint
     default_model = settings.free_model_name
-    # qwen-class local models only reliably do ``format: json``, not native
-    # tools or provider-enforced schemas — structured_call uses the fallback.
     capabilities = AdapterCapabilities(
         streaming=False,
         native_tools=settings.ollama_native_tools,
-        json_schema=False,
+        # Native /api/chat compiles a JSON schema into a grammar, so structured
+        # output is enforced rather than parsed back out of prose.
+        json_schema=settings.ollama_native_api,
     )
+
+    # Set once, per process, when /api/chat answers 404 — a server behind
+    # free_model_endpoint that speaks only the OpenAI shim (LM Studio, vLLM)
+    # should degrade to it rather than fail every call.
+    _native_available: bool = True
+
+    @property
+    def _native_root(self) -> str:
+        """The host root serving ``/api/chat``, derived from ``base_url``."""
+        root = self.base_url.rstrip("/")
+        return root[: -len("/v1")] if root.endswith("/v1") else root
+
+    def _use_native(self) -> bool:
+        """Whether this call should take the native endpoint."""
+        return settings.ollama_native_api and type(self)._native_available
+
+    async def chat(
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        tools: list[ToolDef] | None = None,
+        response_schema: dict | None = None,
+    ) -> LLMResponse:
+        if not self._use_native():
+            return await super().chat(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tools,
+                response_schema=response_schema,
+            )
+        model = self.model or self.default_model
+        options: dict[str, object] = {
+            "temperature": temperature,
+            "num_ctx": settings.ollama_num_ctx,
+        }
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
+        # Thinking is always off when the reply has to satisfy a schema. The
+        # grammar already fixes the output's shape, so reasoning buys nothing
+        # there — and it is precisely where the cost lands, because a reply that
+        # reasons past max_tokens arrives with empty content and the agent that
+        # asked for JSON gets none. Free-form work (a subagent's deliverable,
+        # the synthesis) is the only place reasoning can pay for itself, so it
+        # is the only place the setting is consulted.
+        think = settings.ollama_think and response_schema is None
+        payload: dict = {
+            "model": model,
+            "messages": [{"role": m.role, "content": m.content} for m in messages],
+            "stream": False,
+            "think": think,
+            "options": options,
+        }
+        if tools and self.capabilities.native_tools:
+            payload["tools"] = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    },
+                }
+                for t in tools
+            ]
+        if response_schema is not None:
+            payload["format"] = response_schema
+        try:
+            data = await self._post_native(payload)
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            if status == 404:
+                # No native endpoint here: remember it and take the shim from now
+                # on, so a non-Ollama OpenAI-compatible server keeps working
+                # instead of failing every call for the life of the process.
+                logger.warning(
+                    "ollama /api/chat returned 404 at %s; "
+                    "falling back to the OpenAI-compatible endpoint",
+                    self._native_root,
+                )
+                type(self)._native_available = False
+                return await super().chat(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    response_schema=response_schema,
+                )
+            body = exc.response.text[:_ERROR_BODY_MAX]
+            logger.warning(
+                "ollama chat failed: HTTP %s model=%s body=%s", status, model, body
+            )
+            raise LLMError(f"ollama chat failed: HTTP {status}") from exc
+        except httpx.HTTPError as exc:
+            logger.warning("ollama chat failed: %r model=%s", exc, model)
+            raise LLMError("ollama chat failed") from exc
+
+        message = data.get("message")
+        if not isinstance(message, dict):
+            raise LLMError("Malformed LLM response")
+        content = message.get("content") or ""
+        tool_calls = _parse_ollama_tool_calls(message.get("tool_calls"))
+
+        # A thinking reply that ran out of budget mid-reasoning comes back with
+        # nothing to show for it: empty content, no tool call, and every token
+        # spent inside a field we do not read. Retrying with thinking off is the
+        # one change that reliably produces an answer instead — measured 6/6
+        # against 4/6 — so the run recovers rather than surfacing a blank that
+        # the caller can only report as a failed subtask. Bounded to one extra
+        # call, and only from the thinking path, so it cannot recurse.
+        if think and not content.strip() and not tool_calls:
+            logger.warning(
+                "ollama returned no content (%s); retrying once without thinking",
+                data.get("done_reason"),
+            )
+            retried = dict(payload)
+            retried["think"] = False
+            try:
+                data = await self._post_native(retried)
+            except httpx.HTTPError as exc:
+                logger.warning("ollama no-think retry failed: %r", exc)
+            else:
+                message = data.get("message")
+                if isinstance(message, dict):
+                    content = message.get("content") or ""
+                    tool_calls = _parse_ollama_tool_calls(message.get("tool_calls"))
+
+        input_tokens = int(data.get("prompt_eval_count") or 0)
+        output_tokens = int(data.get("eval_count") or 0)
+        return LLMResponse(
+            content=content,
+            model=model,
+            tokens_used=input_tokens + output_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            finish_reason=data.get("done_reason"),
+            tool_calls=tool_calls,
+            provider=self.provider,
+            raw=data,
+        )
+
+    @_retry_policy
+    async def _post_native(self, payload: dict) -> dict:
+        """POST to ``/api/chat``. Local Ollama takes no auth header."""
+        resp = await _http_client().post(
+            f"{self._native_root}/api/chat",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        resp.raise_for_status()
+        return resp.json()
 
 
 class OpenAIAdapter(_OpenAICompatAdapter):
@@ -502,6 +759,147 @@ class PerplexityAdapter(_OpenAICompatAdapter):
     provider = LLMProvider.PERPLEXITY
     base_url = PERPLEXITY_API_BASE_URL
     default_model = "sonar"
+
+
+# Each adapter below is a base URL plus a default model, following the pattern
+# above. Both were checked on 2026-07-26: every base URL was confirmed by an
+# unauthorized POST to `{base}/chat/completions` returning 401/403/422 rather
+# than 404, and each default model was confirmed present either in the
+# provider's own public /models listing or in its documentation.
+#
+# A default only applies when the user stores no model on the key, and a stale
+# one surfaces as an opaque HTTP 404 at task time, so refresh these when a
+# lineup changes. Most of these clouds serve the same open-weight
+# gpt-oss-120b, which is why the defaults look repetitive; the two exceptions
+# are called out below.
+
+
+class CerebrasAdapter(_OpenAICompatAdapter):
+    """Cerebras (BYOK). OpenAI-compatible; wafer-scale inference."""
+
+    provider = LLMProvider.CEREBRAS
+    base_url = CEREBRAS_API_BASE_URL
+    default_model = "gpt-oss-120b"
+
+
+class FireworksAdapter(_OpenAICompatAdapter):
+    """Fireworks AI (BYOK). OpenAI-compatible.
+
+    Model ids must be fully qualified account paths; a bare name does not
+    resolve.
+    """
+
+    provider = LLMProvider.FIREWORKS
+    base_url = FIREWORKS_API_BASE_URL
+    default_model = "accounts/fireworks/models/gpt-oss-120b"
+
+
+class DeepInfraAdapter(_OpenAICompatAdapter):
+    """DeepInfra (BYOK). OpenAI-compatible."""
+
+    provider = LLMProvider.DEEPINFRA
+    base_url = DEEPINFRA_API_BASE_URL
+    default_model = "openai/gpt-oss-120b"
+
+
+class SambaNovaAdapter(_OpenAICompatAdapter):
+    """SambaNova Cloud (BYOK). OpenAI-compatible."""
+
+    provider = LLMProvider.SAMBANOVA
+    base_url = SAMBANOVA_API_BASE_URL
+    default_model = "gpt-oss-120b"
+
+
+class NebiusAdapter(_OpenAICompatAdapter):
+    """Nebius Token Factory, formerly AI Studio (BYOK). OpenAI-compatible."""
+
+    provider = LLMProvider.NEBIUS
+    base_url = NEBIUS_API_BASE_URL
+    default_model = "openai/gpt-oss-120b"
+
+
+class HyperbolicAdapter(_OpenAICompatAdapter):
+    """Hyperbolic (BYOK). OpenAI-compatible.
+
+    One of the two providers here that cannot use gpt-oss-120b: Hyperbolic has
+    it on its deprecation list.
+    """
+
+    provider = LLMProvider.HYPERBOLIC
+    base_url = HYPERBOLIC_API_BASE_URL
+    default_model = "meta-llama/Llama-3.3-70B-Instruct"
+
+
+class NovitaAdapter(_OpenAICompatAdapter):
+    """Novita AI (BYOK). OpenAI-compatible."""
+
+    provider = LLMProvider.NOVITA
+    base_url = NOVITA_API_BASE_URL
+    default_model = "openai/gpt-oss-120b"
+
+
+class HuggingFaceAdapter(_OpenAICompatAdapter):
+    """Hugging Face Inference Providers router (BYOK). OpenAI-compatible.
+
+    A model id may carry an optional ``:provider`` suffix to pin routing. Left
+    unpinned, the router picks the fastest provider, which makes the effective
+    price vary by a factor of several between calls.
+    """
+
+    provider = LLMProvider.HUGGINGFACE
+    base_url = HUGGINGFACE_API_BASE_URL
+    default_model = "openai/gpt-oss-120b"
+
+
+class CohereAdapter(_OpenAICompatAdapter):
+    """Cohere (BYOK), via its OpenAI compatibility endpoint.
+
+    Cohere's native API is not OpenAI-shaped; the compatibility base URL is what
+    lets this stay an ordinary subclass instead of a bespoke adapter. The
+    floating ``command-r``/``command-r-plus`` aliases were retired, so only
+    dated snapshots resolve.
+    """
+
+    provider = LLMProvider.COHERE
+    base_url = COHERE_API_BASE_URL
+    default_model = "command-a-plus-05-2026"
+
+
+class MoonshotAdapter(_OpenAICompatAdapter):
+    """Moonshot AI / Kimi (BYOK). OpenAI-compatible, international endpoint."""
+
+    provider = LLMProvider.MOONSHOT
+    base_url = MOONSHOT_API_BASE_URL
+    default_model = "kimi-k2.6"
+
+
+class ZaiAdapter(_OpenAICompatAdapter):
+    """Z.ai GLM (BYOK). OpenAI-compatible."""
+
+    provider = LLMProvider.ZAI
+    base_url = ZAI_API_BASE_URL
+    default_model = "glm-4.7"
+
+
+class QwenAdapter(_OpenAICompatAdapter):
+    """Alibaba Qwen via DashScope international (BYOK). OpenAI-compatible.
+
+    ``qwen-plus`` is the legacy floating alias rather than a dated ``qwen3.7-*``
+    id. It is deliberate: the alias stays valid across model generations and is
+    currently cheaper on output than the dated equivalent.
+    """
+
+    provider = LLMProvider.QWEN
+    base_url = QWEN_API_BASE_URL
+    default_model = "qwen-plus"
+
+
+class AI21Adapter(_OpenAICompatAdapter):
+    """AI21 Labs Jamba (BYOK). OpenAI-shaped, though not documented as such."""
+
+    provider = LLMProvider.AI21
+    base_url = AI21_API_BASE_URL
+    default_model = "jamba-mini-2-2026-01"
 
 
 class CustomOpenAICompatAdapter(_OpenAICompatAdapter):
@@ -846,6 +1244,19 @@ _ADAPTERS: dict[LLMProvider, type[LLMAdapter]] = {
     LLMProvider.OPENROUTER: OpenRouterAdapter,
     LLMProvider.TOGETHER: TogetherAdapter,
     LLMProvider.PERPLEXITY: PerplexityAdapter,
+    LLMProvider.CEREBRAS: CerebrasAdapter,
+    LLMProvider.FIREWORKS: FireworksAdapter,
+    LLMProvider.DEEPINFRA: DeepInfraAdapter,
+    LLMProvider.SAMBANOVA: SambaNovaAdapter,
+    LLMProvider.NEBIUS: NebiusAdapter,
+    LLMProvider.HYPERBOLIC: HyperbolicAdapter,
+    LLMProvider.NOVITA: NovitaAdapter,
+    LLMProvider.HUGGINGFACE: HuggingFaceAdapter,
+    LLMProvider.COHERE: CohereAdapter,
+    LLMProvider.MOONSHOT: MoonshotAdapter,
+    LLMProvider.ZAI: ZaiAdapter,
+    LLMProvider.QWEN: QwenAdapter,
+    LLMProvider.AI21: AI21Adapter,
     LLMProvider.CUSTOM: CustomOpenAICompatAdapter,
 }
 

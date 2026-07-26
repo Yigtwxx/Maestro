@@ -4,8 +4,9 @@
 //
 // The LOCALE is pinned to English (the app's only UI language until i18n lands)
 // rather than left to the browser default. Passing `undefined` used the visitor's
-// system locale, so a Turkish browser rendered "13 Tem 2026" / "21 dakika önce"
-// inside an otherwise-English UI. en-GB keeps the intended day-first "12 Jul 2026".
+// system locale, so a browser set to another language rendered localized month
+// abbreviations and relative times inside an otherwise-English UI. en-GB keeps
+// the intended day-first "12 Jul 2026".
 // This matches the explicit 'en'/'en-US'/'en-GB' locales used elsewhere
 // (HistoryPanel, QuotaMeter, billing-format, legal, deletion).
 

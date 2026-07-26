@@ -146,13 +146,22 @@ Method:
 4. Give a positioning recommendation with the rating and review-volume target a
    newcomer would need to hit to be credible.
 5. State plainly what would change the conclusion.
-Quality bar: the recommendation is specific to this area, not generic advice."""
+6. Write the Data coverage section, reconciled across every member's work: the
+   geography actually searched, how many places were found, and which figures
+   were measured live versus inferred. You are the last member the reader sees,
+   so if you do not account for coverage nobody does — and a run that fell back
+   to web_search because places_intel was unavailable must say so here rather
+   than letting inferred figures read as measured ones.
+Quality bar: the recommendation is specific to this area, not generic advice,
+and the reader can tell exactly what it was built from."""
 
 _GAP_OUTPUT = """\
 - Ranked gaps: gap, supporting evidence, confidence.
 - Rejected-approach warnings.
 - Positioning recommendation with a credible rating/volume target.
-- What would change this conclusion."""
+- What would change this conclusion.
+- Data coverage: area searched, place count, which figures were measured live
+  and which were inferred."""
 
 DOMAIN: DomainInfo = DomainInfo(
     id="local",
@@ -231,4 +240,5 @@ DOMAIN: DomainInfo = DomainInfo(
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
     review_criteria=_REVIEW_CRITERIA,
+    deliverable_member="gap",
 )

@@ -15,7 +15,12 @@ export type ModuleKey =
   | 'architect'
   | 'agents'
   | 'documents'
+  | 'api-keys'
+  | 'billing'
+  | 'profile'
   | 'settings'
+  | 'admin'
+  | 'traces'
   | 'brand';
 
 export interface ModuleColor {
@@ -111,8 +116,8 @@ export const MODULE_COLOR: Record<ModuleKey, ModuleColor> = {
       'border border-module-architect/60 bg-module-architect/10 text-module-architect hover:border-module-architect hover:shadow-glow-mod-architect focus-visible:ring-module-architect',
     navActive: 'bg-module-architect text-black shadow-glow-mod-architect',
     navIconHover: 'group-hover:text-module-architect',
-    hex: '#a78bfa',
-    rgb: '167 139 250',
+    hex: '#9d4dff',
+    rgb: '157 77 255',
   },
   agents: {
     text: 'text-module-agents',
@@ -154,6 +159,66 @@ export const MODULE_COLOR: Record<ModuleKey, ModuleColor> = {
     hex: '#ff7a45',
     rgb: '255 122 69',
   },
+  'api-keys': {
+    text: 'text-module-api-keys',
+    bg: 'bg-module-api-keys/10',
+    bgSolid: 'bg-module-api-keys',
+    border: 'border-module-api-keys/40',
+    borderHover: 'hover:border-module-api-keys/50',
+    focus: 'focus:border-module-api-keys focus-visible:ring-module-api-keys/60',
+    focusGlow: 'focus:shadow-glow-mod-api-keys',
+    ring: 'focus-visible:ring-module-api-keys',
+    glow: 'shadow-glow-mod-api-keys',
+    glowHover: 'hover:shadow-glow-mod-api-keys',
+    btnSolid:
+      'bg-module-api-keys text-black hover:brightness-110 hover:shadow-glow-mod-api-keys focus-visible:ring-module-api-keys',
+    btnOutline:
+      'border border-module-api-keys/60 bg-module-api-keys/10 text-module-api-keys hover:border-module-api-keys hover:shadow-glow-mod-api-keys focus-visible:ring-module-api-keys',
+    navActive: 'bg-module-api-keys text-black shadow-glow-mod-api-keys',
+    navIconHover: 'group-hover:text-module-api-keys',
+    hex: '#2ee6a6',
+    rgb: '46 230 166',
+  },
+  billing: {
+    text: 'text-module-billing',
+    bg: 'bg-module-billing/10',
+    bgSolid: 'bg-module-billing',
+    border: 'border-module-billing/40',
+    borderHover: 'hover:border-module-billing/50',
+    focus: 'focus:border-module-billing focus-visible:ring-module-billing/60',
+    focusGlow: 'focus:shadow-glow-mod-billing',
+    ring: 'focus-visible:ring-module-billing',
+    glow: 'shadow-glow-mod-billing',
+    glowHover: 'hover:shadow-glow-mod-billing',
+    btnSolid:
+      'bg-module-billing text-black hover:brightness-110 hover:shadow-glow-mod-billing focus-visible:ring-module-billing',
+    btnOutline:
+      'border border-module-billing/60 bg-module-billing/10 text-module-billing hover:border-module-billing hover:shadow-glow-mod-billing focus-visible:ring-module-billing',
+    navActive: 'bg-module-billing text-black shadow-glow-mod-billing',
+    navIconHover: 'group-hover:text-module-billing',
+    hex: '#ffb02e',
+    rgb: '255 176 46',
+  },
+  profile: {
+    text: 'text-module-profile',
+    bg: 'bg-module-profile/10',
+    bgSolid: 'bg-module-profile',
+    border: 'border-module-profile/40',
+    borderHover: 'hover:border-module-profile/50',
+    focus: 'focus:border-module-profile focus-visible:ring-module-profile/60',
+    focusGlow: 'focus:shadow-glow-mod-profile',
+    ring: 'focus-visible:ring-module-profile',
+    glow: 'shadow-glow-mod-profile',
+    glowHover: 'hover:shadow-glow-mod-profile',
+    btnSolid:
+      'bg-module-profile text-black hover:brightness-110 hover:shadow-glow-mod-profile focus-visible:ring-module-profile',
+    btnOutline:
+      'border border-module-profile/60 bg-module-profile/10 text-module-profile hover:border-module-profile hover:shadow-glow-mod-profile focus-visible:ring-module-profile',
+    navActive: 'bg-module-profile text-black shadow-glow-mod-profile',
+    navIconHover: 'group-hover:text-module-profile',
+    hex: '#e879f9',
+    rgb: '232 121 249',
+  },
   settings: {
     text: 'text-module-settings',
     bg: 'bg-module-settings/10',
@@ -174,6 +239,46 @@ export const MODULE_COLOR: Record<ModuleKey, ModuleColor> = {
     hex: '#2ee6a6',
     rgb: '46 230 166',
   },
+  admin: {
+    text: 'text-module-admin',
+    bg: 'bg-module-admin/10',
+    bgSolid: 'bg-module-admin',
+    border: 'border-module-admin/40',
+    borderHover: 'hover:border-module-admin/50',
+    focus: 'focus:border-module-admin focus-visible:ring-module-admin/60',
+    focusGlow: 'focus:shadow-glow-mod-admin',
+    ring: 'focus-visible:ring-module-admin',
+    glow: 'shadow-glow-mod-admin',
+    glowHover: 'hover:shadow-glow-mod-admin',
+    btnSolid:
+      'bg-module-admin text-black hover:brightness-110 hover:shadow-glow-mod-admin focus-visible:ring-module-admin',
+    btnOutline:
+      'border border-module-admin/60 bg-module-admin/10 text-module-admin hover:border-module-admin hover:shadow-glow-mod-admin focus-visible:ring-module-admin',
+    navActive: 'bg-module-admin text-black shadow-glow-mod-admin',
+    navIconHover: 'group-hover:text-module-admin',
+    hex: '#ff4d5e',
+    rgb: '255 77 94',
+  },
+  traces: {
+    text: 'text-module-traces',
+    bg: 'bg-module-traces/10',
+    bgSolid: 'bg-module-traces',
+    border: 'border-module-traces/40',
+    borderHover: 'hover:border-module-traces/50',
+    focus: 'focus:border-module-traces focus-visible:ring-module-traces/60',
+    focusGlow: 'focus:shadow-glow-mod-traces',
+    ring: 'focus-visible:ring-module-traces',
+    glow: 'shadow-glow-mod-traces',
+    glowHover: 'hover:shadow-glow-mod-traces',
+    btnSolid:
+      'bg-module-traces text-black hover:brightness-110 hover:shadow-glow-mod-traces focus-visible:ring-module-traces',
+    btnOutline:
+      'border border-module-traces/60 bg-module-traces/10 text-module-traces hover:border-module-traces hover:shadow-glow-mod-traces focus-visible:ring-module-traces',
+    navActive: 'bg-module-traces text-black shadow-glow-mod-traces',
+    navIconHover: 'group-hover:text-module-traces',
+    hex: '#6d7cff',
+    rgb: '109 124 255',
+  },
   brand: {
     text: 'text-module-brand',
     bg: 'bg-module-brand/10',
@@ -191,12 +296,12 @@ export const MODULE_COLOR: Record<ModuleKey, ModuleColor> = {
       'border border-module-brand/60 bg-module-brand/10 text-module-brand hover:border-module-brand hover:shadow-glow-mod-brand focus-visible:ring-module-brand',
     navActive: 'bg-module-brand text-black shadow-glow-mod-brand',
     navIconHover: 'group-hover:text-module-brand',
-    hex: '#a3e635',
-    rgb: '163 230 53',
+    hex: '#d3cbc0',
+    rgb: '211 203 192',
   },
 };
 
-/** Resolve a module's colors, falling back to the lime brand. */
+/** Resolve a module's colors, falling back to the champagne brand. */
 export function moduleColor(key: ModuleKey | undefined): ModuleColor {
   return MODULE_COLOR[key ?? 'brand'];
 }
@@ -205,9 +310,16 @@ const MODULE_ROUTES: ReadonlyArray<[prefix: string, key: ModuleKey]> = [
   ['/dashboard', 'dashboard'],
   ['/marketplace', 'marketplace'],
   ['/architect', 'architect'],
+  ['/traces', 'traces'],
   ['/agents', 'agents'],
   ['/documents', 'documents'],
+  // Settings sub-sections resolve to their own hue; more specific prefixes
+  // must precede the bare '/settings' fallback since matching is first-hit.
+  ['/settings/api-keys', 'api-keys'],
+  ['/settings/billing', 'billing'],
+  ['/settings/profile', 'profile'],
   ['/settings', 'settings'],
+  ['/admin', 'admin'],
 ];
 
 /** Resolve the module owning a pathname — used by Sidebar/TopBar chrome. */

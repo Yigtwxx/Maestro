@@ -60,14 +60,20 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface">
-      <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+    <aside className="flex w-48 shrink-0 flex-col border-r border-border bg-surface">
+      {/* `h-14` mirrors the TopBar so the two bottom borders meet across the
+          sidebar seam. Padding-driven height drifted 12px out of line. */}
+      <div className="flex h-14 items-center gap-3 border-b border-border px-5">
         <BrandMark className="h-9 w-9 shrink-0 rounded" glyphClassName="h-5 w-5" />
         <div className="leading-tight">
           <span className="block font-sans text-base font-bold tracking-wide text-white">
             MAESTRO
           </span>
-          <span className="text-micro text-primary">AI OS v0.2</span>
+          {/* Tighter and smaller than `text-micro` — as a wordmark subtitle it
+              only has to whisper, and the wide tracking read as a second title. */}
+          <span className="block text-[9px] font-semibold uppercase tracking-[0.08em] text-primary">
+            AI OS v0.2
+          </span>
         </div>
       </div>
       <nav className="flex-1 space-y-1 px-3 py-4">

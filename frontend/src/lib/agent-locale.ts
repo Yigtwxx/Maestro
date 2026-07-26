@@ -16,12 +16,17 @@ interface DomainLocale {
   team: Record<string, MemberLocale>;
 }
 
-export const AGENT_LOCALE_TR: Record<string, DomainLocale> = {
+export const AGENT_LOCALE: Record<string, DomainLocale> = {
   software: {
     name: 'Software Expert',
     description:
       'Expert in writing code, debugging, architectural design, and API development tasks.',
-    capabilities: ['Code writing', 'Debugging', 'Architecture design', 'Code review'],
+    capabilities: [
+      'Code writing',
+      'Debugging',
+      'Architecture design',
+      'Code review',
+    ],
     team: {
       architect: {
         name: 'Architect',
@@ -102,6 +107,10 @@ export const AGENT_LOCALE_TR: Record<string, DomainLocale> = {
         name: 'Audience Analyst',
         description: 'Analyzes the target audience, its needs, and segments.',
       },
+      competitor: {
+        name: 'Competitive Analyst',
+        description: 'Maps how rivals position themselves and where the open claim is.',
+      },
       strategist: {
         name: 'Strategy Expert',
         description: 'Designs the campaign and brand strategy.',
@@ -143,13 +152,23 @@ export const AGENT_LOCALE_TR: Record<string, DomainLocale> = {
         name: 'Backlink & Authority Analyst',
         description: 'Builds the backlink profile and domain authority strategy.',
       },
+      strategist: {
+        name: 'SEO Strategist',
+        description:
+          "Merges the specialists' findings into one prioritized, sequenced action plan.",
+      },
     },
   },
   searching: {
     name: 'Search Expert',
     description:
       'Expert in quickly finding and verifying specific information, sources, and facts on the web.',
-    capabilities: ['Web search', 'Source finding', 'Fact verification', 'Quick summarization'],
+    capabilities: [
+      'Web search',
+      'Source finding',
+      'Fact verification',
+      'Quick summarization',
+    ],
     team: {
       query_planner: {
         name: 'Query Planner',
@@ -214,7 +233,12 @@ export const AGENT_LOCALE_TR: Record<string, DomainLocale> = {
     name: 'Data Expert',
     description:
       'Expert in data analysis, statistics, visualization, and data pipeline design.',
-    capabilities: ['Data analysis', 'Statistics', 'Visualization', 'Data pipelines'],
+    capabilities: [
+      'Data analysis',
+      'Statistics',
+      'Visualization',
+      'Data pipelines',
+    ],
     team: {
       collector: {
         name: 'Data Collector',
@@ -231,6 +255,11 @@ export const AGENT_LOCALE_TR: Record<string, DomainLocale> = {
       visualizer: {
         name: 'Visualizer',
         description: 'Designs appropriate visualizations for the findings.',
+      },
+      critic: {
+        name: 'Statistical Critic',
+        description:
+          'Attacks the analysis: sample validity, confounders, and overstated causality.',
       },
       interpreter: {
         name: 'Interpreter & Reporter',
@@ -252,6 +281,10 @@ export const AGENT_LOCALE_TR: Record<string, DomainLocale> = {
       planner: {
         name: 'Content Planner',
         description: 'Defines the audience, angle, and section-level outline.',
+      },
+      researcher: {
+        name: 'Content Researcher',
+        description: 'Sources the facts, figures, and examples the draft cites.',
       },
       stylist: {
         name: 'Style & Voice Expert',
@@ -345,6 +378,153 @@ export const AGENT_LOCALE_TR: Record<string, DomainLocale> = {
       },
     },
   },
+  social: {
+    name: 'Social Listening Analyst',
+    description:
+      'Measures what people are actually saying about a brand, product, or topic: volume, sentiment drivers, themes, and who drives the conversation.',
+    capabilities: [
+      'Social listening',
+      'Sentiment and emotion analysis',
+      'Theme and narrative tracking',
+      'Influencer and amplification mapping',
+    ],
+    team: {
+      pulse: {
+        name: 'Volume & Engagement Analyst',
+        description: 'Measures how much is being said and how far it travels.',
+      },
+      sentiment: {
+        name: 'Sentiment Analyst',
+        description:
+          'Classifies sentiment and names what is actually driving it.',
+      },
+      narrative: {
+        name: 'Theme & Narrative Analyst',
+        description:
+          'Clusters the conversation into themes and tracks how they move.',
+      },
+      voices: {
+        name: 'Voices & Amplification Analyst',
+        description:
+          'Identifies who carries the conversation and whether it is organic.',
+      },
+      brief: {
+        name: 'Listening Brief Writer',
+        description:
+          'Synthesizes a decision-ready read with explicit confidence.',
+      },
+    },
+  },
+  community: {
+    name: 'Community Signal Analyst',
+    description:
+      "Turns your own community's chatter into a ranked, evidence-backed product backlog: recurring pain points, requests, and what changed.",
+    capabilities: [
+      'Community feedback mining',
+      'Issue clustering and prioritisation',
+      'Trend and spike detection',
+      'Backlog generation from evidence',
+    ],
+    team: {
+      themes: {
+        name: 'Feedback Clusterer',
+        description:
+          'Groups community messages into recurring pain points and requests.',
+      },
+      sentiment: {
+        name: 'Sentiment Analyst',
+        description:
+          'Reads the tone behind each cluster and flags churn-risk language.',
+      },
+      severity: {
+        name: 'Prioritisation Analyst',
+        description: 'Scores each cluster by frequency, severity, and recency.',
+      },
+      trends: {
+        name: 'Trend Analyst',
+        description:
+          'Separates new spikes from chronic, long-running complaints.',
+      },
+      product: {
+        name: 'Product Signal Writer',
+        description: 'Turns the top clusters into assignable backlog items.',
+      },
+    },
+  },
+  opensource: {
+    name: 'Open Source Analyst',
+    description:
+      'Evaluates third-party open-source projects and dependencies: maintenance health, community risk, licensing, and adoption verdicts.',
+    capabilities: [
+      'Dependency due diligence',
+      'Repository health metrics',
+      'Maintenance and license risk',
+      'Adopt / avoid verdicts',
+    ],
+    team: {
+      profiler: {
+        name: 'Project Profiler',
+        description:
+          'Establishes what the project is, its license, and how it ships.',
+      },
+      health: {
+        name: 'Health Analyst',
+        description:
+          'Measures commit cadence, bus factor, and issue close times.',
+      },
+      maintainers: {
+        name: 'Maintainer & Community Analyst',
+        description:
+          'Judges maintainer responsiveness, backlog shape, and succession risk.',
+      },
+      risk: {
+        name: 'Risk Assessor',
+        description:
+          'Names maintenance, security, and licensing risks with mitigations.',
+      },
+      alternatives: {
+        name: 'Alternatives Researcher',
+        description:
+          'Finds and measures what a team would use instead, and what switching would cost.',
+      },
+      verdict: {
+        name: 'Adoption Verdict',
+        description:
+          'Calls adopt, watch, or avoid, and names the decisive metric.',
+      },
+    },
+  },
+  local: {
+    name: 'Local Market Analyst',
+    description:
+      'Maps the competitors in a physical area and mines their reviews to find rating distributions, recurring complaints, and market gaps.',
+    capabilities: [
+      'Local competitor mapping',
+      'Rating and review distribution',
+      'Review theme mining',
+      'Market gap analysis',
+    ],
+    team: {
+      mapper: {
+        name: 'Market Mapper',
+        description: 'Finds the real competitor set in a specific area.',
+      },
+      metrics: {
+        name: 'Market Metrics Analyst',
+        description:
+          'Computes the rating, review-volume, and price distribution.',
+      },
+      reviews: {
+        name: 'Review Miner',
+        description:
+          'Extracts recurring praise and complaint themes from reviews.',
+      },
+      gap: {
+        name: 'Gap Analyst',
+        description: 'Ranks unmet demand and recommends a positioning.',
+      },
+    },
+  },
   general: {
     name: 'General Expert',
     description:
@@ -369,7 +549,7 @@ export const AGENT_LOCALE_TR: Record<string, DomainLocale> = {
 
 /** Return a copy of a builtin agent with the catalog UI copy applied. */
 export function localizeBuiltinAgent(agent: BuiltinAgent): BuiltinAgent {
-  const locale = AGENT_LOCALE_TR[agent.domain];
+  const locale = AGENT_LOCALE[agent.domain];
   if (!locale) return agent;
   return {
     ...agent,
@@ -395,6 +575,14 @@ export function describeSubagentActivity(event: AgentEvent): string {
       return `Fetching data: ${event.url ?? ''}`.trim();
     case 'code_execution':
       return 'Running code in sandbox';
+    case 'repo_intel':
+      return `Reading repository: ${event.repo ?? ''}`.trim();
+    case 'social_search':
+      return `Searching X: ${event.query ?? ''}`.trim();
+    case 'community_read':
+      return `Reading community channel: ${event.channel ?? ''}`.trim();
+    case 'places_intel':
+      return `Looking up places: ${event.query ?? ''}`.trim();
     case 'view_original_request':
       return 'Reading the original request';
     default:
@@ -409,5 +597,5 @@ export function memberDisplayName(
   fallback: string,
 ): string {
   if (!domain || !memberId) return fallback;
-  return AGENT_LOCALE_TR[domain]?.team[memberId]?.name ?? fallback;
+  return AGENT_LOCALE[domain]?.team[memberId]?.name ?? fallback;
 }

@@ -1,25 +1,85 @@
 // Shared API types — mirror the backend Pydantic schemas.
 
+// Mirrors the backend `LLMProvider` enum member-for-member, in the same order.
+// `backend/tests/test_provider_frontend_parity.py` fails CI on any drift, here
+// or in the PROVIDERS registry in `lib/providers.ts`.
 export type LLMProvider =
+  // --- AI brains ---
   | 'ollama'
   | 'openai'
   | 'anthropic'
   | 'gemini'
+  | 'groq'
+  | 'deepseek'
+  | 'mistral'
+  | 'xai'
+  | 'openrouter'
+  | 'together'
+  | 'perplexity'
+  | 'cerebras'
+  | 'fireworks'
+  | 'deepinfra'
+  | 'sambanova'
+  | 'nebius'
+  | 'hyperbolic'
+  | 'novita'
+  | 'huggingface'
+  | 'cohere'
+  | 'moonshot'
+  | 'zai'
+  | 'qwen'
+  | 'ai21'
+  | 'custom'
+  // --- Service integrations ---
   | 'x'
-  | 'github'
   | 'instagram'
+  | 'reddit'
+  | 'linkedin'
+  | 'youtube'
+  | 'tiktok'
+  | 'bluesky'
+  | 'pinterest'
+  | 'discord'
+  | 'slack'
+  | 'telegram'
+  | 'github'
+  | 'gitlab'
+  | 'vercel'
+  | 'cloudflare'
+  | 'sentry'
+  | 'notion'
+  | 'jira'
+  | 'linear'
+  | 'trello'
+  | 'asana'
+  | 'clickup'
+  | 'airtable'
+  | 'figma'
+  | 'google_drive'
+  | 'gmail'
+  | 'resend'
+  | 'sendgrid'
+  | 'mailchimp'
+  | 'twilio'
+  | 'stripe'
+  | 'shopify'
+  | 'hubspot'
+  | 'zendesk'
   | 'google_maps'
-  | 'custom';
+  | 'tavily'
+  | 'exa'
+  | 'serper'
+  | 'firecrawl'
+  | 'alpha_vantage'
+  | 'coingecko'
+  | 'openweather';
 
-// There is no free plan; new accounts start on a trial.
+// There is no free plan and no trial; an account must subscribe to a paid plan
+// before it can run any task.
 export type SubscriptionPlan = 'starter' | 'pro' | 'scale';
 
 export type SubscriptionStatus =
-  | 'trialing'
-  | 'active'
-  | 'past_due'
-  | 'canceled'
-  | 'inactive';
+  'active' | 'past_due' | 'canceled' | 'inactive';
 
 export type CardBrand = 'visa' | 'mastercard';
 
@@ -27,7 +87,9 @@ export type TaskStatus =
   | 'pending'
   | 'running'
   | 'needs_review'
+  | 'awaiting_answer'
   | 'completed'
+  | 'completed_with_warnings'
   | 'failed'
   | 'cancelled'
   | 'timeout';
@@ -42,11 +104,69 @@ export interface UserPublic {
   id: string;
   email: string;
   display_name: string | undefined;
-  subscription_tier: SubscriptionPlan;
-  // Default LLM "brain" for tasks; undefined/null means the free local tier.
+  // null = no active subscription (fresh account or never subscribed).
+  subscription_tier: SubscriptionPlan | null;
+  // Default LLM "brain" for tasks; undefined/null means the local model (ollama).
   default_provider: LLMProvider | null | undefined;
+  // Per-role model pins ({main: 'claude-opus-4-8', ...}); null/undefined = tier defaults.
+  model_preferences?: Record<string, string> | null;
+  // Profile personalization (client-rendered monogram avatar + short bio).
+  bio?: string | null;
+  avatar_color?: string | null;
+  avatar_emoji?: string | null;
+  // Account preferences.
+  timezone?: string | null;
+  default_reviewer_enabled?: boolean;
+  default_tracing_enabled?: boolean;
+  // Whether TOTP two-factor auth is active (never exposes the secret).
+  two_factor_enabled?: boolean;
+  // Whether the account's email address has been verified. While false, task
+  // start and API-key creation are soft-gated server-side.
+  email_verified?: boolean;
+  // ISO timestamp the account was created ("member since").
+  created_at?: string | null;
   // ISO timestamp. Set means the account is locked and scheduled for purge.
   deletion_requested_at?: string | null;
+  // Authorization role. The admin moderation surface is revealed only for 'admin'.
+  role?: UserRole;
+  // ISO timestamp. Set means a moderator suspended the account.
+  suspended_at?: string | null;
+}
+
+export type UserRole = 'user' | 'admin';
+
+/** One active login session (a refresh-token family). */
+export interface SessionInfo {
+  id: string;
+  /** Human-readable device/browser summary parsed from the User-Agent. */
+  device: string;
+  ip: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  /** True for the session making this request. */
+  current: boolean;
+}
+
+/** Response to a 2FA setup call: the secret to enroll + a ready-to-scan QR. */
+export interface TwoFactorSetup {
+  secret: string;
+  otpauth_uri: string;
+  /** Inline SVG markup for the QR code (no external image). */
+  qr_svg: string;
+}
+
+/** One-time recovery codes shown right after enabling 2FA. */
+export interface RecoveryCodes {
+  recovery_codes: string[];
+}
+
+/**
+ * A login response. Either a full token pair, or an MFA challenge that must be
+ * completed via the TOTP verify endpoint before tokens are issued.
+ */
+export interface MfaChallenge {
+  mfa_required: true;
+  mfa_token: string;
 }
 
 /** When deletion was requested, and when it becomes irreversible. */
@@ -77,16 +197,11 @@ export interface PaymentMethodPublic {
 export interface PlanPublic {
   plan: SubscriptionPlan;
   price_cents: number;
-  discounted_price_cents: number;
-  discount_eligible: boolean;
   quota_tokens: number;
   currency: string;
 }
 
-/**
- * A plan on the anonymous pricing page. Carries the list price only: first-month
- * discount eligibility is per-user and has no meaning before sign-up.
- */
+/** A paid plan on the anonymous pricing page, at list price. */
 export interface PlanPublicListing {
   plan: SubscriptionPlan;
   price_cents: number;
@@ -99,11 +214,9 @@ export interface SubscriptionPublic {
   status: SubscriptionStatus;
   current_period_start: string;
   current_period_end: string;
-  trial_end: string | undefined;
   cancel_at_period_end: boolean;
   used_tokens: number;
   quota_tokens: number;
-  first_discount_available: boolean;
   payment_method: PaymentMethodPublic | undefined;
 }
 
@@ -114,6 +227,9 @@ export interface ApiKeyPublic {
   key_hint: string;
   is_active: boolean;
   created_at: string;
+  // Only set for the custom OpenAI-compatible provider.
+  base_url?: string;
+  model?: string;
 }
 
 export interface TaskCreated {
@@ -133,22 +249,41 @@ export interface AgentEvent {
   // Routing decision origin: 'user' (manual selection) | 'orchestrator'.
   source?: string;
   subtasks?: string[];
-  // Fixed-team member running this subtask (Turkish display name + id).
+  // Fixed-team member running this subtask (display name + id).
   member?: string;
   member_id?: string;
   // Main Agent's per-member briefs for the fixed team.
   assignments?: AssignmentBrief[];
   answer?: string;
+  // Streamed synthesis chunk (agent_delta events carry ~80 chars each in `text`).
+  text?: string;
   question?: string;
   error?: string;
+  // agent_warning: 'degraded' (a fallback ran) | 'retry' (provider link is
+  // failing). Non-fatal — the task keeps going, but the result is affected.
+  kind?: string;
+  message?: string;
+  // The true terminal status carried on a task_failed event (cancelled |
+  // timeout | failed), so the live view freezes with the correct look
+  // regardless of which client cancelled and on snapshot replay.
+  status?: TaskStatus;
   approved?: boolean;
   issues?: string[];
   retry_hints?: string[];
-  // Subagent tool activity (agent_message with role 'subagent').
+  // Subagent tool activity (agent_message with role 'subagent'). Each tool
+  // call emits twice — `done: false` on start, `done: true` on completion — so
+  // the canvas can show a call as in-flight rather than only after the fact.
   action?: string;
+  done?: boolean;
   content?: string;
   query?: string;
   url?: string;
+  // Connected-API tools only: the BYOK service the call authenticated against
+  // ('x', 'github', 'google_maps', 'discord', 'slack', 'telegram'). Absent for
+  // the keyless tools, which get no lane on the connected rail.
+  provider?: string;
+  repo?: string;
+  channel?: string;
   [key: string]: unknown;
 }
 
@@ -196,6 +331,21 @@ export interface ApiError {
 
 // --- Dashboard ---
 
+/** Daily series over the trend window, oldest first (one entry per day). */
+export interface DashboardTrends {
+  window_days: number;
+  /** ISO YYYY-MM-DD labels, oldest first. */
+  days: string[];
+  tasks: number[];
+  completed: number[];
+  failed: number[];
+  tokens: number[];
+  /** 0..1 per day; null on days with no terminal tasks. */
+  success_rate: (number | null)[];
+  /** null on days with no tasks. */
+  avg_tokens_per_task: (number | null)[];
+}
+
 export interface DashboardMetrics {
   total_tasks: number;
   running_tasks: number;
@@ -204,6 +354,7 @@ export interface DashboardMetrics {
   success_rate: number;
   total_tokens: number;
   avg_tokens_per_task: number;
+  trends: DashboardTrends;
 }
 
 export interface ProviderUsage {
@@ -223,6 +374,96 @@ export interface CostSummary {
   currency: string;
   total_cost: number;
   by_provider: Record<string, number>;
+}
+
+// --- Traces (execution spans) & cost breakdown ---
+
+export type SpanKind = 'task' | 'step' | 'agent' | 'llm' | 'tool';
+export type SpanStatus = 'ok' | 'error';
+export type CostGroupBy = 'day' | 'model' | 'domain';
+
+/**
+ * A span's OTel-style attribute bag. Keys are dotted (`gen_ai.*`, `maestro.*`),
+ * so the typed hints are optional and an index signature keeps the shape open.
+ */
+export interface SpanAttributes {
+  'gen_ai.request.model'?: string;
+  'gen_ai.response.model'?: string;
+  'gen_ai.usage.input_tokens'?: number;
+  'gen_ai.usage.output_tokens'?: number;
+  'gen_ai.system'?: string;
+  'gen_ai.response.finish_reason'?: string;
+  'maestro.request.preview'?: string;
+  'maestro.tokens.estimated'?: boolean;
+  'maestro.role'?: string;
+  'maestro.member_id'?: string;
+  'maestro.domain'?: string;
+  'maestro.index'?: number;
+  'maestro.provider'?: string;
+  'maestro.resumed'?: boolean;
+  'maestro.tool.action'?: string;
+  [key: string]: unknown;
+}
+
+/** One execution span. Tree is encoded via `parent_span_id` -> `span_id`. */
+export interface TraceSpan {
+  trace_id: string;
+  span_id: string;
+  // null on the root "task" span; may reference an id absent under the 1000 cap.
+  parent_span_id: string | null;
+  name: string;
+  kind: SpanKind;
+  user_id: string;
+  start_time: string; // ISO
+  end_time: string; // ISO
+  duration_ms: number;
+  status: SpanStatus;
+  error_message: string | null;
+  attributes: SpanAttributes;
+  // Nonzero only on llm.chat spans; all parents carry 0.
+  cost_usd: number;
+  created_at: string;
+}
+
+export interface TaskTrace {
+  task_id: string;
+  // Sorted by start_time ASC, capped at 1000 server-side. Empty when tracing off.
+  spans: TraceSpan[];
+}
+
+/** One rollup row per distinct span name. */
+export interface TraceSummaryNode {
+  name: string;
+  kind: SpanKind;
+  count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  duration_ms: number;
+}
+
+export interface TraceSummary {
+  task_id: string;
+  span_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  nodes: TraceSummaryNode[];
+}
+
+export interface CostBucket {
+  // day -> "YYYY-MM-DD"; model -> model name; domain -> domain string ("unknown").
+  key: string;
+  cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface CostBreakdown {
+  days: number;
+  group_by: CostGroupBy;
+  total_cost_usd: number;
+  buckets: CostBucket[];
 }
 
 // --- Agents (custom configurations) ---
@@ -294,6 +535,11 @@ export interface MarketplaceItem {
   installs: number;
   security_scan: Record<string, unknown>;
   created_at: string;
+  /** Daily install counts over the trend window (oldest first); null until events exist. */
+  install_history: number[] | null;
+  /** Denormalized review aggregates; null/0 until the first review lands. */
+  rating_avg: number | null;
+  rating_count: number;
 }
 
 /**
@@ -313,6 +559,34 @@ export interface MarketplaceItemPreview {
   author_label: string;
   security_scan_status: string;
   created_at: string;
+  rating_avg: number | null;
+  rating_count: number;
+}
+
+/**
+ * A review as served to clients. Carries no author identity (reviewer display
+ * names are never public); `is_own` marks the caller's review server-side.
+ */
+export interface MarketplaceReview {
+  /** The review's own id (a random uuid, not identity) — used to report it. */
+  id: string;
+  rating: number;
+  comment: string | null;
+  created_at: string;
+  updated_at: string;
+  is_own: boolean;
+}
+
+export interface MarketplaceReviewList {
+  items: MarketplaceReview[];
+  total: number;
+  /** The caller's review regardless of pagination, for prefilling the form. */
+  my_review: MarketplaceReview | null;
+}
+
+export interface MarketplaceReviewInput {
+  rating: number;
+  comment?: string;
 }
 
 export interface MarketplacePublishInput {
@@ -330,4 +604,105 @@ export interface DocumentMeta {
   filename: string;
   chunk_count: number;
   created_at: string;
+}
+
+// --- Moderation / content reports ---
+
+export type ReportReason = 'spam' | 'abuse' | 'malicious' | 'other';
+export type ReportStatus = 'open' | 'resolved' | 'dismissed';
+export type MarketplaceStatus = 'published' | 'hidden' | 'removed';
+
+export interface ReportInput {
+  reason: ReportReason;
+  note?: string;
+}
+
+// --- Admin / moderation surface ---
+
+export interface AdminRecentItem {
+  id: string;
+  name: string;
+  domain: string;
+  author_id: string | null;
+  status: string;
+  created_at: string | null;
+}
+
+export interface AdminOverview {
+  users_total: number;
+  admins_total: number;
+  suspended_total: number;
+  items_total: number;
+  items_hidden: number;
+  items_removed: number;
+  reviews_total: number;
+  open_reports: number;
+  recent_items: AdminRecentItem[];
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  display_name: string | null;
+  role: UserRole;
+  subscription_tier: SubscriptionPlan | null;
+  email_verified: boolean;
+  suspended_at: string | null;
+  deletion_requested_at: string | null;
+  created_at: string | null;
+}
+
+export interface AdminUserDetail {
+  user: AdminUserRow;
+  counts: { items: number; agents: number; reviews: number };
+}
+
+export interface AdminMarketplaceItem {
+  id: string;
+  name: string;
+  description: string;
+  domain: string;
+  author_id: string | null;
+  installs: number;
+  status: MarketplaceStatus;
+  rating_avg: number | null;
+  rating_count: number;
+  security_scan: Record<string, unknown> | null;
+  moderation: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+export interface AdminReview {
+  id: string;
+  item_id: string;
+  user_id: string;
+  rating: number;
+  comment: string | null;
+  hidden: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AdminReport {
+  id: string;
+  target_type: 'item' | 'review';
+  target_id: string;
+  reporter_id: string;
+  reason: ReportReason;
+  note: string | null;
+  status: ReportStatus;
+  created_at: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+}
+
+export interface AdminAuditEntry {
+  id: string;
+  actor_id: string;
+  action: string;
+  target_type: string;
+  target_id: string;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string | null;
 }

@@ -2,6 +2,8 @@ import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeSlug from 'rehype-slug';
 import remarkGfm from 'remark-gfm';
 import { cn } from '@/lib/cn';
+import { normalizeMarkdownTables } from '@/lib/markdown-tables';
+import { remarkUncertainty } from '@/lib/uncertainty';
 
 /** Same-origin links (`/privacy`, `#section`) must not open a new tab. */
 function isInternalHref(href: string | undefined): boolean {
@@ -87,22 +89,56 @@ const markdownComponents: Components = {
   td: ({ className, ...props }) => (
     <td className={cn('border border-border px-2 py-1', className)} {...props} />
   ),
+  // Only `remarkUncertainty` produces <mark>: an agent's own markdown reaches
+  // this renderer as text, and raw HTML is disabled. Amber-300 is already the
+  // "not yet verified" colour in Badge's `needs_review`, and the trailing "(?)"
+  // carries the same meaning without relying on colour alone. Full literal
+  // classes — Tailwind cannot see a class name built at runtime.
+  mark: ({ className, children, ...props }) => (
+    <mark
+      className={cn(
+        'rounded bg-amber-400/10 px-1 text-amber-300 [box-decoration-break:clone]',
+        className,
+      )}
+      title="The agent flagged this as inferred, not sourced"
+      {...props}
+    >
+      {children}
+      <span className="ml-0.5 font-semibold">(?)</span>
+    </mark>
+  ),
 };
 
 interface MarkdownProps {
   content: string;
   className?: string;
+  /**
+   * Highlight the agent's `[? ... ?]` grounding markers. Off by default so the
+   * docs and legal pages, which share this renderer, are untouched.
+   */
+  markUncertainty?: boolean;
+  /**
+   * Also highlight a marker whose closing `?]` has not arrived yet. Only for
+   * the streaming preview, where the text is still being written.
+   */
+  streaming?: boolean;
 }
 
-export function Markdown({ content, className }: MarkdownProps) {
+export function Markdown({ content, className, markUncertainty, streaming }: MarkdownProps) {
+  // Built inline rather than memoized: this component is also rendered from
+  // server components (docs, legal), so it must stay hook-free.
+  const remarkPlugins = markUncertainty
+    ? [remarkGfm, remarkUncertainty({ tolerateOpen: streaming })]
+    : [remarkGfm];
+
   return (
     <div className={cn('break-words', className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={[rehypeSlug]}
         components={markdownComponents}
       >
-        {content}
+        {normalizeMarkdownTables(content)}
       </ReactMarkdown>
     </div>
   );

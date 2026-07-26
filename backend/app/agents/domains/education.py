@@ -220,12 +220,21 @@ DOMAIN: DomainInfo = DomainInfo(
         "education: curriculum design, lesson planning, assessment "
         "design, and concept explanation for learners"
     ),
+    # "explaining concepts to learners" used to close this hint and it acted as a
+    # magnet: any "why does X happen?" reads as a concept explanation, so plain
+    # factual questions were routed here and came back as curriculum templates
+    # instead of answers. What distinguishes this domain is the *artefact* — a
+    # syllabus, a lesson, a quiz, a study plan built for a named learner over
+    # time — not the act of explaining, which every domain does.
     routing_hint=(
-        "curriculum, lesson plans, teaching materials, quizzes, study "
-        "plans, explaining concepts to learners"
+        "producing teaching artefacts for a defined learner or course: "
+        "curriculum, lesson plans, teaching materials, quizzes, study plans; "
+        "NOT simply answering a factual or how-does-this-work question, which "
+        "belongs to general, searching or research"
     ),
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
+    deliverable_member="explainer",
 )

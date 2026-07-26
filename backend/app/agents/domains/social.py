@@ -274,4 +274,5 @@ DOMAIN: DomainInfo = DomainInfo(
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
     review_criteria=_REVIEW_CRITERIA,
+    deliverable_member="brief",
 )

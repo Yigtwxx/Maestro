@@ -190,8 +190,8 @@ export const USE_CASES: readonly UseCase[] = [
 /** Rendered with the shared `<Markdown>` component. */
 export const DOCS_QUICKSTART = `## Run Maestro locally
 
-Everything runs on your machine. The free tier uses a local model through
-Ollama, so a full task costs nothing.
+Everything runs on your machine. Maestro drives a local model through Ollama,
+so a full task hits no third-party provider.
 
 ### 1. Start the infrastructure
 

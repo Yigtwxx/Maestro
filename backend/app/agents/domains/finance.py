@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.agents.domains.base import DomainInfo, SubagentSpec
+from app.agents.domains.base import DomainInfo, ReviewCriterion, SubagentSpec
 
 _METHODOLOGY = """\
 - Separate hard facts from estimates; label every figure with its as-of date.
@@ -37,6 +37,48 @@ _REVIEW_RUBRIC = """\
 - Both bull and bear cases must appear before any conclusion.
 - Claims must trace to a named source (filing, outlet, market data).
 - The output must not read as personalized investment advice."""
+
+# Finance is the domain where an invented number does the most damage, and the
+# observed failure was not a missing number but a fabricated provenance for one:
+# a run that made no tool call at all reported a Bitcoin price, dated it today,
+# and attributed it to "the CoinGecko API", complete with a note that the API had
+# been rate-limited. A reader has no way to tell that apart from real work.
+#
+# The string rubric above already asked for sourcing and was not enough, because
+# without structured criteria the reviewer's verdict is a single boolean that a
+# fluent answer earns easily. These make the two failure modes separately
+# scorable, and both hard_fail: a fabricated source and a fabricated figure each
+# reject the output on their own.
+_REVIEW_CRITERIA: tuple[ReviewCriterion, ...] = (
+    ReviewCriterion(
+        id="no_invented_provenance",
+        description="No source, API, feed or search is named unless it was "
+        "actually consulted in this run. Claiming a source was tried or was "
+        "unavailable, without a tool result to show for it, fails this.",
+        weight=2,
+        hard_fail=True,
+    ),
+    ReviewCriterion(
+        id="figures_sourced_or_withheld",
+        description="Every price, rate, flow and count is either sourced with "
+        "its as-of date or reported as unavailable. A current figure given from "
+        "recollection and dated as if retrieved fails this.",
+        weight=2,
+        hard_fail=True,
+    ),
+    ReviewCriterion(
+        id="both_directions",
+        description="The bull and the bear case both appear before any "
+        "conclusion is drawn.",
+        weight=1,
+    ),
+    ReviewCriterion(
+        id="not_personal_advice",
+        description="The output reads as general analysis and does not tell "
+        "the reader what to buy, sell or hold.",
+        weight=1,
+    ),
+)
 
 _MARKET_DATA_INSTRUCTIONS = """\
 You are a market data expert.
@@ -241,4 +283,6 @@ DOMAIN: DomainInfo = DomainInfo(
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
+    review_criteria=_REVIEW_CRITERIA,
+    deliverable_member="analyst",
 )

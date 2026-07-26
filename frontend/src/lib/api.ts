@@ -4,15 +4,25 @@ import {
   ACCESS_TOKEN_KEY,
   API_BASE_URL,
   REFRESH_TOKEN_KEY,
+  REVIEWS_PAGE_SIZE,
   TASK_HISTORY_PAGE_SIZE,
 } from '@/lib/constants';
 import type {
   AccountDeletionStatus,
+  AdminAuditEntry,
+  AdminMarketplaceItem,
+  AdminOverview,
+  AdminReport,
+  AdminReview,
+  AdminUserDetail,
+  AdminUserRow,
   AgentConfig,
   AgentConfigInput,
   AgentList,
   ApiKeyPublic,
   CardInput,
+  CostBreakdown,
+  CostGroupBy,
   CostSummary,
   DashboardMetrics,
   DocumentMeta,
@@ -20,18 +30,31 @@ import type {
   MarketplaceItem,
   MarketplaceItemPreview,
   MarketplacePublishInput,
+  MarketplaceReview,
+  MarketplaceReviewInput,
+  MarketplaceReviewList,
+  MarketplaceStatus,
+  MfaChallenge,
   PaymentMethodPublic,
   PlanPublic,
   PlanPublicListing,
+  RecoveryCodes,
+  ReportInput,
+  ReportStatus,
+  SessionInfo,
   SubscriptionPlan,
   SubscriptionPublic,
   TaskCreated,
   TaskListResponse,
   TaskState,
+  TaskTrace,
   TokenPair,
   TokenUsage,
+  TraceSummary,
   ToolCatalogItem,
+  TwoFactorSetup,
   UserPublic,
+  UserRole,
 } from '@/types';
 
 export class ApiError extends Error {
@@ -42,6 +65,22 @@ export class ApiError extends Error {
     this.name = 'ApiError';
     this.status = status;
   }
+}
+
+/**
+ * Turn a FastAPI error body into a human-readable message. FastAPI returns a
+ * string `detail` for raised HTTPExceptions (400/401/403/...) but an array of
+ * `{loc, msg}` objects for 422 request-validation errors. Surface the first
+ * validation message instead of a generic fallback so users learn what to fix.
+ */
+function extractDetail(data: unknown, fallback: string): string {
+  const detail = (data as { detail?: unknown } | null | undefined)?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail) && detail.length > 0) {
+    const first = detail[0] as { msg?: unknown };
+    if (typeof first?.msg === 'string') return first.msg;
+  }
+  return fallback;
 }
 
 // --- Token storage (client-side only) ---
@@ -117,9 +156,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail =
-      typeof data?.detail === 'string' ? data.detail : 'An error occurred.';
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, extractDetail(data, 'An error occurred.'));
   }
   return data as T;
 }
@@ -157,20 +194,35 @@ export async function ensureFreshAccessToken(): Promise<string | undefined> {
   return (await tryRefresh()) ? tokenStore.getAccess() : undefined;
 }
 
+// Coalesce concurrent refreshes into one in-flight rotation. Without this, a
+// page that fires several requests at once (e.g. the dashboard's parallel
+// metric calls) would have each replay the SAME refresh token; the backend's
+// reuse-detection reads the second replay as token theft and revokes the whole
+// session family, logging the user out on a routine page load.
+let refreshInflight: Promise<boolean> | undefined;
+
 async function tryRefresh(): Promise<boolean> {
-  const refresh_token = tokenStore.getRefresh();
-  if (!refresh_token) return false;
+  if (refreshInflight) return refreshInflight;
+  refreshInflight = (async () => {
+    const refresh_token = tokenStore.getRefresh();
+    if (!refresh_token) return false;
+    try {
+      const tokens = await request<TokenPair>('/api/v1/auth/refresh', {
+        method: 'POST',
+        body: { refresh_token },
+        auth: false,
+      });
+      tokenStore.set(tokens);
+      return true;
+    } catch {
+      tokenStore.clear();
+      return false;
+    }
+  })();
   try {
-    const tokens = await request<TokenPair>('/api/v1/auth/refresh', {
-      method: 'POST',
-      body: { refresh_token },
-      auth: false,
-    });
-    tokenStore.set(tokens);
-    return true;
-  } catch {
-    tokenStore.clear();
-    return false;
+    return await refreshInflight;
+  } finally {
+    refreshInflight = undefined;
   }
 }
 
@@ -190,9 +242,7 @@ async function uploadFile<T>(path: string, file: File): Promise<T> {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail =
-      typeof data?.detail === 'string' ? data.detail : 'Upload failed.';
-    throw new ApiError(response.status, detail);
+    throw new ApiError(response.status, extractDetail(data, 'Upload failed.'));
   }
   return data as T;
 }
@@ -208,14 +258,71 @@ export const api = {
     });
   },
 
-  async login(email: string, password: string): Promise<TokenPair> {
-    const tokens = await request<TokenPair>('/api/v1/auth/login', {
+  /**
+   * Log in. Returns a token pair (persisted) on success, or an MFA challenge
+   * when the account has 2FA enabled — in which case no tokens are stored and
+   * the caller must complete `loginVerifyTotp`.
+   */
+  async login(
+    email: string,
+    password: string,
+  ): Promise<TokenPair | MfaChallenge> {
+    const result = await request<TokenPair | MfaChallenge>('/api/v1/auth/login', {
       method: 'POST',
       body: { email, password },
       auth: false,
     });
+    if ('access_token' in result) {
+      tokenStore.set(result);
+    }
+    return result;
+  },
+
+  /** Complete a 2FA login with a TOTP or recovery code; persists the tokens. */
+  async loginVerifyTotp(mfa_token: string, code: string): Promise<TokenPair> {
+    const tokens = await request<TokenPair>('/api/v1/auth/login/totp', {
+      method: 'POST',
+      body: { mfa_token, code },
+      auth: false,
+    });
     tokenStore.set(tokens);
     return tokens;
+  },
+
+  // --- Email verification & password reset ---
+
+  /** Redeem an emailed verification link. Public (works signed out). */
+  verifyEmail(token: string) {
+    return request<{ detail: string }>('/api/v1/auth/verify-email', {
+      method: 'POST',
+      body: { token },
+      auth: false,
+    });
+  },
+
+  /** Rotate the verification token and re-send the email. */
+  resendVerification() {
+    return request<{ detail: string }>('/api/v1/auth/resend-verification', {
+      method: 'POST',
+    });
+  },
+
+  /** Always resolves 202 — the response never reveals account existence. */
+  forgotPassword(email: string) {
+    return request<{ detail: string }>('/api/v1/auth/forgot-password', {
+      method: 'POST',
+      body: { email },
+      auth: false,
+    });
+  },
+
+  /** Redeem a reset link. The backend revokes every existing session. */
+  resetPassword(token: string, new_password: string) {
+    return request<{ detail: string }>('/api/v1/auth/reset-password', {
+      method: 'POST',
+      body: { token, new_password },
+      auth: false,
+    });
   },
 
   // --- Users (current profile) ---
@@ -227,8 +334,18 @@ export const api = {
   updateProfile(input: {
     display_name?: string;
     email?: string;
-    // null resets the default brain back to the free local tier.
+    // null resets the default brain back to the local model.
     default_provider?: LLMProvider | null;
+    // null clears the field. Avatar is a monogram (palette key + emoji), no blob.
+    bio?: string | null;
+    avatar_color?: string | null;
+    avatar_emoji?: string | null;
+    // Account preferences.
+    timezone?: string | null;
+    default_reviewer_enabled?: boolean;
+    default_tracing_enabled?: boolean;
+    // Per-role model pins. Whole-map replace; null (or {}) clears all pins.
+    model_preferences?: Record<string, string> | null;
   }) {
     return request<UserPublic>('/api/v1/users/me', {
       method: 'PATCH',
@@ -236,10 +353,53 @@ export const api = {
     });
   },
 
-  changePassword(current_password: string, new_password: string) {
+  changePassword(
+    current_password: string,
+    new_password: string,
+    revoke_other_sessions = true,
+  ) {
     return request<void>('/api/v1/users/me/password', {
       method: 'POST',
-      body: { current_password, new_password },
+      body: { current_password, new_password, revoke_other_sessions },
+    });
+  },
+
+  // --- Active sessions ---
+
+  listSessions() {
+    return request<SessionInfo[]>('/api/v1/users/me/sessions');
+  },
+
+  revokeSession(id: string) {
+    return request<void>(`/api/v1/users/me/sessions/${id}`, { method: 'DELETE' });
+  },
+
+  revokeOtherSessions() {
+    return request<void>('/api/v1/users/me/sessions/revoke-others', {
+      method: 'POST',
+    });
+  },
+
+  // --- Two-factor auth (TOTP) ---
+
+  setup2fa() {
+    return request<TwoFactorSetup>('/api/v1/users/me/2fa/setup', {
+      method: 'POST',
+    });
+  },
+
+  /** Confirm the pending secret; returns the one-time recovery codes. */
+  enable2fa(password: string, code: string) {
+    return request<RecoveryCodes>('/api/v1/users/me/2fa/enable', {
+      method: 'POST',
+      body: { password, code },
+    });
+  },
+
+  disable2fa(password: string, code?: string) {
+    return request<UserPublic>('/api/v1/users/me/2fa/disable', {
+      method: 'POST',
+      body: { password, code },
     });
   },
 
@@ -290,8 +450,8 @@ export const api = {
   },
 
   /**
-   * List prices for the public pricing page — no per-user discount. Anonymous,
-   * so it never touches `tokenStore` and is safe to await in a server component.
+   * List prices for the public pricing page. Anonymous, so it never touches
+   * `tokenStore` and is safe to await in a server component.
    */
   getPublicPlans() {
     return request<PlanPublicListing[]>('/api/v1/billing/plans/public', {
@@ -325,10 +485,23 @@ export const api = {
     return request<ApiKeyPublic[]>('/api/v1/api-keys');
   },
 
-  createApiKey(provider: LLMProvider, label: string, key: string) {
+  createApiKey(
+    provider: LLMProvider,
+    label: string,
+    key: string,
+    // Only for the custom OpenAI-compatible provider.
+    baseUrl?: string,
+    model?: string,
+  ) {
     return request<ApiKeyPublic>('/api/v1/api-keys', {
       method: 'POST',
-      body: { provider, label, key },
+      body: {
+        provider,
+        label,
+        key,
+        base_url: baseUrl,
+        model,
+      },
     });
   },
 
@@ -341,6 +514,9 @@ export const api = {
     provider: LLMProvider;
     reviewer_enabled: boolean;
     allow_questions?: boolean;
+    // Record a span waterfall with per-call tokens and cost. Omit to inherit
+    // the user's default, then the server-wide TRACING_ENABLED.
+    tracing_enabled?: boolean;
     // User-selected domain agent; omit to let the orchestrator route.
     domain?: string;
   }) {
@@ -363,6 +539,10 @@ export const api = {
     });
   },
 
+  deleteTask(taskId: string) {
+    return request<void>(`/api/v1/tasks/${taskId}`, { method: 'DELETE' });
+  },
+
   answerTask(taskId: string, answer: string) {
     return request<{ delivered: boolean }>(`/api/v1/tasks/${taskId}/answer`, {
       method: 'POST',
@@ -382,6 +562,28 @@ export const api = {
 
   costSummary() {
     return request<CostSummary>('/api/v1/dashboard/cost-summary');
+  },
+
+  /**
+   * Trace-derived cost buckets over the last `days`, grouped by day, model or
+   * domain. Empty (total 0, no buckets) when server-side tracing is disabled.
+   */
+  costBreakdown(days = 30, groupBy: CostGroupBy = 'day') {
+    return request<CostBreakdown>(
+      `/api/v1/dashboard/costs?days=${days}&group_by=${groupBy}`,
+    );
+  },
+
+  // --- Traces (execution spans) ---
+
+  /** Ordered execution spans for a task. Empty `spans` when tracing is off. */
+  getTaskTrace(taskId: string) {
+    return request<TaskTrace>(`/api/v1/tasks/${taskId}/trace`);
+  },
+
+  /** Per-node token/cost rollup for a task's trace. Zeroed when tracing is off. */
+  getTaskTraceSummary(taskId: string) {
+    return request<TraceSummary>(`/api/v1/tasks/${taskId}/trace/summary`);
   },
 
   // --- Agents (custom configurations) ---
@@ -442,6 +644,36 @@ export const api = {
     });
   },
 
+  listReviews(id: string, limit = REVIEWS_PAGE_SIZE, offset = 0) {
+    return request<MarketplaceReviewList>(
+      `/api/v1/marketplace/${id}/reviews?limit=${limit}&offset=${offset}`,
+    );
+  },
+
+  /** Create or replace the caller's review of an item (server-side upsert). */
+  submitReview(id: string, input: MarketplaceReviewInput) {
+    return request<MarketplaceReview>(`/api/v1/marketplace/${id}/reviews`, {
+      method: 'POST',
+      body: input,
+    });
+  },
+
+  /** Flag a marketplace item for moderator review. */
+  reportItem(id: string, input: ReportInput) {
+    return request<{ detail: string }>(`/api/v1/marketplace/${id}/report`, {
+      method: 'POST',
+      body: input,
+    });
+  },
+
+  /** Flag a specific review for moderator review. */
+  reportReview(reviewId: string, input: ReportInput) {
+    return request<{ detail: string }>(
+      `/api/v1/marketplace/reviews/${reviewId}/report`,
+      { method: 'POST', body: input },
+    );
+  },
+
   // --- Documents (RAG knowledge base) ---
 
   listDocuments() {
@@ -454,5 +686,93 @@ export const api = {
 
   deleteDocument(id: string) {
     return request<void>(`/api/v1/documents/${id}`, { method: 'DELETE' });
+  },
+
+  // --- Admin / moderation (gated server-side by the admin role) ---
+
+  adminOverview() {
+    return request<AdminOverview>('/api/v1/admin/overview');
+  },
+
+  adminListUsers(query?: string, limit = 50, offset = 0) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (query) params.set('q', query);
+    return request<AdminUserRow[]>(`/api/v1/admin/users?${params.toString()}`);
+  },
+
+  adminGetUser(id: string) {
+    return request<AdminUserDetail>(`/api/v1/admin/users/${id}`);
+  },
+
+  adminSuspendUser(id: string, reason?: string) {
+    return request<AdminUserRow>(`/api/v1/admin/users/${id}/suspend`, {
+      method: 'POST',
+      body: { reason },
+    });
+  },
+
+  adminUnsuspendUser(id: string) {
+    return request<AdminUserRow>(`/api/v1/admin/users/${id}/unsuspend`, {
+      method: 'POST',
+    });
+  },
+
+  adminSetUserRole(id: string, role: UserRole) {
+    return request<AdminUserRow>(`/api/v1/admin/users/${id}/role`, {
+      method: 'POST',
+      body: { role },
+    });
+  },
+
+  adminListItems(status?: MarketplaceStatus, limit = 50, offset = 0) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (status) params.set('status', status);
+    return request<AdminMarketplaceItem[]>(
+      `/api/v1/admin/marketplace/items?${params.toString()}`,
+    );
+  },
+
+  adminSetItemStatus(id: string, status: MarketplaceStatus, reason?: string) {
+    return request<AdminMarketplaceItem>(
+      `/api/v1/admin/marketplace/items/${id}/status`,
+      { method: 'POST', body: { status, reason } },
+    );
+  },
+
+  adminListItemReviews(id: string) {
+    return request<AdminReview[]>(`/api/v1/admin/marketplace/items/${id}/reviews`);
+  },
+
+  adminHideReview(reviewId: string, hidden: boolean, reason?: string) {
+    return request<AdminReview>(
+      `/api/v1/admin/marketplace/reviews/${reviewId}/hide`,
+      { method: 'POST', body: { hidden, reason } },
+    );
+  },
+
+  adminDeleteAgent(agentId: string, reason?: string) {
+    const params = reason ? `?reason=${encodeURIComponent(reason)}` : '';
+    return request<{ detail: string }>(`/api/v1/admin/agents/${agentId}${params}`, {
+      method: 'DELETE',
+    });
+  },
+
+  adminListReports(status?: ReportStatus, limit = 50, offset = 0) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (status) params.set('status', status);
+    return request<AdminReport[]>(`/api/v1/admin/reports?${params.toString()}`);
+  },
+
+  adminResolveReport(id: string, resolution: ReportStatus) {
+    return request<AdminReport>(`/api/v1/admin/reports/${id}/resolve`, {
+      method: 'POST',
+      body: { resolution },
+    });
+  },
+
+  adminListAudit(limit = 50, offset = 0) {
+    return request<AdminAuditEntry[]>(
+      `/api/v1/admin/audit?limit=${limit}&offset=${offset}`,
+    );
   },
 };

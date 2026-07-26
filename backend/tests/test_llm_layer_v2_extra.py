@@ -107,7 +107,8 @@ async def test_native_tool_loop_executes_then_answers() -> None:
         describe=lambda d, done: "web search",
     )
     ctx = AgentContext(adapter=_NativeAdapter())
-    response, tokens, usage = await subagent._native_tool_loop(
+    # The transcript comes back too, so the caller can nudge a blank answer.
+    response, tokens, usage, messages = await subagent._native_tool_loop(
         ctx,
         [ChatMessage("system", "s"), ChatMessage("user", "b")],
         member=SOFTWARE.team[0],
@@ -117,6 +118,7 @@ async def test_native_tool_loop_executes_then_answers() -> None:
     assert response.content == "final answer"
     assert len(executed) == 1, "the requested tool must run exactly once"
     assert usage["web_search"] == 1
+    assert messages[0].content == "s", f"System prompt must survive: {messages[0]}"
 
 
 # --- AGENT_DELTA streaming -------------------------------------------------

@@ -56,9 +56,13 @@ class User(Base, TimestampMixin):
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Account preferences. ``timezone`` is an IANA name (NULL = client-local);
     # ``default_reviewer_enabled`` seeds a task's reviewer toggle when the
-    # request leaves it unset.
+    # request leaves it unset, and ``default_tracing_enabled`` does the same for
+    # execution tracing (falling through to TRACING_ENABLED when both are off).
     timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     default_reviewer_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    default_tracing_enabled: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False
     )
     # NULL means active. Once set, the account is locked out of every product

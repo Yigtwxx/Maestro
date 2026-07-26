@@ -39,7 +39,15 @@ class AgentRole(StrEnum):
 
 
 # Hard cap on subtasks a Main Agent may plan, regardless of max_iterations.
-MAX_SUBTASKS = 6
+#
+# 8 rather than 6 because five domains (software, finance, searching, content,
+# legal) had grown to exactly 6 members and could not gain one without silently
+# becoming unreachable: ``_assign`` caps at min(max_iterations, tier, this), so a
+# 7th member would never run. The binding cost is wall-clock, not tokens — a
+# local Ollama serialises regardless of ``subagent_max_parallel`` — so at roughly
+# 120s per member 8 members project to ~1300s against ``task_timeout_seconds``
+# of 1800. That margin is why this is 8 and not higher.
+MAX_SUBTASKS = 8
 
 # Most routable custom agents merged into the orchestrator's routing catalog
 # (Backend v2 §4.3). Bounds the routing prompt so a user with many agents can't
@@ -49,13 +57,29 @@ ROUTING_CUSTOM_AGENTS_MAX = 10
 # Effort scaling (Backend v2 §4.6/D15): the orchestrator classifies task
 # complexity and the Main Agent scales its team size accordingly. A "simple"
 # task runs one member with the reviewer skipped; "complex" gets the full team.
-MAX_SUBTASKS_BY_COMPLEXITY = {"simple": 1, "standard": 3, "complex": 6}
+#
+# "standard" is 4, not 3, because it is the tier nearly every routed prompt
+# lands on — it is the default when the classifier is unsure — and three members
+# of a six-or-more-member team is half a squad. "simple" stays at 1: one member
+# with no reviewer is the point of the tier, not an accident of sizing.
+MAX_SUBTASKS_BY_COMPLEXITY = {"simple": 1, "standard": 4, "complex": 8}
 TASK_COMPLEXITIES = frozenset(MAX_SUBTASKS_BY_COMPLEXITY)
 DEFAULT_TASK_COMPLEXITY = "standard"
 
 # Deterministic pre-review validators (Backend v2 §4.6): an output shorter than
 # this is rejected before the reviewer's LLM call ever runs.
 REVIEW_MIN_OUTPUT_CHARS = 20
+
+# Grounding markers. An agent wraps a span it inferred rather than sourced in
+# ``[? ... ?]``; the frontend renders that span highlighted with a trailing
+# "(?)". A value it could not source at all is reported on a ``Not found:`` line
+# instead of being approximated. Defined here (not in prompts.py) because the
+# prompts, the deterministic validator and the frontend all key off the same
+# literals — changing one without the others silently breaks the contract.
+UNCERTAINTY_OPEN = "[?"
+UNCERTAINTY_CLOSE = "?]"
+NOT_FOUND_PREFIX = "Not found:"
+NOT_FOUND_SECTION_TITLE = "Not found"
 
 # Hierarchical token budget (Backend v2 §4.6/D19). A task's cap is
 # min(this, remaining monthly quota) computed at the execute-step boundary; once
@@ -187,17 +211,81 @@ class LLMProvider(StrEnum):
     OPENROUTER = "openrouter"
     TOGETHER = "together"
     PERPLEXITY = "perplexity"
+    CEREBRAS = "cerebras"
+    FIREWORKS = "fireworks"
+    DEEPINFRA = "deepinfra"
+    SAMBANOVA = "sambanova"
+    NEBIUS = "nebius"
+    HYPERBOLIC = "hyperbolic"
+    NOVITA = "novita"
+    HUGGINGFACE = "huggingface"
+    COHERE = "cohere"
+    MOONSHOT = "moonshot"  # Kimi
+    ZAI = "zai"  # GLM
+    QWEN = "qwen"  # Alibaba DashScope
+    AI21 = "ai21"
     # User-supplied OpenAI-compatible endpoint (base_url + model stored per key).
+    # Azure OpenAI, vLLM and LiteLLM are served by this rather than by their own
+    # members: each needs a per-key endpoint, which only `custom` supports.
     CUSTOM = "custom"
-    # Non-LLM service integrations (stored keys only; no adapter/consumer yet).
+    # --- Non-LLM service integrations --------------------------------------
+    # Credentials an agent tool authenticates with. Six are consumed today
+    # (repo_intel, social_search, places_intel, community_read); the rest are
+    # stored, encrypted, ready for the tools that will read them. An unconsumed
+    # key is inert rather than broken: `resolve_enabled_tools` withholds a tool
+    # whose credential is missing instead of failing the task, so the catalog can
+    # run ahead of the tool layer without breaking a single run.
+    # Social and community
     X = "x"
-    GITHUB = "github"
     INSTAGRAM = "instagram"
-    GOOGLE_MAPS = "google_maps"
-    SLACK = "slack"
-    NOTION = "notion"
+    REDDIT = "reddit"
+    LINKEDIN = "linkedin"
+    YOUTUBE = "youtube"
+    TIKTOK = "tiktok"
+    BLUESKY = "bluesky"
+    PINTEREST = "pinterest"
     DISCORD = "discord"
+    SLACK = "slack"
     TELEGRAM = "telegram"
+    # Developer and cloud
+    GITHUB = "github"
+    GITLAB = "gitlab"
+    VERCEL = "vercel"
+    CLOUDFLARE = "cloudflare"
+    SENTRY = "sentry"
+    # Productivity and design
+    NOTION = "notion"
+    JIRA = "jira"
+    LINEAR = "linear"
+    TRELLO = "trello"
+    ASANA = "asana"
+    CLICKUP = "clickup"
+    AIRTABLE = "airtable"
+    FIGMA = "figma"
+    GOOGLE_DRIVE = "google_drive"
+    # Email and messaging
+    GMAIL = "gmail"
+    RESEND = "resend"
+    SENDGRID = "sendgrid"
+    MAILCHIMP = "mailchimp"
+    TWILIO = "twilio"
+    # Commerce and CRM
+    # This is the *user's* Stripe key for their own account. It has nothing to
+    # do with Maestro's billing provider (`subscriptions.provider`), which is a
+    # separate namespace that happens to use the same word.
+    STRIPE = "stripe"
+    SHOPIFY = "shopify"
+    HUBSPOT = "hubspot"
+    ZENDESK = "zendesk"
+    # Search and data
+    GOOGLE_MAPS = "google_maps"
+    TAVILY = "tavily"
+    EXA = "exa"
+    SERPER = "serper"
+    FIRECRAWL = "firecrawl"
+    ALPHA_VANTAGE = "alpha_vantage"
+    COINGECKO = "coingecko"
+    OPENWEATHER = "openweather"
 
 
 # Providers that actually drive LLM generation (subset of LLMProvider). Must
@@ -216,7 +304,77 @@ LLM_CHAT_PROVIDERS = frozenset(
         LLMProvider.OPENROUTER,
         LLMProvider.TOGETHER,
         LLMProvider.PERPLEXITY,
+        LLMProvider.CEREBRAS,
+        LLMProvider.FIREWORKS,
+        LLMProvider.DEEPINFRA,
+        LLMProvider.SAMBANOVA,
+        LLMProvider.NEBIUS,
+        LLMProvider.HYPERBOLIC,
+        LLMProvider.NOVITA,
+        LLMProvider.HUGGINGFACE,
+        LLMProvider.COHERE,
+        LLMProvider.MOONSHOT,
+        LLMProvider.ZAI,
+        LLMProvider.QWEN,
+        LLMProvider.AI21,
         LLMProvider.CUSTOM,
+    }
+)
+
+# Non-LLM integrations an agent tool may authenticate against (the complement of
+# LLM_CHAT_PROVIDERS). Declared explicitly rather than derived so the enum stops
+# being the only thing that knows the split, and so a new chat provider cannot
+# silently become loadable as a tool credential.
+SERVICE_PROVIDERS = frozenset(
+    {
+        # Social and community
+        LLMProvider.X,
+        LLMProvider.INSTAGRAM,
+        LLMProvider.REDDIT,
+        LLMProvider.LINKEDIN,
+        LLMProvider.YOUTUBE,
+        LLMProvider.TIKTOK,
+        LLMProvider.BLUESKY,
+        LLMProvider.PINTEREST,
+        LLMProvider.DISCORD,
+        LLMProvider.SLACK,
+        LLMProvider.TELEGRAM,
+        # Developer and cloud
+        LLMProvider.GITHUB,
+        LLMProvider.GITLAB,
+        LLMProvider.VERCEL,
+        LLMProvider.CLOUDFLARE,
+        LLMProvider.SENTRY,
+        # Productivity and design
+        LLMProvider.NOTION,
+        LLMProvider.JIRA,
+        LLMProvider.LINEAR,
+        LLMProvider.TRELLO,
+        LLMProvider.ASANA,
+        LLMProvider.CLICKUP,
+        LLMProvider.AIRTABLE,
+        LLMProvider.FIGMA,
+        LLMProvider.GOOGLE_DRIVE,
+        # Email and messaging
+        LLMProvider.GMAIL,
+        LLMProvider.RESEND,
+        LLMProvider.SENDGRID,
+        LLMProvider.MAILCHIMP,
+        LLMProvider.TWILIO,
+        # Commerce and CRM
+        LLMProvider.STRIPE,
+        LLMProvider.SHOPIFY,
+        LLMProvider.HUBSPOT,
+        LLMProvider.ZENDESK,
+        # Search and data
+        LLMProvider.GOOGLE_MAPS,
+        LLMProvider.TAVILY,
+        LLMProvider.EXA,
+        LLMProvider.SERPER,
+        LLMProvider.FIRECRAWL,
+        LLMProvider.ALPHA_VANTAGE,
+        LLMProvider.COINGECKO,
+        LLMProvider.OPENWEATHER,
     }
 )
 
@@ -367,6 +525,7 @@ class EventType(StrEnum):
     TASK_STARTED = "task_started"
     NODE_UPDATE = "node_update"  # an agent node changed state
     AGENT_MESSAGE = "agent_message"  # message passed between agents
+    AGENT_WARNING = "agent_warning"  # degraded path or connection retry, not fatal
     REVIEW_RESULT = "review_result"
     AGENT_QUESTION = "agent_question"  # human-in-the-loop: agent asks the user
     USER_ANSWER = "user_answer"  # human-in-the-loop: user's reply
@@ -568,6 +727,43 @@ OPENROUTER_API_BASE_URL = "https://openrouter.ai/api/v1"
 TOGETHER_API_BASE_URL = "https://api.together.xyz/v1"
 PERPLEXITY_API_BASE_URL = "https://api.perplexity.ai"
 
+# Every base URL below was checked live (2026-07-26) by POSTing an unauthorized
+# request to `{base}/chat/completions` and confirming a 401/403/422 rather than
+# a 404. Fireworks and SambaNova answer 404 to an unauthenticated POST -- they
+# mask the route -- so those two are confirmed against `{base}/models` on the
+# same host plus their own documented endpoint.
+CEREBRAS_API_BASE_URL = "https://api.cerebras.ai/v1"
+FIREWORKS_API_BASE_URL = "https://api.fireworks.ai/inference/v1"
+DEEPINFRA_API_BASE_URL = "https://api.deepinfra.com/v1/openai"
+SAMBANOVA_API_BASE_URL = "https://api.sambanova.ai/v1"
+# Nebius AI Studio was rebranded Nebius Token Factory; the legacy host
+# https://api.studio.nebius.com/v1 still answers, but the docs point here.
+NEBIUS_API_BASE_URL = "https://api.tokenfactory.nebius.com/v1"
+HYPERBOLIC_API_BASE_URL = "https://api.hyperbolic.xyz/v1"
+# The legacy https://api.novita.ai/v3/openai prefix also answers, but the API
+# reference documents this one.
+NOVITA_API_BASE_URL = "https://api.novita.ai/openai/v1"
+HUGGINGFACE_API_BASE_URL = "https://router.huggingface.co/v1"
+# Cohere's native API is not OpenAI-shaped; this is its separate compatibility
+# endpoint, which is what makes a plain _OpenAICompatAdapter subclass work.
+COHERE_API_BASE_URL = "https://api.cohere.ai/compatibility/v1"
+# International host. Keys are bound to the host that issued them, so a
+# China-registered key (https://api.moonshot.cn/v1) will not authenticate here.
+MOONSHOT_API_BASE_URL = "https://api.moonshot.ai/v1"
+# Z.ai, not the Zhipu/BigModel host (https://open.bigmodel.cn/api/paas/v4),
+# which serves the same glm-* ids to China-registered accounts. Note that Z.ai
+# *Coding Plan* subscription keys are a third case: they only work against
+# https://api.z.ai/api/coding/paas/v4 and will fail here.
+ZAI_API_BASE_URL = "https://api.z.ai/api/paas/v4"
+# DashScope international (Singapore). Mainland drops the "-intl" segment and
+# there is a separate https://dashscope-us.aliyuncs.com/... for US accounts.
+QWEN_API_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+# AI21 never documents OpenAI compatibility, but the endpoint is OpenAI-shaped
+# in practice (Bearer auth, choices[].message, usage.prompt_tokens, tool_calls)
+# and answers a malformed request with a 400 rather than a 404. Treat it as
+# working-but-unsupported: it could change without a compatibility guarantee.
+AI21_API_BASE_URL = "https://api.ai21.com/studio/v1"
+
 
 # --- Anthropic (Claude) Messages API ---
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -629,8 +825,31 @@ PROVIDER_COST_PER_1K_TOKENS: dict[str, float] = {
     LLMProvider.OPENROUTER.value: 0.0015,
     LLMProvider.TOGETHER.value: 0.0009,
     LLMProvider.PERPLEXITY.value: 0.001,
+    # Open-weight inference clouds, all serving a gpt-oss-120b-class default and
+    # clustering in the same cheap band.
+    LLMProvider.CEREBRAS.value: 0.0006,
+    LLMProvider.FIREWORKS.value: 0.0004,
+    LLMProvider.DEEPINFRA.value: 0.0002,
+    LLMProvider.SAMBANOVA.value: 0.0005,
+    LLMProvider.NEBIUS.value: 0.0006,
+    LLMProvider.HYPERBOLIC.value: 0.0004,
+    LLMProvider.NOVITA.value: 0.0002,
+    # The router's default routing picks the fastest provider, not the cheapest,
+    # so this is the worst case across providers rather than a single price.
+    LLMProvider.HUGGINGFACE.value: 0.0006,
+    # First-party model APIs.
+    # Cohere publishes no token price for the Command A snapshots; this is a
+    # deliberately high third-party figure, so it over-reports rather than under.
+    LLMProvider.COHERE.value: 0.007,
+    LLMProvider.MOONSHOT.value: 0.0025,
+    LLMProvider.ZAI.value: 0.0015,
+    LLMProvider.QWEN.value: 0.0011,
+    LLMProvider.AI21.value: 0.0003,
     # CUSTOM is intentionally absent: user endpoints have unknown pricing, so
-    # aggregate_cost falls back to 0.0 for them (documented in the plan).
+    # aggregate_cost falls back to 0.0 for them (documented in the plan). Every
+    # *named* provider must carry a rate -- both cost call sites use
+    # `.get(provider, 0.0)`, so an omission silently bills a paid provider at
+    # zero. `test_provider_catalog.py` enforces that.
 }
 
 
@@ -665,6 +884,27 @@ WEB_SEARCH_CATEGORIES = frozenset({"text", "news"})
 WEB_SEARCH_DEFAULT_CATEGORY = "text"
 WEB_SEARCH_SNIPPET_MAX_CHARS = 500
 
+# One model-issued search may cost several provider calls: a query that returns
+# nothing is retried with a simplified variant (see web_search_service). The
+# ladder is invisible to the subagent's ``max_web_searches`` budget on purpose —
+# a query-syntax problem must not eat a whole slot.
+WEB_SEARCH_MAX_ATTEMPTS = 3
+
+# ddgs raises instead of returning an empty list when a search finds nothing,
+# and this is the literal it uses when no engine actually errored
+# (``ddgs.ddgs``: ``raise DDGSException(err or "No results found.")``). Matching
+# it separates an ordinary zero-hit result from real breakage. A future wording
+# change degrades to a noisier log, never to broken behaviour.
+DDGS_NO_RESULTS_MESSAGE = "No results found."
+
+# Search operators DuckDuckGo's backends reject or silently zero out — most
+# painfully on the news endpoint. Tokens starting with one of these are dropped
+# from the relaxed retry, along with quotes and standalone boolean keywords.
+WEB_SEARCH_UNSUPPORTED_OPERATORS = frozenset(
+    {"site:", "filetype:", "inurl:", "intitle:", "intext:", "related:", "cache:"}
+)
+WEB_SEARCH_BOOLEAN_KEYWORDS = frozenset({"or", "and"})
+
 # Shown after any untrusted-external-content block fed to the LLM (web search
 # results, fetched pages) so the model treats it as data, not instructions.
 UNTRUSTED_CONTENT_NOTICE = (
@@ -678,9 +918,41 @@ WEB_SEARCH_RESULTS_CLOSE = "</web_search_results>"
 # --- Data fetch tool (subagent JSON directive protocol) ---
 DATA_FETCH_ACTION = "data_fetch"  # matches the TOOL_CATALOG id
 DATA_FETCH_MAX_CHARS = 8000
-DATA_FETCH_MAX_BYTES = 2_000_000  # streaming read cap per fetch
+# Size cap per fetch. The legacy httpx engine enforces it while streaming; the
+# Scrapling engine cannot (it returns a fully-read Response), so there it is a
+# post-hoc rejection backed by max_recv_speed — see the service docstring.
+DATA_FETCH_MAX_BYTES = 2_000_000
 DATA_FETCH_RESULT_OPEN = "<fetched_content>"
 DATA_FETCH_RESULT_CLOSE = "</fetched_content>"
+
+# Fetch engines. "scrapling" is the default; "httpx" is the pre-Scrapling path,
+# retained so a misbehaving engine can be rolled back with one env var.
+DATA_FETCH_ENGINE_SCRAPLING = "scrapling"
+DATA_FETCH_ENGINE_HTTPX = "httpx"
+DATA_FETCH_ENGINES = frozenset({DATA_FETCH_ENGINE_SCRAPLING, DATA_FETCH_ENGINE_HTTPX})
+
+# Browser profile curl-impersonate mimics at the TLS/JA3 and header-order
+# layer. A product decision, not deployment config, so it lives here.
+DATA_FETCH_IMPERSONATE = "chrome"
+# Scrapling retries 3x by default, which turns one dead host into 3x the
+# timeout inside a subagent's tool budget.
+DATA_FETCH_RETRIES = 1
+DATA_FETCH_MAX_REDIRECTS = 5
+# Tags whose text never belongs in extracted page content.
+DATA_FETCH_IGNORED_TAGS = ("script", "style", "noscript", "template", "svg", "head")
+
+# --- Structured (CSS-selector) extraction ---
+DATA_FETCH_SELECTOR_MAX_CHARS = 200  # cap on the selector the model may send
+DATA_FETCH_SELECTOR_MAX_MATCHES = 50  # elements serialized per fetch
+DATA_FETCH_MATCH_MAX_CHARS = 500  # per-match text/href cap
+# Statuses and body markers that mean "a bot wall", not the page itself.
+DATA_FETCH_CHALLENGE_STATUSES = frozenset({403, 429, 503})
+DATA_FETCH_CHALLENGE_MARKERS = (
+    "just a moment",
+    "attention required",
+    "enable javascript and cookies",
+    "verifying you are human",
+)
 
 
 # --- Code execution tool (Docker sandbox, subagent JSON directive protocol) ---
@@ -693,6 +965,103 @@ CODE_EXECUTION_RESULT_OPEN = "<code_execution_result>"
 CODE_EXECUTION_RESULT_CLOSE = "</code_execution_result>"
 
 
+# --- Connected-API tools (BYOK service keys, subagent JSON directive protocol) ---
+# These four tools authenticate against a user's stored SERVICE_PROVIDERS key.
+# Unlike the LLM brain key (CLAUDE.md §8, missing key => task stops), a missing
+# service key is NOT fatal: the tool is withheld from the enabled set and the
+# subagent falls back to web_search, stating the gap in its Data coverage
+# section. A key is an accelerator, never a gate.
+
+# Shown when a tool is reached without its credential (defence in depth — the
+# usual path is that resolve_enabled_tools never offered the tool at all).
+CONNECTED_TOOL_MISSING_KEY_NOTICE = (
+    'No "{provider}" API key is connected for this account. Connect one under '
+    "Settings > API Keys to enable this tool. Continue without it and say so."
+)
+
+# Lookback vocabulary shared by the two time-windowed tools.
+CONNECTED_WINDOWS = frozenset({"24h", "7d", "30d"})
+CONNECTED_DEFAULT_WINDOW = "7d"
+
+# Repo intelligence (GitHub). Works unauthenticated at 60 requests/hour; a
+# stored token raises the ceiling to 5000, which is the whole difference.
+REPO_INTEL_ACTION = "repo_intel"  # matches the TOOL_CATALOG id
+REPO_INTEL_ASPECTS = frozenset({"profile", "activity", "issues", "releases"})
+REPO_INTEL_DEFAULT_ASPECT = "profile"
+REPO_INTEL_MAX_ITEMS = 30
+REPO_INTEL_ITEM_MAX_CHARS = 300
+# Commit subject lines only — full bodies are changelog dumps that push a single
+# activity call past 8000 characters.
+REPO_INTEL_COMMIT_MAX_CHARS = 140
+REPO_INTEL_RESULT_OPEN = "<repo_intel_result>"
+REPO_INTEL_RESULT_CLOSE = "</repo_intel_result>"
+# ``repo`` is interpolated into a URL path, so it is matched against this before
+# it goes anywhere near a request — no traversal, no host confusion, no query.
+REPO_INTEL_REPO_PATTERN = r"^[A-Za-z0-9._-]{1,100}/[A-Za-z0-9._-]{1,100}$"
+GITHUB_API_BASE_URL = "https://api.github.com"
+# The only host repo_intel will follow a redirect to. GitHub answers a renamed or
+# transferred repository with 301, and the shared client does not follow
+# redirects; without this the rename is an outright failure. Pinning the host is
+# what keeps the "no SSRF surface" property of these tools true, and it is also
+# what makes it impossible for a redirect to carry the Authorization header to
+# another origin.
+GITHUB_API_HOST = "api.github.com"
+GITHUB_SEARCH_REPOS_PATH = "/search/repositories"
+# Recovery ladder bound. Same reasoning as WEB_SEARCH_MAX_ATTEMPTS: a slug the
+# model guessed wrong must cost a bounded number of attempts, never a walk.
+REPO_INTEL_MAX_ATTEMPTS = 3
+REPO_INTEL_SEARCH_CANDIDATES = 5
+
+# Social listening (X).
+SOCIAL_SEARCH_ACTION = "social_search"  # matches the TOOL_CATALOG id
+SOCIAL_SEARCH_MAX_ITEMS = 50
+SOCIAL_SEARCH_ITEM_MAX_CHARS = 400
+SOCIAL_SEARCH_QUERY_MAX_CHARS = 400  # X caps query length; reject earlier
+SOCIAL_SEARCH_RESULT_OPEN = "<social_search_result>"
+SOCIAL_SEARCH_RESULT_CLOSE = "</social_search_result>"
+X_API_BASE_URL = "https://api.x.com/2"
+
+# Owned-community reading (Discord / Slack / Telegram).
+COMMUNITY_READ_ACTION = "community_read"  # matches the TOOL_CATALOG id
+COMMUNITY_PLATFORMS = frozenset({"discord", "slack", "telegram"})
+COMMUNITY_READ_MAX_ITEMS = 50
+COMMUNITY_READ_ITEM_MAX_CHARS = 300
+COMMUNITY_READ_RESULT_OPEN = "<community_read_result>"
+COMMUNITY_READ_RESULT_CLOSE = "</community_read_result>"
+# Channel identifiers across the three platforms: Discord/Slack snowflake-style
+# ids, Telegram "@name" or a negative numeric chat id. Same reasoning as
+# REPO_INTEL_REPO_PATTERN — this value reaches a URL path or query.
+COMMUNITY_CHANNEL_PATTERN = r"^[A-Za-z0-9._@-]{1,120}$"
+DISCORD_API_BASE_URL = "https://discord.com/api/v10"
+SLACK_API_BASE_URL = "https://slack.com/api"
+TELEGRAM_API_BASE_URL = "https://api.telegram.org"
+
+# Local / place intelligence (Google Maps Places).
+PLACES_INTEL_ACTION = "places_intel"  # matches the TOOL_CATALOG id
+PLACES_INTEL_ASPECTS = frozenset({"search", "reviews"})
+PLACES_INTEL_DEFAULT_ASPECT = "search"
+PLACES_INTEL_MAX_ITEMS = 20
+PLACES_INTEL_ITEM_MAX_CHARS = 400
+PLACES_INTEL_RESULT_OPEN = "<places_intel_result>"
+PLACES_INTEL_RESULT_CLOSE = "</places_intel_result>"
+GOOGLE_PLACES_API_BASE_URL = "https://places.googleapis.com/v1"
+
+# Which stored credential each connected tool authenticates with. Single source
+# of truth for the availability gate, the Architect rail, and the missing-key
+# notice; ``community_read`` is absent because its provider is per-call (the
+# ``platform`` argument), resolved by the service.
+CONNECTED_TOOL_PROVIDERS: dict[str, LLMProvider] = {
+    REPO_INTEL_ACTION: LLMProvider.GITHUB,
+    SOCIAL_SEARCH_ACTION: LLMProvider.X,
+    PLACES_INTEL_ACTION: LLMProvider.GOOGLE_MAPS,
+}
+
+# Connected tools that still do useful work with no credential at all. Only
+# GitHub qualifies: its REST API serves anonymous reads. The others are dropped
+# from the enabled set when their key is missing.
+KEYLESS_CONNECTED_TOOL_IDS = frozenset({REPO_INTEL_ACTION})
+
+
 # --- View original request (built-in subagent JSON directive) ---
 # Deliberately NOT in TOOL_CATALOG / EXECUTABLE_TOOL_IDS: it is not a
 # domain-declarable capability but a built-in directive available to every
@@ -702,9 +1071,27 @@ ORIGINAL_REQUEST_OPEN = "<original_user_request>"
 ORIGINAL_REQUEST_CLOSE = "</original_user_request>"
 
 
+# Reported when a subagent returns a blank answer. Usually the model spent its
+# whole output budget reasoning (or emitted only a <think> block), so the wording
+# points at the cause rather than just stating the symptom.
+EMPTY_SUBAGENT_ANSWER = (
+    "The specialist returned an empty answer (the model produced no final text, "
+    "usually after spending its output budget on reasoning)."
+)
+
+
 # --- Inter-subagent context passing (Main Agent dependency graph) ---
 # Per-teammate output injected into a dependent subagent's prompt.
 UPSTREAM_OUTPUT_MAX_CHARS = 6000
+# Per-member output injected into the synthesis prompt. Lower than the upstream
+# cap above because that one is per *teammate* while this one is paid for every
+# member at once: the synthesis prompt is the single place the whole team's work
+# meets. Uncapped, MAX_SUBTASKS members at SUBAGENT_MAX_TOKENS each is ~65k
+# tokens, and Ollama truncates an over-length prompt from the front — dropping
+# the system prompt first, which is the one part synthesis cannot work without.
+# 8 x 4000 chars is ~8k tokens, leaving room for the task, the system prompt and
+# SYNTHESIS_MAX_TOKENS of output inside a 16384-token context.
+SYNTHESIS_MEMBER_OUTPUT_MAX_CHARS = 4000
 # Original user request returned by the view_original_request directive
 # (truncated before being fed back to the subagent).
 OBJECTIVE_MAX_CHARS = 2000
@@ -718,6 +1105,10 @@ TOOL_CATALOG: tuple[dict[str, str], ...] = (
     {"id": "web_search", "label": "Web Search"},
     {"id": "code_execution", "label": "Code Execution"},
     {"id": "data_fetch", "label": "Data Fetch (HTTP/API)"},
+    {"id": "repo_intel", "label": "Repository Intelligence (GitHub)"},
+    {"id": "social_search", "label": "Social Search (X)"},
+    {"id": "community_read", "label": "Community Read (Discord/Slack/Telegram)"},
+    {"id": "places_intel", "label": "Place Intelligence (Google Maps)"},
     {"id": "summarize", "label": "Summarize"},
     {"id": "sentiment_analysis", "label": "Sentiment Analysis"},
     {"id": "file_read", "label": "File / Document Read"},
@@ -727,5 +1118,32 @@ TOOL_IDS = frozenset(tool["id"] for tool in TOOL_CATALOG)
 
 # Tools with a real runtime behind the directive loop (subset of TOOL_IDS).
 EXECUTABLE_TOOL_IDS = frozenset(
-    {WEB_SEARCH_ACTION, DATA_FETCH_ACTION, CODE_EXECUTION_ACTION}
+    {
+        WEB_SEARCH_ACTION,
+        DATA_FETCH_ACTION,
+        CODE_EXECUTION_ACTION,
+        REPO_INTEL_ACTION,
+        SOCIAL_SEARCH_ACTION,
+        COMMUNITY_READ_ACTION,
+        PLACES_INTEL_ACTION,
+    }
+)
+
+# The subset backed by a BYOK service credential (subset of EXECUTABLE_TOOL_IDS).
+# These are the tools the Architect canvas draws a rail lane for.
+CONNECTED_TOOL_IDS = frozenset(
+    {
+        REPO_INTEL_ACTION,
+        SOCIAL_SEARCH_ACTION,
+        COMMUNITY_READ_ACTION,
+        PLACES_INTEL_ACTION,
+    }
+)
+
+# The tools that bring *outside facts* in, as opposed to running something the
+# model already has (code_execution) or re-reading the task
+# (view_original_request). A member holding one of these and answering without
+# ever calling it is the case the retrieval nudge exists for.
+RETRIEVAL_TOOL_IDS = frozenset({WEB_SEARCH_ACTION, DATA_FETCH_ACTION}) | (
+    CONNECTED_TOOL_IDS
 )

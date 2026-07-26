@@ -142,6 +142,39 @@ class Settings(BaseSettings):
     # local model into an explicit 400 instead of a task whose every subtask
     # fails. Embeddings are unaffected — see embedding_endpoint below.
     ollama_chat_enabled: bool = True
+    # Ollama's own /api/chat is used instead of its OpenAI-compatible /v1 shim,
+    # because three things Maestro needs are only reachable there. Set false to
+    # fall back to /v1; the adapter also falls back on its own if /api/chat 404s,
+    # so a non-Ollama server behind free_model_endpoint keeps working.
+    ollama_native_api: bool = True
+    # Thinking on a thinking model (qwen3.5 and friends), for free-form work
+    # only — every schema-constrained call forces it off in the adapter,
+    # regardless of this setting.
+    #
+    # It was off at first, because reasoning is charged against max_tokens while
+    # being returned in a field Maestro never reads: 25-33% of replies came back
+    # with *empty* content and finish_reason=length, at ~60s each. That is now
+    # handled in two places — schema calls never think, and a free-form reply
+    # that comes back empty is retried once with thinking off — which makes
+    # leaving it on safe.
+    #
+    # And it has to be on, because it is what makes a member use its tools. With
+    # thinking suppressed the model must choose between emitting a bare tool
+    # directive and writing prose in a single shot, and it reliably writes prose:
+    # measured 0 tool calls across 18 cases, then 0 again after four escalating
+    # prompt rules. With thinking on, the same subtask searched and fetched the
+    # authoritative page, and answered correctly for the first time. Costs about
+    # 50% more wall time, not the 3-4x the raw per-call latency suggests,
+    # because a member that retrieves wastes fewer turns.
+    ollama_think: bool = True
+    # Ollama loads a model at 4096 tokens of context unless told otherwise, and
+    # silently truncates a longer prompt *from the front* — which is where the
+    # system prompt lives, so the member loses its role, output format and
+    # grounding rules first. A subagent prompt carrying a fetched page (8000
+    # chars) plus a teammate's output (6000) passes that limit easily. Verified:
+    # at 40k prompt chars a marker planted at the head of the system prompt was
+    # gone with the default, present at 16384.
+    ollama_num_ctx: int = 16384
     # Embeddings are needed by RAG and document upload whatever chat provider the
     # user picked, so they get their own endpoint: a deployment can serve only
     # nomic-embed-text without also hosting a chat model. Falls back to

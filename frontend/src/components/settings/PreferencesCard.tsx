@@ -13,13 +13,14 @@ import { useAuthStore } from '@/stores/auth';
 // Sentinel for "no explicit timezone" (fall back to the browser's local zone).
 const AUTO = '';
 
-/** Real, wired preferences: display timezone and default reviewer behaviour. */
+/** Real, wired preferences: timezone, default reviewer and tracing behaviour. */
 export function PreferencesCard() {
   const user = useAuthStore((s) => s.user);
   const setUser = useAuthStore((s) => s.setUser);
 
   const [timezone, setTimezone] = useState<string>(AUTO);
   const [reviewerDefault, setReviewerDefault] = useState(false);
+  const [tracingDefault, setTracingDefault] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
   const [savedNonce, setSavedNonce] = useState(0);
@@ -28,6 +29,7 @@ export function PreferencesCard() {
     if (user) {
       setTimezone(user.timezone ?? AUTO);
       setReviewerDefault(user.default_reviewer_enabled ?? false);
+      setTracingDefault(user.default_tracing_enabled ?? false);
     }
   }, [user]);
 
@@ -44,6 +46,7 @@ export function PreferencesCard() {
       const updated = await api.updateProfile({
         timezone: timezone || null,
         default_reviewer_enabled: reviewerDefault,
+        default_tracing_enabled: tracingDefault,
       });
       setUser(updated);
       setSavedNonce((n) => n + 1);
@@ -88,6 +91,24 @@ export function PreferencesCard() {
             </span>
             <span className="block text-micro text-muted">
               New tasks start with quality review on unless you turn it off.
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={tracingDefault}
+            onChange={(e) => setTracingDefault(e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-module-profile"
+          />
+          <span className="leading-tight">
+            <span className="block text-sm text-white">
+              Record an execution trace by default
+            </span>
+            <span className="block text-micro text-muted">
+              New tasks capture a span waterfall with per-call tokens and cost,
+              visible under Traces. Adds a small amount of storage per task.
             </span>
           </span>
         </label>

@@ -11,8 +11,11 @@ Design guarantees kept here:
   failure is logged and swallowed — it never propagates into a task.
 * **No prompt/response bodies.** Spans carry token counts and a request-side
   preview capped at ``SPAN_PREVIEW_CHARS`` only (CLAUDE.md §9.4 / §15.1).
-* **Zero cost when off.** With ``settings.tracing_enabled`` false, ``span`` is a
-  no-op context manager: nothing is buffered and Mongo is never touched.
+* **Zero cost when off.** With tracing off, ``span`` is a no-op context manager:
+  nothing is buffered and Mongo is never touched.
+* **Per-run opt in/out.** ``settings.tracing_enabled`` is the server-wide
+  default; a task run overrides it in either direction via ``set_enabled`` (see
+  ``Tracer.set_enabled``), which is how the architect's per-task toggle works.
 
 Parent/child nesting rides a ``contextvars.ContextVar``: a span opened inside
 another becomes its child, and because asyncio copies the context when it
@@ -117,12 +120,31 @@ class Tracer:
         self._current: ContextVar[Span | None] = ContextVar(
             "maestro_current_span", default=None
         )
+        # Per-run opt in/out. None defers to the server-wide setting.
+        self._override: ContextVar[bool | None] = ContextVar(
+            "maestro_tracing_override", default=None
+        )
         self._buffer: list[dict[str, Any]] = []
         self._last_flush = time.monotonic()
 
     def current(self) -> Span | None:
         """The span in scope on this task, or ``None``."""
         return self._current.get()
+
+    def is_enabled(self) -> bool:
+        """Whether spans are recorded here — the run's choice, else the server's."""
+        override = self._override.get()
+        return settings.tracing_enabled if override is None else override
+
+    def set_enabled(self, enabled: bool | None) -> None:
+        """Pin tracing for the current asyncio task and everything it spawns.
+
+        A task run calls this once at the top of its coroutine, so the choice the
+        user made per task wins over ``settings.tracing_enabled`` in both
+        directions. asyncio copies the context when it schedules a child task, so
+        parallel subagents inherit it and no other task is affected.
+        """
+        self._override.set(enabled)
 
     @contextlib.asynccontextmanager
     async def span(
@@ -140,7 +162,7 @@ class Tracer:
         the root ``task`` span needs to pass them. A raised exception marks the
         span ``error`` (and is re-raised — tracing never swallows task errors).
         """
-        if not settings.tracing_enabled:
+        if not self.is_enabled():
             yield _NULL_SPAN
             return
 
@@ -231,7 +253,8 @@ async def periodic_flush() -> None:
 
     Guarantees the design's time-based flush even for an idle-but-open buffer;
     the per-span size trigger and the task-boundary ``force_flush`` cover the
-    rest. Runs only while tracing is enabled.
+    rest. Always running: a task may opt into tracing even when the server-wide
+    setting is off, and its spans must not sit in the buffer until it fills.
     """
     import asyncio
 

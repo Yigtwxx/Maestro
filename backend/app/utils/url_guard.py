@@ -5,9 +5,16 @@ http(s), no embedded credentials, and every address the hostname resolves to
 must be globally routable. Reused by the ``data_fetch`` tool and the custom
 OpenAI-compatible LLM endpoint (CLAUDE.md §9.3/§9.4).
 
+This module only validates the URL it is handed; it does not follow redirects,
+so a caller that follows them must re-check each hop or the final URL itself.
+The ``data_fetch`` tool's scrapling engine gets that for free from libcurl's
+SAFE redirect mode (which refuses hops to internal addresses outright) and
+re-validates the landed URL on top; the custom LLM endpoint does not follow
+redirects at all.
+
 Residual risk: a DNS-rebinding window between the resolve check and the actual
 connection is not closed at this tier (the resolved IP is not pinned to the
-socket). Documented and accepted, matching the ``data_fetch`` tool.
+socket). Documented and accepted.
 """
 
 from __future__ import annotations

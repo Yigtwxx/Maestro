@@ -21,6 +21,9 @@ from app.core.constants import EMPTY_SUBAGENT_ANSWER, LLMProvider, SubagentStatu
 from app.services.llm_service import ChatMessage, LLMAdapter, LLMResponse
 
 DOMAIN = "general"
+# Declares only code_execution, which conftest pins unavailable — so at runtime
+# it holds no tools, and the retrieval nudge cannot fire.
+TOOLLESS_DOMAIN = "software"
 REAL_ANSWER = "Bitcoin traded near X on 2026-07-24. Data gaps: no Polymarket odds."
 
 
@@ -49,11 +52,11 @@ class ScriptedAdapter(LLMAdapter):
         )
 
 
-async def _run(adapter: LLMAdapter, **ctx_kwargs):
+async def _run(adapter: LLMAdapter, *, domain: str = DOMAIN, **ctx_kwargs):
     ctx = AgentContext(adapter=adapter, **ctx_kwargs)
-    member = get_domain_info(DOMAIN).team[0]
+    member = get_domain_info(domain).team[0]
     return await subagent.run_subtask(
-        ctx, domain=DOMAIN, member=member, brief="Analyze BTC", index=0
+        ctx, domain=domain, member=member, brief="Analyze BTC", index=0
     )
 
 
@@ -105,9 +108,15 @@ async def test_two_blanks_in_a_row_still_fail():
     )
 
 
-async def test_a_normal_answer_never_triggers_a_retry():
+async def test_a_normal_answer_never_triggers_the_blank_retry():
+    """A member with nothing to retrieve answers once and is left alone.
+
+    ``software`` declares only code_execution, and conftest pins Docker off, so
+    at runtime it holds no tools at all — which isolates the blank-answer retry
+    from the separate retrieval nudge that fires for tool-holding members.
+    """
     adapter = ScriptedAdapter([REAL_ANSWER])
-    result = await _run(adapter)
+    result = await _run(adapter, domain=TOOLLESS_DOMAIN)
 
     assert result.status is SubagentStatus.SUCCESS
     assert len(adapter.calls) == 1, f"Expected no extra call, got {len(adapter.calls)}"
