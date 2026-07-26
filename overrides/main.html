@@ -11,6 +11,15 @@
   link unfurls and costs no build dependencies.
 -->
 {% block extrahead %}
+  <!--
+    Google Search Console ownership proof for the
+    https://yigtwxx.github.io/Maestro/ URL-prefix property. A Domain property
+    is not available: verifying one needs a DNS TXT record on github.io, which
+    is not ours to edit. Emitted on every page rather than only the homepage so
+    the proof survives a homepage rename.
+  -->
+  <meta name="google-site-verification" content="W9V_HNV7Tk7qsjhzOyziGFz7q80kqs4q89sKdJuF5ew">
+
   {% if page and page.meta and page.meta.title %}
     {% set og_title = page.meta.title %}
   {% elif page and page.title and not page.is_homepage %}
