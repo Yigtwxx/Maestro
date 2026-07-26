@@ -29,8 +29,12 @@ Task: "Analyze last quarter's customer churn data"
 outliers", "depends_on": []},
  {"member": "statistician", "brief": "Quantify churn drivers on the cleaned \
 data; verify calculations with code_execution", "depends_on": ["cleaner"]},
+ {"member": "critic", "brief": "Challenge the churn findings: sample \
+validity, confounders, and any causal wording", "depends_on": \
+["statistician"]},
  {"member": "interpreter", "brief": "Translate the statistician's results \
-into business takeaways", "depends_on": ["statistician"]}]}"""
+into business takeaways, carrying the critic's surviving objections", \
+"depends_on": ["statistician", "critic"]}]}"""
 
 _REVIEW_RUBRIC = """\
 - Results must report effect sizes with uncertainty, not bare point
@@ -125,6 +129,33 @@ _INTERPRETER_OUTPUT = """\
 - Business implications.
 - Limitations and next data to collect."""
 
+_CRITIC_INSTRUCTIONS = """\
+You are a statistical critic. Your job is to attack the analysis before a
+stakeholder acts on it.
+Method:
+1. Check whether the sample can carry the claim: size, how it was selected,
+   and who is missing from it. A result computed on survivors answers a
+   different question than the one asked.
+2. Name the confounders the method did not control for, and say which
+   direction each would bias the result.
+3. Check for the analysis errors that survive peer review: multiple
+   comparisons without correction, a threshold chosen after seeing the data,
+   a window whose start date changes the conclusion.
+4. Separate what the data shows from what it merely permits. Any causal
+   wording resting on observational data is a finding, not a nuance.
+5. Verify the arithmetic itself where you can — recompute a headline number
+   with code_execution rather than trusting it.
+6. State which findings you attacked and could not break. A critique that
+   only lists doubts is as useless as one that lists none.
+Quality bar: every objection names what would answer it — the test to run,
+the variable to add, or the data to collect."""
+
+_CRITIC_OUTPUT = """\
+- Objections, ranked: claim — what is wrong with it — what would settle it.
+- Confounders not controlled for, with the direction of their bias.
+- Claims that survived the critique, and why they hold.
+- Wording that overstates causality (quote it and give the correct phrasing)."""
+
 DOMAIN: DomainInfo = DomainInfo(
     id="data",
     name="Data Expert",
@@ -177,6 +208,25 @@ DOMAIN: DomainInfo = DomainInfo(
             instructions=_VISUALIZER_INSTRUCTIONS,
             output_format=_VISUALIZER_OUTPUT,
         ),
+        # Ahead of `interpreter`, not appended: dependencies may only point at
+        # earlier members (``_sanitize_depends_on`` drops forward references),
+        # and the whole point is that the critique reaches the reader before
+        # the results are turned into business language.
+        SubagentSpec(
+            id="critic",
+            name="Statistical Critic",
+            description=(
+                "Attacks the analysis: sample validity, confounders, and "
+                "overstated causality."
+            ),
+            role=(
+                "challenge the analysis before it is acted on: sample "
+                "validity, uncontrolled confounders, multiple comparisons, "
+                "and causal claims the data cannot support"
+            ),
+            instructions=_CRITIC_INSTRUCTIONS,
+            output_format=_CRITIC_OUTPUT,
+        ),
         SubagentSpec(
             id="interpreter",
             name="Interpreter & Reporter",
@@ -196,4 +246,5 @@ DOMAIN: DomainInfo = DomainInfo(
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,
     review_rubric=_REVIEW_RUBRIC,
+    deliverable_member="interpreter",
 )
