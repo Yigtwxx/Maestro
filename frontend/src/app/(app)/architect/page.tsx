@@ -156,7 +156,12 @@ export default function ArchitectPage() {
   const [detailTaskId, setDetailTaskId] = useState<string>();
   // Which step-2 side panel is expanded; undefined means both sit on the rail
   // and the canvas takes their width. Config starts open — there is no prompt yet.
-  const [openPanel, setOpenPanel] = useState<PanelKey | undefined>('config');
+  // Exception: if a task is already running when this page (re)mounts — the user
+  // left mid-run and navigated back — the panels stay collapsed on the rail, the
+  // same as `onStart` leaves them, so the config does not pop itself back open.
+  const [openPanel, setOpenPanel] = useState<PanelKey | undefined>(() =>
+    isTaskRunning(useTaskStore.getState().status) ? undefined : 'config',
+  );
 
   // Task state lives in a module-level store, so navigating away and back no
   // longer discards the answer (App Router remounts this page every time).
