@@ -47,10 +47,10 @@ export function TopBar() {
         >
           <Settings className="h-4 w-4" />
         </Link>
-        <span className="flex items-center gap-2 rounded border border-primary/40 bg-primary-dim px-2.5 py-1 text-micro text-primary">
+        <span className="flex items-center gap-2 rounded border border-success/40 bg-success-dim px-2.5 py-1 text-micro text-success">
           <span className="relative flex h-1.5 w-1.5" aria-hidden>
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-60 motion-reduce:hidden" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
           </span>
           System Live
         </span>

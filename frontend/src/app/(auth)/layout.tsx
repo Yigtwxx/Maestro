@@ -57,7 +57,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
               className="text-micro mt-1 text-primary animate-word-in motion-reduce:animate-none"
               style={{ animationDelay: '0.2s' }}
             >
-              AI OS v0.2 — ORCHESTRATION LAYER
+              AI OS v0.1.1 — ORCHESTRATION LAYER
             </p>
           </div>
         </div>

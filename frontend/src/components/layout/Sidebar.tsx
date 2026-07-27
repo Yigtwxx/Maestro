@@ -72,7 +72,7 @@ export function Sidebar() {
           {/* Tighter and smaller than `text-micro` — as a wordmark subtitle it
               only has to whisper, and the wide tracking read as a second title. */}
           <span className="block text-[9px] font-semibold uppercase tracking-[0.08em] text-primary">
-            AI OS v0.2
+            AI OS v0.1.1
           </span>
         </div>
       </div>
