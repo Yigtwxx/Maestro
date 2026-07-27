@@ -270,6 +270,8 @@ DOMAIN: DomainInfo = DomainInfo(
     tools=(
         "web_search",
         "data_fetch",
+        "document_search",
+        "memory_recall",
         "social_search",
         "summarize",
         "sentiment_analysis",

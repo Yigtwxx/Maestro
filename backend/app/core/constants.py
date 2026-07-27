@@ -1184,5 +1184,7 @@ CONNECTED_TOOL_IDS = frozenset(
 # (view_original_request). A member holding one of these and answering without
 # ever calling it is the case the retrieval nudge exists for.
 RETRIEVAL_TOOL_IDS = (
-    frozenset({WEB_SEARCH_ACTION, DATA_FETCH_ACTION}) | RAG_TOOL_IDS | CONNECTED_TOOL_IDS
+    frozenset({WEB_SEARCH_ACTION, DATA_FETCH_ACTION})
+    | RAG_TOOL_IDS
+    | CONNECTED_TOOL_IDS
 )

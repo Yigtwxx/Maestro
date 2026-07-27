@@ -215,7 +215,7 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_PEDAGOGUE_OUTPUT,
         ),
     ),
-    tools=("web_search", "summarize", "file_read"),
+    tools=("web_search", "document_search", "memory_recall", "summarize", "file_read"),
     expertise=(
         "education: curriculum design, lesson planning, assessment "
         "design, and concept explanation for learners"

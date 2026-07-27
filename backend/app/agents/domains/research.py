@@ -188,7 +188,7 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_WRITER_OUTPUT,
         ),
     ),
-    tools=("web_search", "summarize", "file_read"),
+    tools=("web_search", "document_search", "memory_recall", "summarize", "file_read"),
     expertise=(
         "research: in-depth multi-source analysis, synthesis, and "
         "comprehensive report writing"

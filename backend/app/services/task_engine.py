@@ -271,6 +271,8 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
         max_web_searches=settings.web_search_max_uses_per_subtask,
         max_data_fetches=settings.data_fetch_max_uses_per_subtask,
         max_code_executions=settings.code_execution_max_uses_per_subtask,
+        max_document_searches=settings.document_search_max_uses_per_subtask,
+        max_memory_recalls=settings.memory_recall_max_uses_per_subtask,
         max_repo_lookups=settings.repo_intel_max_uses_per_subtask,
         max_social_searches=settings.social_search_max_uses_per_subtask,
         max_community_reads=settings.community_read_max_uses_per_subtask,
@@ -279,6 +281,7 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
         max_tool_grants=settings.subagent_max_tool_grants,
         max_parallel_subagents=settings.subagent_max_parallel,
         service_credentials=service_credentials,
+        user_id=rc.user_id,
     )
 
     # --- ROUTE ---

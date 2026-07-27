@@ -165,9 +165,10 @@ async def _handle_grant_request(
         return f"The Main Agent declined to grant {tool}: {decision.reason}"
     # The grantable pool was resolved from the same domain/switch/credential
     # gates, so ``specs_for`` can always build the spec for a tool it contains.
-    specs[tool] = tool_directives.specs_for(frozenset({tool}), ctx.service_credentials)[
-        tool
-    ]
+    # user_id is threaded through so a granted RAG tool gets its user-scoped spec.
+    specs[tool] = tool_directives.specs_for(
+        frozenset({tool}), ctx.service_credentials, user_id=ctx.user_id
+    )[tool]
     grants.used += 1
     logger.info(
         "tool granted mid-run: member=%s tool=%s",

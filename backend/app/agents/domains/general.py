@@ -106,7 +106,7 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_CHECKER_OUTPUT,
         ),
     ),
-    tools=("web_search", "summarize"),
+    tools=("web_search", "document_search", "memory_recall", "summarize"),
     expertise="general-purpose assistance across any topic",
     routing_hint="anything that fits no other domain",
     methodology=_METHODOLOGY,

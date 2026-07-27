@@ -214,9 +214,7 @@ def _describe_places_intel(directive: ToolDirective, done: bool) -> str:
 
 def _describe_document_search(directive: ToolDirective, done: bool) -> str:
     query = directive.args["query"]
-    return (
-        f"Document search done: {query}" if done else f"Searching documents: {query}"
-    )
+    return f"Document search done: {query}" if done else f"Searching documents: {query}"
 
 
 def _describe_memory_recall(directive: ToolDirective, done: bool) -> str:

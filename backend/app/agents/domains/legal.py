@@ -258,7 +258,14 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_REPORTER_OUTPUT,
         ),
     ),
-    tools=("web_search", "data_fetch", "summarize", "file_read"),
+    tools=(
+        "web_search",
+        "data_fetch",
+        "document_search",
+        "memory_recall",
+        "summarize",
+        "file_read",
+    ),
     expertise=(
         "legal and compliance: contract review, GDPR/KVKK data "
         "protection, software licenses, and legal risk assessment"

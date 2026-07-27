@@ -285,7 +285,7 @@ DOMAIN: DomainInfo = DomainInfo(
             output_format=_EDITOR_OUTPUT,
         ),
     ),
-    tools=("web_search", "summarize", "file_read"),
+    tools=("web_search", "document_search", "memory_recall", "summarize", "file_read"),
     expertise=(
         "content creation: blog posts, articles, scripts, stories, "
         "social media content, and editing"
