@@ -475,6 +475,12 @@ def parse_directive(content: str, enabled: frozenset[str]) -> ToolDirective | No
             return None
         return ToolDirective(action, {"code": code})
 
+    if action in (DOCUMENT_SEARCH_ACTION, MEMORY_RECALL_ACTION):
+        query = str(parsed.get("query", "")).strip()
+        if not query:
+            return None
+        return ToolDirective(action, {"query": query})
+
     if action == REPO_INTEL_ACTION:
         repo = str(parsed.get("repo", "")).strip()
         if not repo:
