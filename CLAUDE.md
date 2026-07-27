@@ -28,12 +28,14 @@ User prompt
 ORCHESTRATOR   Routing only. Classifies the task domain; produces no work itself.
      │
      ▼
-MAIN AGENT     Domain expert (finance, software, marketing, …).
-     │         Builds the subtask plan and coordinates subagents.
+MAIN AGENT     Domain expert (finance, software, marketing, …). May first run a
+     │         read-only discovery pass over the user's own data, then builds the
+     │         subtask plan, assigns each subagent its tools, and coordinates them.
      ├──────────────┐
      ▼              ▼
 SUBAGENT       SUBAGENT      One atomic task each (fetch data, analyze, summarize).
-     │              │
+     │              │        May escalate to the Main Agent for a tool it was not
+     │              │        assigned (see §8, autonomous, not human-in-the-loop).
      └──────┬───────┘
             ▼
       REVIEWER     Optional (`reviewer_enabled`). Validates subagent output and
@@ -59,6 +61,12 @@ Reviewer feedback:
 ```
 
 Every agent has a `system_prompt`, a `tools` list, and a `max_iterations` bound.
+The `tools` list is resolved **per subagent**, not just per domain: the Main
+Agent may assign each member a subset of the domain's tools (an unassigned member
+falls back to the full domain set). A member's effective set is always
+`main-assigned ∩ domain-declared ∩ operator-switches ∩ credentials` — an
+assignment can only ever *narrow* it. A subagent that finds it needs a tool it
+was not given may `request_tool` from the Main Agent mid-run (§8).
 
 ---
 
@@ -229,7 +237,31 @@ provider names only, never secrets.
 
 **Loop protection.** `max_iterations` (default 10), `max_review_iterations` (default 3),
 and `task_timeout_seconds` (default 300) bound every run. Exceeding a bound terminates
-the task and logs it.
+the task and logs it. Two more bounds cap the tool-delegation paths: a subagent's
+`request_tool` escalations are capped by `max_tool_grants` (default 2), and the Main
+Agent's pre-planning discovery pass by `max_discovery_calls` (default 2). Each grant
+raises tool *variety*, never call *volume* — the per-tool and total `max_tool_calls`
+caps still bound executions.
+
+**Tool escalation (agent-to-agent, not HITL).** When a subagent needs a tool it was
+not assigned, it emits a `request_tool` directive; the Main Agent LLM, acting as a
+gatekeeper, autonomously grants or denies it. This is distinct from the §12
+human-in-the-loop channel (`ask_user` / `task_questions` / `AWAITING_ANSWER`): there
+is no task pause and no human, just one Main-Agent-persona LLM call. A grant can never
+bypass a gate — the grantable pool is resolved through the same
+domain/switch/credential filter as any other tool, so a subagent cannot obtain a tool
+the operator disabled or the user has no key for. The requesting member's brief and
+justification reach the gatekeeper as delimited untrusted data, never instructions.
+Grant state is kept local to each subtask run, so a grant to one member in a parallel
+wave never leaks to its siblings sharing the same `AgentContext`.
+
+**Per-user RAG isolation.** The `document_search` and `memory_recall` tools search the
+user's own Qdrant collections and are keyless. Every query is scoped by `user_id`
+(`memory_service._user_filter`); the tool spec closes over the run's `user_id` and must
+never fall back to a global default — this is the load-bearing property that keeps one
+user's documents and conversation memory out of another's context (§6). The Main Agent's
+discovery pass is restricted to exactly these two tools, so no external or action tool
+can ever run at the main tier.
 
 **Prompt injection.** Marketplace submissions are security-scanned on publish. Custom
 system prompts are scanned on write and sandboxed inside `<agent_persona>` at execution
@@ -273,7 +305,10 @@ CORS does not apply; in split deployments only known origins are allowed. Secret
 ## 9. Non-Negotiable Rules
 
 1. Never log, store in plaintext, or return API keys to the frontend.
-2. Every agent loop carries an iteration bound.
+2. Every agent loop carries an iteration bound. This includes the delegation
+   paths: subagent `request_tool` escalations are capped by `max_tool_grants` and
+   the Main Agent's discovery pass by `max_discovery_calls`. A tool grant widens
+   variety, never the `max_tool_calls` execution cap.
 3. Marketplace security scanning is never skipped.
 4. User data — including memory and vectors — is isolated per user.
 5. New LLM providers are added as new adapters. Do not modify existing adapter code.
@@ -404,6 +439,14 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
   smoke-tested live from this repo.
 - `CODE_EXECUTION_ENABLED` — must stay `false` in production; enabling it requires mounting
   the Docker socket.
+- `DOCUMENT_SEARCH_ENABLED` / `MEMORY_RECALL_ENABLED` — the RAG tools over the user's own
+  data (uploads and conversation memory). Keyless and per-user scoped, so unlike the
+  connected tools there is nothing to configure beyond the switch; setting one to `false`
+  is the per-tool rollback. They degrade to a "no results" note on a cold Qdrant, never an
+  error, so they are safe to leave on even before any documents are ingested.
+- `MAIN_AGENT_DISCOVERY_ENABLED` — lets the Main Agent run a bounded, read-only pass over
+  the user's own data (the two RAG tools only) before planning, to ground its plan. Off
+  disables the pass entirely; `MAIN_AGENT_DISCOVERY_MAX_CALLS` bounds it when on.
 
 Prices and quotas are not secrets and live in `constants.py`.
 
