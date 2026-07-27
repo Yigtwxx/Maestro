@@ -45,7 +45,10 @@ const config: Config = {
           DEFAULT: '#db61a2',
           dim: 'rgba(219,97,162,0.10)',
         },
-        muted: '#8b8fa3',
+        // Same blue-grey hue (~230°); lightness lifted 59%->68% so small text
+        // clears contrast on macOS grayscale antialiasing, not just Windows
+        // ClearType. Contrast vs #0a0a10 background ~8:1 (was ~6.2:1).
+        muted: '#a0a4ba',
         // Per-domain neon hues (bright — UI accents, glows, chips, active state).
         // Opacity modifiers (bg-domain-x/10, border-domain-x/40) supply the dim
         // fills, so no separate -dim tokens are needed.
