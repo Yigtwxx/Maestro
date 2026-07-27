@@ -40,8 +40,10 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
+      # Coverage is reported (term-missing in the log) but NOT gated on a
+      # threshold: a legitimate change must never fail CI on a coverage dip.
       - name: Run tests
-        run: pytest
+        run: pytest --cov=app --cov-report=term-missing
 
       # Fails when requirements*.txt were not regenerated after a
       # requirements*.in edit (e.g. a Dependabot PR that only bumped the .in
