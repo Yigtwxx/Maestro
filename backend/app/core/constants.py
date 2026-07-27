@@ -1071,6 +1071,18 @@ ORIGINAL_REQUEST_OPEN = "<original_user_request>"
 ORIGINAL_REQUEST_CLOSE = "</original_user_request>"
 
 
+# --- Request tool (built-in subagent escalation directive) ---
+# Like view_original_request, deliberately NOT in TOOL_CATALOG /
+# EXECUTABLE_TOOL_IDS: it is a control directive, not a capability. A subagent
+# emits it to ask the Main Agent (autonomously, agent-to-agent) to grant a tool
+# it was not assigned; on grant the tool joins the running loop. Bounded by
+# ``max_tool_grants`` so it is a loop-protection concern, not a call-volume one.
+REQUEST_TOOL_ACTION = "request_tool"
+# Default number of tool grants a single subagent run may obtain. Each grant is
+# one extra gatekeeper LLM call, so this bounds the escalation cost per run.
+MAX_TOOL_GRANTS = 2
+
+
 # Reported when a subagent returns a blank answer. Usually the model spent its
 # whole output budget reasoning (or emitted only a <think> block), so the wording
 # points at the cause rather than just stating the symptom.

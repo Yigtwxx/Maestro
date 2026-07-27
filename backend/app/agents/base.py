@@ -61,6 +61,12 @@ class AgentContext:
     # Budget for the built-in view_original_request directive; exempt from
     # max_tool_calls so it never crowds out real tools.
     max_original_request_views: int = 1
+    # How many tools a subagent may be granted mid-run via ``request_tool``
+    # escalation (Phase B). Read-only here on purpose: the running count and the
+    # granted specs are kept LOCAL to ``_run_subtask``. A wave of sibling
+    # subagents shares one AgentContext, so a grant recorded on ``ctx`` would
+    # leak to every sibling — the exact bug the local-state design prevents.
+    max_tool_grants: int = 2
     # Concurrent subagents per task (wave execution in main_agent.py).
     max_parallel_subagents: int = 3
     # Resolved domain agent for this task. Set for a custom (``custom:{id}``)

@@ -36,6 +36,7 @@ from app.core.constants import (
     REPO_INTEL_ACTION,
     REPO_INTEL_ASPECTS,
     REPO_INTEL_DEFAULT_ASPECT,
+    REQUEST_TOOL_ACTION,
     SOCIAL_SEARCH_ACTION,
     VIEW_ORIGINAL_REQUEST_ACTION,
     WEB_SEARCH_ACTION,
@@ -341,6 +342,18 @@ def parse_directive(content: str, enabled: frozenset[str]) -> ToolDirective | No
     except ValueError:
         return None
     action = str(parsed.get("action", "")).strip()
+
+    # Recognized before the ``enabled`` gate: by definition a member asks for a
+    # tool it does *not* currently have, so this action is never in ``enabled``.
+    # An unknown or non-executable ``tool`` degrades to None (final answer)
+    # rather than a dead directive.
+    if action == REQUEST_TOOL_ACTION:
+        tool = str(parsed.get("tool", "")).strip()
+        if tool not in EXECUTABLE_TOOL_IDS:
+            return None
+        justification = str(parsed.get("justification", "")).strip()
+        return ToolDirective(action, {"tool": tool, "justification": justification})
+
     if action not in enabled:
         return None
 
@@ -675,3 +688,29 @@ def tool_defs_for(specs: dict[str, ToolSpec]) -> list:
         )
         for action in specs
     ]
+
+
+def request_tool_def(grantable: frozenset[str]):
+    """Native ``ToolDef`` for the escalation directive, or None when nothing is
+    grantable. The ``tool`` enum is the grantable pool, so a native model cannot
+    even name a tool the assignment/domain/credential gates would refuse."""
+    if not grantable:
+        return None
+    from app.services.llm_service import ToolDef
+
+    return ToolDef(
+        name=REQUEST_TOOL_ACTION,
+        description=(
+            "Ask the Main Agent to grant you a tool you were not given, when "
+            "your brief needs one you do not currently have. Say why in "
+            "'justification'."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "tool": {"type": "string", "enum": sorted(grantable)},
+                "justification": {"type": "string"},
+            },
+            "required": ["tool", "justification"],
+        },
+    )

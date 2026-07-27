@@ -73,6 +73,20 @@ class PlanResult(BaseModel):
     question: str = ""
 
 
+class GrantDecision(BaseModel):
+    """Gatekeeper output for a subagent's ``request_tool`` escalation.
+
+    ``{"grant": bool, "reason": str}`` — the Main Agent, acting autonomously,
+    decides whether the requested tool is warranted by the member's justification
+    and brief. Defaults to a denial so malformed output fails safe.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    grant: bool = False
+    reason: str = ""
+
+
 class ReviewVerdict(BaseModel):
     """Reviewer output: ``{"approved": ..., "issues": [...], "retry_hints": [...]}``.
 

@@ -280,6 +280,9 @@ class Settings(BaseSettings):
     subagent_max_parallel: int = 3
     # Total tool calls (all kinds) per subtask run.
     subagent_max_tool_calls: int = 6
+    # Tools a subagent may be granted mid-run via ``request_tool`` escalation.
+    # Each grant is one extra gatekeeper LLM call, so this bounds escalation cost.
+    subagent_max_tool_grants: int = 2
 
     # --- Default agent limits (CLAUDE.md §9.2) ---
     max_iterations: int = 10

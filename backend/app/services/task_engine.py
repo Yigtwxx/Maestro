@@ -276,6 +276,7 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
         max_community_reads=settings.community_read_max_uses_per_subtask,
         max_places_lookups=settings.places_intel_max_uses_per_subtask,
         max_tool_calls=settings.subagent_max_tool_calls,
+        max_tool_grants=settings.subagent_max_tool_grants,
         max_parallel_subagents=settings.subagent_max_parallel,
         service_credentials=service_credentials,
     )

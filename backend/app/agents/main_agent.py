@@ -32,13 +32,14 @@ from app.agents.base import (
 from app.agents.domains.base import DomainInfo
 from app.agents.prompts import (
     FALLBACK_BRIEF_TEMPLATE,
+    GATEKEEPER_SYSTEM,
     MAIN_AGENT_CLARIFY_RULE,
     MAIN_AGENT_SYSTEM,
     MAIN_AGENT_TOOLS_RULE,
     SYNTHESIS_SYSTEM,
 )
 from app.agents.registry import SubagentSpec, get_domain_info
-from app.agents.schemas import PlanAssignment, PlanResult
+from app.agents.schemas import GrantDecision, PlanAssignment, PlanResult
 from app.agents.structured import structured_call
 from app.core.constants import (
     EXECUTABLE_TOOL_IDS,
@@ -439,6 +440,52 @@ def _as_deliverable(assignment: Assignment, info: DomainInfo) -> Assignment:
         depends_on=(),
         rank=assignment.rank,
     )
+
+
+async def gatekeeper_review(
+    ctx: AgentContext,
+    *,
+    domain: str,
+    member: SubagentSpec,
+    requested_tool: str,
+    justification: str,
+    brief: str,
+) -> GrantDecision:
+    """Decide, as the Main Agent, whether to grant a subagent's requested tool.
+
+    This is the autonomous, agent-to-agent side of the ``request_tool``
+    escalation (Phase B), distinct from the §8/§12 human-in-the-loop channel: no
+    task pause, just one Main-Agent-persona LLM call. The member's brief and
+    justification are delimited untrusted data — model text the member authored,
+    never instructions. Fails safe to a denial on any provider or validation
+    error, so an escalation can never *widen* access by crashing.
+    """
+    system = GATEKEEPER_SYSTEM.format(
+        member=member.id,
+        domain=domain,
+        tool=requested_tool,
+        brief_open="<brief>",
+        brief=truncate_text(brief.strip(), OBJECTIVE_MAX_CHARS),
+        brief_close="</brief>",
+        just_open="<justification>",
+        justification=truncate_text(justification.strip(), OBJECTIVE_MAX_CHARS),
+        just_close="</justification>",
+    )
+    messages = [
+        ChatMessage("system", with_current_date(system)),
+        ChatMessage("user", f"Grant the {requested_tool} tool to {member.id}?"),
+    ]
+    try:
+        return await structured_call(
+            ctx.role_adapter("main"),
+            messages,
+            GrantDecision,
+            temperature=0.1,
+            max_attempts=2,
+        )
+    except (LLMError, ValueError):
+        logger.warning("gatekeeper review failed; denying grant of %s", requested_tool)
+        return GrantDecision(grant=False, reason="Gatekeeper unavailable.")
 
 
 async def _run_with_review(

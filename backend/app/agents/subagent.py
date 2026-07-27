@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
 from app.agents import budget
@@ -41,12 +43,14 @@ from app.agents.prompts import (
     SUBAGENT_EMPTY_ANSWER_NUDGE,
     SUBAGENT_NO_RETRIEVAL_NUDGE,
     SUBAGENT_OBJECTIVE_HEADER,
+    SUBAGENT_REQUEST_TOOL_RULE,
     SUBAGENT_SYSTEM,
     SUBAGENT_TOOLS_RULE,
     SUBAGENT_UPSTREAM_HEADER,
     TOOL_RULE_LINES,
 )
 from app.agents.registry import SubagentSpec
+from app.agents.schemas import GrantDecision
 from app.agents.tools import ToolDirective, ToolSpec
 from app.core.constants import (
     COMPACTION_KEEP_CHARS,
@@ -55,6 +59,7 @@ from app.core.constants import (
     OBJECTIVE_MAX_CHARS,
     ORIGINAL_REQUEST_CLOSE,
     ORIGINAL_REQUEST_OPEN,
+    REQUEST_TOOL_ACTION,
     RETRIEVAL_TOOL_IDS,
     SUBAGENT_MAX_TOKENS,
     SUBAGENT_SUMMARY_MAX_CHARS,
@@ -68,6 +73,23 @@ from app.core.constants import (
 from app.services.llm_service import ChatMessage, LLMError, LLMResponse
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class _GrantState:
+    """Escalation state kept LOCAL to one ``_run_subtask`` call.
+
+    A wave of sibling subagents shares one ``AgentContext``, so this must never
+    live on ``ctx``: passing it by reference through the loop is what keeps one
+    member's grant from leaking to its siblings. ``used`` is mutated in place as
+    grants are made and survives the retrieval-nudge re-entry because the same
+    instance is handed back to the loop.
+    """
+
+    grantable: frozenset[str]
+    gatekeeper: Callable[[str, str], Awaitable[GrantDecision]]
+    max_grants: int
+    used: int = 0
 
 
 def _format_upstream(upstream: list[tuple[str, str]]) -> str:
@@ -85,18 +107,77 @@ def _tool_budget(ctx: AgentContext, action: str, specs: dict[str, ToolSpec]) -> 
     return getattr(ctx, spec.budget_attr) if spec else 0
 
 
-def _tools_rule(ctx: AgentContext, specs: dict[str, ToolSpec]) -> str:
-    """Compose the tools prompt rule from this run's available directives."""
+def _tools_rule(
+    ctx: AgentContext,
+    specs: dict[str, ToolSpec],
+    grants: _GrantState | None = None,
+) -> str:
+    """Compose the tools prompt rule from this run's available directives.
+
+    When a grantable pool exists, the escalation rule is appended so the member
+    knows it can ask the Main Agent for a tool it was not given — but never when
+    nothing is grantable, so it is not told about a door it cannot open.
+    """
     lines = [
         TOOL_RULE_LINES[action].format(budget=_tool_budget(ctx, action, specs))
         for action in sorted(specs)
         if action in TOOL_RULE_LINES
     ]
-    if not lines:
-        return ""
-    return SUBAGENT_TOOLS_RULE.format(
-        tool_lines="\n".join(lines), max_tool_calls=ctx.max_tool_calls
+    rule = ""
+    if lines:
+        rule = SUBAGENT_TOOLS_RULE.format(
+            tool_lines="\n".join(lines), max_tool_calls=ctx.max_tool_calls
+        )
+    if grants is not None and grants.grantable:
+        rule += SUBAGENT_REQUEST_TOOL_RULE.format(max_grants=grants.max_grants)
+    return rule
+
+
+async def _handle_grant_request(
+    ctx: AgentContext,
+    directive: ToolDirective,
+    specs: dict[str, ToolSpec],
+    grants: _GrantState,
+    *,
+    member: SubagentSpec,
+) -> str:
+    """Resolve a ``request_tool`` escalation and return the feedback message.
+
+    Mutates ``specs`` in place on a grant so the running loop gains the tool.
+    Every denial path short of an actual grant is answered *without* a gatekeeper
+    LLM call — the budget cap, an already-held tool, and a tool outside the
+    grantable pool are all decided locally, so an escalation cannot spend a Main
+    Agent call to be told no by a rule the code already knows.
+    """
+    tool = directive.args.get("tool", "")
+    if grants.used >= grants.max_grants:
+        return "Grant limit reached; finish with the tools you already have."
+    if tool in specs:
+        return f"You already have {tool}; use it directly."
+    if tool not in grants.grantable:
+        return (
+            f"{tool} cannot be granted here (not permitted in this domain, "
+            "disabled by the operator, or missing its connected key). Work with "
+            "the tools you have and note the gap in your answer."
+        )
+    decision = await grants.gatekeeper(tool, directive.args.get("justification", ""))
+    if not decision.grant:
+        return f"The Main Agent declined to grant {tool}: {decision.reason}"
+    # The grantable pool was resolved from the same domain/switch/credential
+    # gates, so ``specs_for`` can always build the spec for a tool it contains.
+    specs[tool] = tool_directives.specs_for(frozenset({tool}), ctx.service_credentials)[
+        tool
+    ]
+    grants.used += 1
+    logger.info(
+        "tool granted mid-run: member=%s tool=%s",
+        member.id,
+        tool,
+        extra={"member_id": member.id},
     )
+    rule = TOOL_RULE_LINES.get(tool, "")
+    line = rule.format(budget=_tool_budget(ctx, tool, specs)) if rule else ""
+    return f"The Main Agent granted {tool}. You may now use it.\n{line}"
 
 
 async def run_subtask(
@@ -187,6 +268,37 @@ async def _run_subtask(
         specs[VIEW_ORIGINAL_REQUEST_ACTION] = (
             tool_directives.make_view_original_request_spec(objective)
         )
+
+    # Grantable pool for request_tool escalation: everything this domain could
+    # enable that this member was not given. Resolved through the same
+    # domain/switch/credential gates (``assigned=None``), so a grant can only add
+    # a tool that already passes them — it can never bypass a gate. Empty when
+    # the member was unassigned (it already holds the whole domain set).
+    grantable = (
+        await tool_directives.resolve_enabled_tools(
+            domain, credentials=ctx.service_credentials, assigned=None
+        )
+        - enabled
+    )
+
+    async def _gatekeeper(requested_tool: str, justification: str) -> GrantDecision:
+        # Lazy import breaks the main_agent -> subagent import cycle.
+        from app.agents import main_agent
+
+        return await main_agent.gatekeeper_review(
+            ctx,
+            domain=domain,
+            member=member,
+            requested_tool=requested_tool,
+            justification=justification,
+            brief=brief,
+        )
+
+    grants = _GrantState(
+        grantable=grantable,
+        gatekeeper=_gatekeeper,
+        max_grants=ctx.max_tool_grants,
+    )
     upstream_block = format_optional_block(
         SUBAGENT_UPSTREAM_HEADER, _format_upstream(upstream or [])
     )
@@ -213,7 +325,7 @@ async def _run_subtask(
         review_hints=hints_block,
         memory_context=format_memory_block(ctx.memory_context),
     )
-    system_prompt += _tools_rule(ctx, specs)
+    system_prompt += _tools_rule(ctx, specs, grants)
     messages = [
         ChatMessage("system", with_current_date(system_prompt)),
         ChatMessage("user", brief),
@@ -221,7 +333,7 @@ async def _run_subtask(
     started = time.perf_counter()
     try:
         response, tokens_used, usage = await _chat_with_tools(
-            ctx, messages, member=member, index=index, specs=specs
+            ctx, messages, member=member, index=index, specs=specs, grants=grants
         )
     except LLMError as exc:
         logger.warning("subtask failed: member=%s error=%s", member.id, exc)
@@ -337,6 +449,7 @@ async def _chat_with_tools(
     member: SubagentSpec,
     index: int,
     specs: dict[str, ToolSpec],
+    grants: _GrantState | None = None,
 ) -> tuple[LLMResponse, int, dict[str, int]]:
     """Run the tool loop, then insist on an answer when the reply comes back blank.
 
@@ -355,7 +468,7 @@ async def _chat_with_tools(
     )
     loop = _native_tool_loop if native else _directive_tool_loop
     response, total_tokens, usage, messages = await loop(
-        ctx, messages, member=member, index=index, specs=specs
+        ctx, messages, member=member, index=index, specs=specs, grants=grants
     )
     # The budget guard inside the loop has already forced a final answer once
     # the task's cap is spent; nudging past it would be spend nobody authorized.
@@ -373,6 +486,7 @@ async def _chat_with_tools(
             response=response,
             total_tokens=total_tokens,
             usage=usage,
+            grants=grants,
         )
 
     logger.warning(
@@ -401,6 +515,7 @@ async def _nudge_if_nothing_retrieved(
     response: LLMResponse,
     total_tokens: int,
     usage: dict[str, int],
+    grants: _GrantState | None = None,
 ) -> tuple[LLMResponse, int, dict[str, int]]:
     """Ask once more when a member holding retrieval tools never used one.
 
@@ -434,7 +549,7 @@ async def _nudge_if_nothing_retrieved(
     messages.append(ChatMessage("user", SUBAGENT_NO_RETRIEVAL_NUDGE))
     try:
         retry, retry_tokens, retry_usage, _ = await loop(
-            ctx, messages, member=member, index=index, specs=specs
+            ctx, messages, member=member, index=index, specs=specs, grants=grants
         )
     except LLMError as exc:
         # The first answer was fine; a failed second opinion must not lose it.
@@ -456,16 +571,18 @@ async def _directive_tool_loop(
     member: SubagentSpec,
     index: int,
     specs: dict[str, ToolSpec],
+    grants: _GrantState | None = None,
 ) -> tuple[LLMResponse, int, dict[str, int], list[ChatMessage]]:
     """Provider-agnostic loop: the model asks for tools in JSON, we execute them.
 
     Any reply that is not a valid directive is treated as the final answer, so
     models that answer directly are unaffected. Hard bound:
-    ``max_tool_calls + max_original_request_views + 2`` LLM calls per run. The
-    transcript comes back with the response so the caller can keep the
-    conversation going (see the blank-answer nudge above).
+    ``max_tool_calls + max_original_request_views + max_tool_grants + 2`` LLM
+    calls per run. The transcript comes back with the response so the caller can
+    keep the conversation going (see the blank-answer nudge above).
     """
     enabled = frozenset(specs)
+    can_escalate = grants is not None and bool(grants.grantable)
     total_tokens = 0
     usage: dict[str, int] = {}
     while True:
@@ -489,11 +606,25 @@ async def _directive_tool_loop(
         total_tokens += response.tokens_used
         directive = (
             tool_directives.parse_directive(response.content, enabled)
-            if specs
+            if specs or can_escalate
             else None
         )
         if directive is None:
             return response, total_tokens, usage, messages
+
+        # Escalation: ask the Main Agent for a tool, then keep going. Exempt from
+        # the tool-call cap (bounded by max_tool_grants instead); a grant mutates
+        # ``specs`` in place, so the enabled snapshot is rebuilt afterwards.
+        if directive.action == REQUEST_TOOL_ACTION:
+            if grants is None:
+                return response, total_tokens, usage, messages
+            messages.append(ChatMessage("assistant", response.content))
+            feedback = await _handle_grant_request(
+                ctx, directive, specs, grants, member=member
+            )
+            messages.append(ChatMessage("user", feedback))
+            enabled = frozenset(specs)
+            continue
 
         messages.append(ChatMessage("assistant", response.content))
         over_tool_budget = usage.get(directive.action, 0) >= _tool_budget(
@@ -533,6 +664,19 @@ async def _directive_tool_loop(
         messages.append(ChatMessage("user", feedback))
 
 
+def _native_tool_defs(specs: dict[str, ToolSpec], grants: _GrantState | None) -> list:
+    """Native ToolDefs for the enabled specs plus the escalation directive.
+
+    Rebuilt after every grant so a newly granted tool becomes callable, and the
+    ``request_tool`` def is included only while a grantable pool remains."""
+    defs = tool_directives.tool_defs_for(specs)
+    if grants is not None:
+        req = tool_directives.request_tool_def(grants.grantable)
+        if req is not None:
+            defs = [*defs, req]
+    return defs
+
+
 async def _native_tool_loop(
     ctx: AgentContext,
     messages: list[ChatMessage],
@@ -540,6 +684,7 @@ async def _native_tool_loop(
     member: SubagentSpec,
     index: int,
     specs: dict[str, ToolSpec],
+    grants: _GrantState | None = None,
 ) -> tuple[LLMResponse, int, dict[str, int], list[ChatMessage]]:
     """Native function-calling variant of the directive loop.
 
@@ -550,7 +695,7 @@ async def _native_tool_loop(
     messages. Falls back to the directive path implicitly (the caller only routes
     here when the adapter advertises ``native_tools``).
     """
-    tool_defs = tool_directives.tool_defs_for(specs)
+    tool_defs = _native_tool_defs(specs, grants)
     total_tokens = 0
     usage: dict[str, int] = {}
 
@@ -577,6 +722,20 @@ async def _native_tool_loop(
             return response, total_tokens, usage, messages
         messages.append(ChatMessage("assistant", response.content))
         for call in response.tool_calls:
+            # Escalation is handled before the spec/budget checks: it has no spec
+            # and is bounded by max_tool_grants, not the tool-call cap. A grant
+            # rebuilds tool_defs so the new tool is callable on the next turn.
+            if call.name == REQUEST_TOOL_ACTION:
+                if grants is None:
+                    messages.append(ChatMessage("tool", "Escalation unavailable."))
+                    continue
+                directive = ToolDirective(action=call.name, args=call.arguments)
+                feedback = await _handle_grant_request(
+                    ctx, directive, specs, grants, member=member
+                )
+                messages.append(ChatMessage("tool", feedback))
+                tool_defs = _native_tool_defs(specs, grants)
+                continue
             spec = specs.get(call.name)
             if spec is None:
                 messages.append(ChatMessage("tool", f"Unknown tool: {call.name}"))
