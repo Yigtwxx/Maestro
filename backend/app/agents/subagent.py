@@ -109,6 +109,7 @@ async def run_subtask(
     review_hints: list[str] | None = None,
     objective: str = "",
     upstream: list[tuple[str, str]] | None = None,
+    assigned_tools: frozenset[str] | None = None,
 ) -> SubagentResult:
     """Execute one brief as a team member, wrapped in an ``agent:{id}`` trace
     span (Backend v2 §4.5). The span records failure without raising: a subtask
@@ -135,6 +136,7 @@ async def run_subtask(
             review_hints=review_hints,
             objective=objective,
             upstream=upstream,
+            assigned_tools=assigned_tools,
         )
         if result.status == SubagentStatus.ERROR:
             span.set_status(
@@ -153,6 +155,7 @@ async def _run_subtask(
     review_hints: list[str] | None = None,
     objective: str = "",
     upstream: list[tuple[str, str]] | None = None,
+    assigned_tools: frozenset[str] | None = None,
 ) -> SubagentResult:
     """Execute one brief as a team member; structured result (CLAUDE.md §5.4)."""
     hints_block = ""
@@ -172,7 +175,7 @@ async def _run_subtask(
     )
 
     enabled = await tool_directives.resolve_enabled_tools(
-        domain, credentials=ctx.service_credentials
+        domain, credentials=ctx.service_credentials, assigned=assigned_tools
     )
     # Per-run directive registry: domain tools plus the built-in original-
     # request viewer (available whenever this run carries an objective, even

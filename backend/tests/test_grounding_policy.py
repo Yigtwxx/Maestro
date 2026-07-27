@@ -154,6 +154,7 @@ def test_planner_must_assign_a_member_that_produces_the_deliverable() -> None:
         methodology="",
         planning_example="",
         clarify_rule="",
+        tools_rule="",
         memory_context="",
         max_members=1,
     )
@@ -178,6 +179,7 @@ def test_planner_writes_briefs_in_the_user_language() -> None:
         methodology="",
         planning_example="",
         clarify_rule="",
+        tools_rule="",
         memory_context="",
         max_members=3,
     )

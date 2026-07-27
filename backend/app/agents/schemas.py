@@ -39,9 +39,11 @@ class RouteDecision(BaseModel):
 class PlanAssignment(BaseModel):
     """One Main Agent team briefing.
 
-    ``{"member": ..., "brief": ..., "depends_on": [...]}`` — ``depends_on``
-    lists earlier members whose outputs this member needs (optional; older
-    plans without it remain valid).
+    ``{"member": ..., "brief": ..., "depends_on": [...], "tools": [...]}`` —
+    ``depends_on`` lists earlier members whose outputs this member needs;
+    ``tools`` restricts the member to a subset of the domain's tools. Both are
+    optional: older plans (and plans that name neither) remain valid, and an
+    absent ``tools`` list means the member may use every tool the domain allows.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -49,11 +51,12 @@ class PlanAssignment(BaseModel):
     member: str = ""
     brief: str = ""
     depends_on: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
 
-    @field_validator("depends_on", mode="before")
+    @field_validator("depends_on", "tools", mode="before")
     @classmethod
-    def _coerce_depends_on(cls, value: object) -> object:
-        """Accept a bare string or null — small models get this wrong."""
+    def _coerce_str_list(cls, value: object) -> object:
+        """Accept a bare string or null — small models get these wrong."""
         if value is None:
             return []
         if isinstance(value, str):

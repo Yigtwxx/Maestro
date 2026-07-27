@@ -188,10 +188,12 @@ explanation, not a list of facts gathered towards writing one.
 
 Respond with a strict JSON object and nothing else:
 {{"assignments": [{{"member": "<member id>", "brief": "<specific instruction>", \
-"depends_on": ["<ids of earlier members whose output this member needs>"]}}]}}
+"depends_on": ["<ids of earlier members whose output this member needs>"], \
+"tools": ["<optional tool ids this member may use>"]}}]}}
 "depends_on" may be an empty list. Members that need a teammate's work must
 list that teammate; members that can work independently must NOT depend on
 each other — independent members run in parallel.
+{tools_rule}
 
 Write each brief in the same language as the user's request. A member sees its
 brief as the task and these instructions in English; when the brief is English
@@ -205,6 +207,14 @@ X" answers from memory; a member told to "look up X and report what you find"
 goes and looks. This is the difference between a sourced answer and a confident
 guess, and the brief is where it is decided.
 {planning_example}{clarify_rule}{memory_context}"""
+
+# Rendered into MAIN_AGENT_SYSTEM's ``{tools_rule}`` only when the domain
+# declares executable tools; blank otherwise (the "tools" key is then ignored).
+MAIN_AGENT_TOOLS_RULE = """
+The "tools" array is optional. Omit it and the member may use every tool this
+domain allows: {tools}. Set it to a subset to keep a member focused on the
+tools its brief actually needs — give a retrieval member the search tools and a
+writing member none. A tool named outside that set has no effect."""
 
 # Appended to MAIN_AGENT_SYSTEM only when human-in-the-loop is enabled.
 MAIN_AGENT_CLARIFY_RULE = """

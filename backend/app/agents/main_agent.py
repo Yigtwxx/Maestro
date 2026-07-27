@@ -34,12 +34,14 @@ from app.agents.prompts import (
     FALLBACK_BRIEF_TEMPLATE,
     MAIN_AGENT_CLARIFY_RULE,
     MAIN_AGENT_SYSTEM,
+    MAIN_AGENT_TOOLS_RULE,
     SYNTHESIS_SYSTEM,
 )
 from app.agents.registry import SubagentSpec, get_domain_info
 from app.agents.schemas import PlanAssignment, PlanResult
 from app.agents.structured import structured_call
 from app.core.constants import (
+    EXECUTABLE_TOOL_IDS,
     MAX_SUBTASKS,
     MAX_SUBTASKS_BY_COMPLEXITY,
     OBJECTIVE_MAX_CHARS,
@@ -77,6 +79,13 @@ class Assignment:
     # module, which is the preparatory role almost everywhere. Kept so the cap
     # can drop the members the planner cared least about instead.
     rank: int = 0
+    # Tools the Main Agent granted this member, or ``None`` when it named none.
+    # ``None`` = unassigned: the member gets the full domain-global tool set,
+    # preserving the pre-assignment behaviour byte-for-byte. A frozenset — even
+    # an empty one — is an explicit grant that ``resolve_enabled_tools``
+    # intersects with the domain/switch/credential universe, so it can only ever
+    # narrow what the member may use, never widen it.
+    assigned_tools: frozenset[str] | None = None
 
 
 def _fallback_assignments(
@@ -141,6 +150,10 @@ def _sanitize_depends_on(assignments: list[Assignment]) -> list[Assignment]:
                 # reset rank would put every assignment back in team order —
                 # silently restoring the behaviour the rank exists to replace.
                 rank=assignment.rank,
+                # Carried too: this sanitizer runs last in ``_assign``, so a
+                # dropped grant would silently revert every member to the
+                # domain-global tool set.
+                assigned_tools=assignment.assigned_tools,
             )
         )
         seen.add(assignment.member.id)
@@ -162,6 +175,7 @@ def _parse_assignments(
     briefs: dict[str, str] = {}
     depends: dict[str, tuple[str, ...]] = {}
     ranks: dict[str, int] = {}
+    tools_by_id: dict[str, frozenset[str]] = {}
     for item in proposed:
         member_id = item.member.strip()
         brief = item.brief.strip()
@@ -171,12 +185,21 @@ def _parse_assignments(
                 dep.strip() for dep in item.depends_on if dep.strip()
             )
             ranks[member_id] = len(ranks)
+            # Validity is not checked here — resolve_enabled_tools intersects
+            # against the domain universe, so an unknown id is simply dropped.
+            tools_by_id[member_id] = frozenset(
+                tool.strip() for tool in item.tools if tool.strip()
+            )
     assignments = [
         Assignment(
             member=member,
             brief=briefs[member.id],
             depends_on=depends[member.id],
             rank=ranks[member.id],
+            # An empty list means the planner named no tools for this member,
+            # which is unassigned (domain-global), not "no tools" — this is what
+            # keeps every existing tools-less plan byte-identical.
+            assigned_tools=tools_by_id[member.id] or None,
         )
         for member in team
         if member.id in briefs
@@ -205,6 +228,13 @@ async def _plan(
     info = ctx.domain_info or get_domain_info(domain)
     clarify_rule = MAIN_AGENT_CLARIFY_RULE if allow_clarify else ""
     team_lines = "\n".join(f"- {member.id}: {member.role}" for member in info.team)
+    # Only the executable tools are worth naming to the planner: the native ones
+    # (summarize, file_read) are performed in the member's own reasoning and are
+    # never gated by an assignment, so listing them would only invite noise.
+    assignable = sorted(set(info.tools) & EXECUTABLE_TOOL_IDS)
+    tools_rule = (
+        MAIN_AGENT_TOOLS_RULE.format(tools=", ".join(assignable)) if assignable else ""
+    )
     system = MAIN_AGENT_SYSTEM.format(
         domain=domain,
         expertise=info.expertise,
@@ -212,6 +242,7 @@ async def _plan(
         methodology=format_optional_block("How this domain works:", info.methodology),
         planning_example=format_optional_block("Example:", info.planning_example),
         clarify_rule=clarify_rule,
+        tools_rule=tools_rule,
         memory_context=format_memory_block(ctx.memory_context),
         max_members=max_members,
     )
@@ -420,6 +451,7 @@ async def _run_with_review(
     reviewer_enabled: bool,
     objective: str = "",
     upstream: list[tuple[str, str]] | None = None,
+    assigned_tools: frozenset[str] | None = None,
 ) -> SubagentResult:
     """Run a brief, optionally looping with the reviewer up to the limit."""
     review_hints: list[str] = []
@@ -431,6 +463,7 @@ async def _run_with_review(
         index=index,
         objective=objective,
         upstream=upstream,
+        assigned_tools=assigned_tools,
     )
     if not reviewer_enabled:
         return result
@@ -455,6 +488,7 @@ async def _run_with_review(
             review_hints=review_hints,
             objective=objective,
             upstream=upstream,
+            assigned_tools=assigned_tools,
         )
     result.metadata["review_iterations"] = iterations
     return result
@@ -527,6 +561,7 @@ async def _run_assignments(
                     reviewer_enabled=reviewer_enabled,
                     objective=prompt,
                     upstream=upstream,
+                    assigned_tools=assignment.assigned_tools,
                 )
             except Exception as exc:  # noqa: BLE001 — sibling subtasks must survive
                 logger.warning(

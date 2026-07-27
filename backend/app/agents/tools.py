@@ -459,10 +459,23 @@ def _connected_is_usable(action: str, credentials: ServiceCredentials) -> bool:
 
 
 async def resolve_enabled_tools(
-    domain: str, *, credentials: ServiceCredentials | None = None
+    domain: str,
+    *,
+    credentials: ServiceCredentials | None = None,
+    assigned: frozenset[str] | None = None,
 ) -> frozenset[str]:
-    """Executable tools this domain may use, filtered by runtime switches."""
+    """Executable tools this domain may use, filtered by runtime switches.
+
+    ``assigned`` is the Main Agent's per-subagent grant. ``None`` means no
+    assignment — the member gets the full domain-global set, preserving the
+    pre-assignment behaviour. When set, it intersects the domain universe
+    *before* the operator switch and credential gates below, so an assignment
+    can only ever *narrow* the set: a member can never enable a tool the domain
+    does not declare, the operator disabled, or the user has no key for.
+    """
     declared = set(get_domain_info(domain).tools) & EXECUTABLE_TOOL_IDS
+    if assigned is not None:
+        declared &= assigned
     if not settings.web_search_enabled:
         declared.discard(WEB_SEARCH_ACTION)
     # Deliberately no browser-availability probe here, unlike code_execution
