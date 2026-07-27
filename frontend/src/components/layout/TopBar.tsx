@@ -1,9 +1,8 @@
 'use client';
 
 import type { CSSProperties } from 'react';
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Bell, Settings } from 'lucide-react';
+import { Bell } from 'lucide-react';
 import { ADMIN_LINK, NAV } from '@/components/layout/Sidebar';
 import { moduleColor, moduleFromPathname } from '@/lib/module-colors';
 
@@ -40,13 +39,6 @@ export function TopBar() {
         >
           <Bell className="h-4 w-4" />
         </button>
-        <Link
-          href="/settings/api-keys"
-          className="text-muted transition-colors hover:text-white"
-          aria-label="Settings"
-        >
-          <Settings className="h-4 w-4" />
-        </Link>
         <span className="flex items-center gap-2 rounded border border-success/40 bg-success-dim px-2.5 py-1 text-micro text-success">
           <span className="relative flex h-1.5 w-1.5" aria-hidden>
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60 motion-reduce:hidden" />
