@@ -3,7 +3,7 @@
 // logic stays unit-testable.
 
 import { domainColor } from '@/lib/agent-colors';
-import type { SpanKind, TraceSpan } from '@/types';
+import type { SpanKind, SpanStatus, TraceSpan } from '@/types';
 
 /** A span with its resolved children and tree depth (root = 0). */
 export interface TraceNode {
@@ -183,6 +183,38 @@ export function kindColorHex(kind: SpanKind): string {
 }
 
 // --- Display formatting ---
+
+// Plain-language names for the span taxonomy, so the UI never shows a raw enum
+// (`llm`, `tool`, …) the user has to decode.
+const SPAN_KIND_LABEL: Record<SpanKind, string> = {
+  task: 'Full task',
+  step: 'Phase',
+  agent: 'Agent',
+  llm: 'Model call',
+  tool: 'Tool call',
+};
+
+const SPAN_STATUS_LABEL: Record<SpanStatus, string> = {
+  ok: 'Succeeded',
+  error: 'Failed',
+};
+
+/** Friendly name for a span kind; falls back to the raw value if unknown. */
+export function spanKindLabel(kind: SpanKind): string {
+  return SPAN_KIND_LABEL[kind] ?? kind;
+}
+
+/** Friendly name for a span status; falls back to the raw value if unknown. */
+export function spanStatusLabel(status: SpanStatus): string {
+  return SPAN_STATUS_LABEL[status] ?? status;
+}
+
+/** ISO -> readable local timestamp; falls back to the raw string if unparseable. */
+export function formatTimestamp(iso: string): string {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return iso;
+  return new Date(ms).toLocaleString();
+}
 
 /** Human-readable duration: sub-second in ms, else seconds to 2 dp. */
 export function formatDurationMs(ms: number): string {
