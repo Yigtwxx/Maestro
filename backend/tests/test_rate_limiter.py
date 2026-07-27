@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 import redis.exceptions
 from fastapi import status
@@ -26,6 +24,30 @@ from app.utils.rate_limiter import (
     _identity,
     check_websocket,
 )
+
+
+class _FakeClock:
+    """Deterministic stand-in for the limiter's ``time`` module.
+
+    The sliding-window backends read the clock to decide when a hit leaves the
+    window. Driving it by hand — instead of ``asyncio.sleep`` against a real
+    50ms window — makes the window-slide tests exact rather than racing the CI
+    scheduler. Patched onto ``rate_limiter.time`` (the module name) only, never
+    stdlib ``time``, so asyncio's own event-loop clock is untouched.
+    """
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self._now = start
+
+    def monotonic(self) -> float:
+        return self._now
+
+    def time(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
 
 PUBLIC_PLANS_URL = "/api/v1/billing/plans/public"
 
@@ -169,13 +191,15 @@ async def test_memory_backend_rejects_past_the_limit_with_retry_after() -> None:
     )
 
 
-async def test_memory_backend_allows_again_once_the_window_slides() -> None:
+async def test_memory_backend_allows_again_once_the_window_slides(monkeypatch) -> None:
+    clock = _FakeClock()
+    monkeypatch.setattr(rate_limiter, "time", clock)
     backend = MemoryBackend()
     window = 0.05
     await backend.hit("k", 1, window)
     assert not (await backend.hit("k", 1, window)).allowed
 
-    await asyncio.sleep(window * 1.5)
+    clock.advance(window * 1.5)
 
     assert (await backend.hit("k", 1, window)).allowed, "Window did not slide"
 
@@ -189,13 +213,15 @@ async def test_memory_backend_keys_are_independent() -> None:
 
 async def test_memory_backend_sweeps_drained_buckets(monkeypatch) -> None:
     """Without the sweep, a churn of client IPs grows the dict without bound."""
+    clock = _FakeClock()
+    monkeypatch.setattr(rate_limiter, "time", clock)
     backend = MemoryBackend()
     monkeypatch.setattr(MemoryBackend, "_SWEEP_INTERVAL_SECONDS", 0.0)
     window = 0.05
     await backend.hit("stale", 5, window)
     assert "stale" in backend._buckets
 
-    await asyncio.sleep(window * 1.5)
+    clock.advance(window * 1.5)
     # Any later hit runs the sweep, which drops buckets whose window has drained.
     await backend.hit("fresh", 5, window)
 
@@ -235,13 +261,15 @@ async def test_redis_backend_rejects_past_the_limit_with_retry_after(
 
 
 async def test_redis_backend_allows_again_once_the_window_slides(
-    redis_backend,
+    redis_backend, monkeypatch
 ) -> None:
+    clock = _FakeClock()
+    monkeypatch.setattr(rate_limiter, "time", clock)
     window = 0.05
     await redis_backend.hit("k", 1, window)
     assert not (await redis_backend.hit("k", 1, window)).allowed
 
-    await asyncio.sleep(window * 1.5)
+    clock.advance(window * 1.5)
 
     assert (await redis_backend.hit("k", 1, window)).allowed, "Window did not slide"
 
