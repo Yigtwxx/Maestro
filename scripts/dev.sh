@@ -56,9 +56,38 @@ fi
 # --- 2. Backend -----------------------------------------------------------
 step "Preparing backend"
 VENV="$BACKEND/.venv"
+
+# Backend requires Python >=3.11 (see CLAUDE.md). Pick the newest available
+# interpreter; a venv built on an older python silently fails to resolve pins
+# such as alembic>=1.17, which need >=3.10.
+PYTHON_BIN=""
+for candidate in python3.13 python3.12 python3.11; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PYTHON_BIN="$candidate"
+    break
+  fi
+done
+if [ -z "$PYTHON_BIN" ]; then
+  # Fall back to python3 only if it is >=3.11.
+  if command -v python3 >/dev/null 2>&1 && \
+     python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+    PYTHON_BIN="python3"
+  else
+    echo "ERROR: Python >=3.11 is required but was not found." >&2
+    echo "       Install it (e.g. 'brew install python@3.11') and re-run." >&2
+    exit 1
+  fi
+fi
+
+# Recreate the venv if it is missing or was built on an interpreter <3.11.
+if [ -x "$VENV/bin/python" ] && \
+   ! "$VENV/bin/python" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo "Existing virtualenv uses an unsupported Python; recreating with $PYTHON_BIN..."
+  rm -rf "$VENV"
+fi
 if [ ! -x "$VENV/bin/python" ]; then
-  echo "Creating virtualenv..."
-  python3 -m venv "$VENV"
+  echo "Creating virtualenv with $PYTHON_BIN ($($PYTHON_BIN --version 2>&1))..."
+  "$PYTHON_BIN" -m venv "$VENV"
 fi
 VENV_PY="$VENV/bin/python"
 
@@ -101,7 +130,10 @@ trap cleanup EXIT INT TERM
 
 free_port "$BACKEND_PORT"
 step "Launching backend on http://localhost:$BACKEND_PORT"
-( cd "$BACKEND" && exec "$VENV_PY" -m uvicorn app.main:app --reload --port "$BACKEND_PORT" ) &
+# --reload-dir app restricts the watcher to the source package. Without it
+# uvicorn watches the whole CWD including .venv, and touched site-package files
+# (e.g. numpy) trigger an endless reload loop that drops in-flight requests.
+( cd "$BACKEND" && exec "$VENV_PY" -m uvicorn app.main:app --reload --reload-dir app --port "$BACKEND_PORT" ) &
 PIDS+=("$!")
 
 free_port "$FRONTEND_PORT"
