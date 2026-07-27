@@ -59,6 +59,56 @@ jobs:
           uv pip compile requirements-dev.in -o requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.txt --custom-compile-command "uv pip compile requirements-dev.in -o requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.txt"
           git diff --exit-code -- requirements.txt requirements-dev.txt
 
+  # The test suite builds its schema with Base.metadata.create_all on in-memory
+  # SQLite, so it never executes a migration: a model column added without an
+  # Alembic revision passes every other gate and first fails in production, at
+  # `alembic upgrade head`, after the deploy approval. This job is the only
+  # place the two are compared. `alembic check` autogenerates against the
+  # migrated database and fails when it finds any operation still outstanding.
+  migrations:
+    name: Backend (migrations match models)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        # Same major as production (docker-compose.prod.yml). Migrations use
+        # PostgreSQL-specific types, so SQLite is not a substitute here.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: maestro
+          POSTGRES_PASSWORD: maestro
+          POSTGRES_DB: maestro_migcheck
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U maestro"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_URL: postgresql+asyncpg://maestro:maestro@localhost:5432/maestro_migcheck
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      # Applies the whole chain from an empty database, which also proves the
+      # revision graph is linear and every down_revision resolves.
+      - name: Apply migrations from scratch
+        run: alembic upgrade head
+
+      - name: Schema matches models
+        run: alembic check
+
   frontend:
     name: Frontend (lint + type-check + build)
     runs-on: ubuntu-latest
