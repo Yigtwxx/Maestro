@@ -263,7 +263,9 @@ async def _run_subtask(
     # in domains with no executable tools). ``specs_for`` merges the stateless
     # built-ins with the connected-API specs, whose executors close over this
     # user's decrypted service keys.
-    specs = tool_directives.specs_for(enabled, ctx.service_credentials)
+    specs = tool_directives.specs_for(
+        enabled, ctx.service_credentials, user_id=ctx.user_id
+    )
     if objective.strip():
         specs[VIEW_ORIGINAL_REQUEST_ACTION] = (
             tool_directives.make_view_original_request_spec(objective)

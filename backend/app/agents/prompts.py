@@ -431,6 +431,19 @@ TOOL_RULE_LINES: dict[str, str] = {
         '(max {budget} uses): {{"action": "code_execution", '
         '"code": "<python source; use print() for output>"}}'
     ),
+    "document_search": (
+        "- Search the user's OWN uploaded documents (max {budget} uses): "
+        '{{"action": "document_search", "query": "<what to look for>"}}\n'
+        "  Use this before web_search when the answer should come from the "
+        "user's own files; it returns matching passages, or a note when nothing "
+        "matches."
+    ),
+    "memory_recall": (
+        "- Recall the user's OWN past conversations (max {budget} uses): "
+        '{{"action": "memory_recall", "query": "<what to look for>"}}\n'
+        "  Use this to reuse a decision, preference or fact the user established "
+        "earlier, rather than asking again."
+    ),
     "repo_intel": (
         "- Read a GitHub repository's facts (max {budget} uses): "
         '{{"action": "repo_intel", "repo": "<owner/name>", '

@@ -8,6 +8,7 @@ domain may use at runtime.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -25,14 +26,22 @@ from app.core.constants import (
     CONNECTED_WINDOWS,
     DATA_FETCH_ACTION,
     DATA_FETCH_SELECTOR_MAX_CHARS,
+    DOCUMENT_SEARCH_ACTION,
+    DOCUMENT_SEARCH_RESULTS_CLOSE,
+    DOCUMENT_SEARCH_RESULTS_OPEN,
     EXECUTABLE_TOOL_IDS,
     KEYLESS_CONNECTED_TOOL_IDS,
+    MEMORY_RECALL_ACTION,
+    MEMORY_RECALL_RESULTS_CLOSE,
+    MEMORY_RECALL_RESULTS_OPEN,
     OBJECTIVE_MAX_CHARS,
     ORIGINAL_REQUEST_CLOSE,
     ORIGINAL_REQUEST_OPEN,
     PLACES_INTEL_ACTION,
     PLACES_INTEL_ASPECTS,
     PLACES_INTEL_DEFAULT_ASPECT,
+    QDRANT_CONVERSATION_MEMORIES,
+    QDRANT_DOCUMENT_CHUNKS,
     REPO_INTEL_ACTION,
     REPO_INTEL_ASPECTS,
     REPO_INTEL_DEFAULT_ASPECT,
@@ -47,6 +56,7 @@ from app.services import (
     code_execution_service,
     community_read_service,
     data_fetch_service,
+    memory_service,
     places_intel_service,
     repo_intel_service,
     social_search_service,
@@ -202,6 +212,69 @@ def _describe_places_intel(directive: ToolDirective, done: bool) -> str:
     return f"Places read: {target}" if done else f"Reading places: {target}"
 
 
+def _describe_document_search(directive: ToolDirective, done: bool) -> str:
+    query = directive.args["query"]
+    return (
+        f"Document search done: {query}" if done else f"Searching documents: {query}"
+    )
+
+
+def _describe_memory_recall(directive: ToolDirective, done: bool) -> str:
+    query = directive.args["query"]
+    return f"Memory recall done: {query}" if done else f"Recalling memory: {query}"
+
+
+def make_rag_tool_specs(user_id: uuid.UUID) -> dict[str, ToolSpec]:
+    """Per-run specs for the RAG tools, closing over this user's id.
+
+    Like the connected specs, these cannot live in the process-wide
+    ``TOOL_SPECS``: their executors need the run's ``user_id`` to scope every
+    Qdrant query to that user's own data — the load-bearing per-user isolation
+    invariant (CLAUDE.md §6). Keyless, so ``provider_of`` is None and they draw
+    no Architect rail lane. Both degrade to a "no results" note on a cold Qdrant
+    (``memory_service.retrieve_memories`` never raises), so they never block a run.
+    """
+
+    async def _run_document_search(directive: ToolDirective) -> str:
+        hits = await memory_service.retrieve_memories(
+            user_id, directive.args["query"], collection=QDRANT_DOCUMENT_CHUNKS
+        )
+        return memory_service.format_rag_block(
+            hits,
+            open_tag=DOCUMENT_SEARCH_RESULTS_OPEN,
+            close_tag=DOCUMENT_SEARCH_RESULTS_CLOSE,
+        )
+
+    async def _run_memory_recall(directive: ToolDirective) -> str:
+        hits = await memory_service.retrieve_memories(
+            user_id, directive.args["query"], collection=QDRANT_CONVERSATION_MEMORIES
+        )
+        return memory_service.format_rag_block(
+            hits,
+            open_tag=MEMORY_RECALL_RESULTS_OPEN,
+            close_tag=MEMORY_RECALL_RESULTS_CLOSE,
+        )
+
+    return {
+        DOCUMENT_SEARCH_ACTION: ToolSpec(
+            action=DOCUMENT_SEARCH_ACTION,
+            budget_attr="max_document_searches",
+            metadata_key="document_searches_used",
+            event_arg="query",
+            executor=_run_document_search,
+            describe=_describe_document_search,
+        ),
+        MEMORY_RECALL_ACTION: ToolSpec(
+            action=MEMORY_RECALL_ACTION,
+            budget_attr="max_memory_recalls",
+            metadata_key="memory_recalls_used",
+            event_arg="query",
+            executor=_run_memory_recall,
+            describe=_describe_memory_recall,
+        ),
+    }
+
+
 def make_connected_tool_specs(credentials: ServiceCredentials) -> dict[str, ToolSpec]:
     """Per-run specs for the tools that authenticate with a user's BYOK key.
 
@@ -285,18 +358,26 @@ def make_connected_tool_specs(credentials: ServiceCredentials) -> dict[str, Tool
 
 
 def specs_for(
-    enabled: frozenset[str], credentials: ServiceCredentials
+    enabled: frozenset[str],
+    credentials: ServiceCredentials,
+    user_id: uuid.UUID | None = None,
 ) -> dict[str, ToolSpec]:
-    """Assemble one run's specs: stateless built-ins plus credentialed ones.
+    """Assemble one run's specs: stateless built-ins plus per-run ones.
 
-    The single place the two registries are merged, so the subagent loop never
-    has to know that some specs are process-wide and some are per-run.
+    The single place the three registries are merged, so the subagent loop never
+    has to know that some specs are process-wide (``TOOL_SPECS``), some close
+    over BYOK credentials (connected), and some close over the user's id (RAG).
+    RAG specs are only built when ``user_id`` is known; without it those actions
+    resolve to nothing and are dropped, so a run with no user id simply has no
+    RAG tools.
     """
     connected = make_connected_tool_specs(credentials)
+    rag = make_rag_tool_specs(user_id) if user_id is not None else {}
+    per_run = {**connected, **rag}
     return {
-        action: TOOL_SPECS[action] if action in TOOL_SPECS else connected[action]
+        action: TOOL_SPECS[action] if action in TOOL_SPECS else per_run[action]
         for action in enabled
-        if action in TOOL_SPECS or action in connected
+        if action in TOOL_SPECS or action in per_run
     }
 
 
@@ -501,6 +582,13 @@ async def resolve_enabled_tools(
     # browser silently degrades to the static tier.
     if not settings.data_fetch_enabled:
         declared.discard(DATA_FETCH_ACTION)
+    # RAG tools are keyless and per-user; only an operator switch gates them. No
+    # availability probe: a cold Qdrant is a graceful empty result, not a failure
+    # (unlike code_execution below, which can do nothing without Docker).
+    if not settings.document_search_enabled:
+        declared.discard(DOCUMENT_SEARCH_ACTION)
+    if not settings.memory_recall_enabled:
+        declared.discard(MEMORY_RECALL_ACTION)
     if CODE_EXECUTION_ACTION in declared and not (
         settings.code_execution_enabled and await code_execution_service.is_available()
     ):
@@ -641,6 +729,16 @@ _TOOL_PARAMETERS: dict[str, dict] = {
         },
         "required": ["query"],
     },
+    DOCUMENT_SEARCH_ACTION: {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    },
+    MEMORY_RECALL_ACTION: {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    },
     VIEW_ORIGINAL_REQUEST_ACTION: {"type": "object", "properties": {}},
 }
 
@@ -666,6 +764,13 @@ _TOOL_DESCRIPTIONS: dict[str, str] = {
     PLACES_INTEL_ACTION: (
         "Find places in an area with their ratings, review counts and price "
         "level, or read their reviews for complaint and theme mining."
+    ),
+    DOCUMENT_SEARCH_ACTION: (
+        "Search the user's own uploaded documents for passages relevant to a "
+        "query, returned as a list of matching excerpts."
+    ),
+    MEMORY_RECALL_ACTION: (
+        "Recall relevant snippets from the user's past conversations for a query."
     ),
     VIEW_ORIGINAL_REQUEST_ACTION: "Read the original user request for context.",
 }
