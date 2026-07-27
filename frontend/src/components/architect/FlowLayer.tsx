@@ -132,8 +132,17 @@ export function FlowLayer({
     if (!container) return;
     const observer = new ResizeObserver(measure);
     observer.observe(container);
+    // Also observe every node element, not just the container. The subagent
+    // grid cells change width whenever the flex graph column reflows — e.g. the
+    // connected-API rail loads in after a tab switch and squeezes the column —
+    // while the container's own size stays fixed. A container-only observer
+    // misses that reflow, leaving the main→subagent edges pinned to the nodes'
+    // former (further-right) positions until an unrelated resize forces a
+    // re-measure. Observing the cells themselves catches the shift directly.
+    const nodes = nodesRef.current;
+    if (nodes) for (const el of nodes.values()) observer.observe(el);
     return () => observer.disconnect();
-  }, [measure, containerRef]);
+  }, [measure, containerRef, nodesRef]);
 
   // Single shared rAF loop — advances every pulse along its path. Runs only
   // while at least one edge is active; rAF is suspended by the browser when
