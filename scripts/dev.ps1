@@ -104,10 +104,40 @@ Write-Step 'Preparing backend'
 $Venv = Join-Path $Backend '.venv'
 $VenvPy = Join-Path $Venv 'Scripts\python.exe'
 
+# Backend requires Python >=3.11 (see CLAUDE.md). A venv built on an older
+# interpreter cannot resolve pins such as alembic (needs >=3.10) and fails the
+# pip install below with a confusing "no matching distribution" error, so the
+# newest available interpreter is selected and a stale venv is recreated.
+function Test-Py311 {
+    param([string]$Exe, [string[]]$Pre)
+    $probe = @($Pre) + @('-c', 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)')
+    & $Exe @probe 2>$null
+    return ($LASTEXITCODE -eq 0)
+}
+
+if ((Test-Path $VenvPy) -and (-not (Test-Py311 $VenvPy @()))) {
+    Write-Host 'Existing virtualenv uses an unsupported Python; recreating...'
+    Remove-Item -Recurse -Force $Venv
+}
+
 if (-not (Test-Path $VenvPy)) {
-    Write-Host 'Creating virtualenv...'
-    $py = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } else { 'python' }
-    & $py -3 -m venv $Venv
+    $candidates = New-Object System.Collections.ArrayList
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        foreach ($v in '3.13', '3.12', '3.11') { [void]$candidates.Add(@{ Exe = 'py'; Pre = @("-$v") }) }
+        [void]$candidates.Add(@{ Exe = 'py'; Pre = @('-3') })
+    }
+    foreach ($name in 'python3.13', 'python3.12', 'python3.11', 'python', 'python3') {
+        if (Get-Command $name -ErrorAction SilentlyContinue) { [void]$candidates.Add(@{ Exe = $name; Pre = @() }) }
+    }
+    $chosen = $null
+    foreach ($c in $candidates) { if (Test-Py311 $c.Exe $c.Pre) { $chosen = $c; break } }
+    if ($null -eq $chosen) {
+        Write-Error 'Python >=3.11 is required but was not found. Install it from python.org and re-run.'
+        exit 1
+    }
+    Write-Host "Creating virtualenv with $($chosen.Exe) $($chosen.Pre -join ' ')..."
+    $createArgs = @($chosen.Pre) + @('-m', 'venv', $Venv)
+    & $chosen.Exe @createArgs
 }
 
 if (-not (Test-Path (Join-Path $Backend '.env'))) {
@@ -140,7 +170,7 @@ if (-not $SkipSeed) {
 Clear-Port $BackendPort
 Write-Step "Launching backend on http://localhost:$BackendPort"
 $BackendProc = Start-Process -FilePath $VenvPy `
-    -ArgumentList '-m', 'uvicorn', 'app.main:app', '--reload', '--port', "$BackendPort" `
+    -ArgumentList '-m', 'uvicorn', 'app.main:app', '--reload', '--reload-dir', 'app', '--port', "$BackendPort" `
     -WorkingDirectory $Backend -NoNewWindow -PassThru
 
 # --- 3. Frontend ----------------------------------------------------------
