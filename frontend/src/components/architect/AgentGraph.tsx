@@ -2,7 +2,17 @@
 
 import { useRef, type RefObject } from 'react';
 import { motion } from 'motion/react';
-import { Bot, Cpu, ShieldCheck, Workflow } from 'lucide-react';
+import {
+  Ban,
+  Bot,
+  Check,
+  Circle,
+  Cpu,
+  Loader2,
+  ShieldCheck,
+  Workflow,
+  XCircle,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { ProgressBar } from '@/components/ui/ProgressBar';
@@ -52,12 +62,24 @@ const stateRing: Record<NodeState, string> = {
   cancelled: 'border-warning/60 text-white shadow-glow-warning',
 };
 
-const stateLabel: Record<NodeState, string> = {
-  idle: '[ IDLE ]',
-  running: '[ RUNNING ]',
-  done: '[ DONE ]',
-  error: '[ ERROR ]',
-  cancelled: '[ STOPPED ]',
+// State shown as a compact glyph rather than a word: a fixed-size icon never
+// grows with the box, so it removes the header-overflow pressure a text pill
+// added on the narrowest grid columns.
+const stateIcon: Record<NodeState, LucideIcon> = {
+  idle: Circle,
+  running: Loader2,
+  done: Check,
+  error: XCircle,
+  cancelled: Ban,
+};
+
+// Screen-reader text for the icon, which is itself aria-hidden.
+const stateAccessibleLabel: Record<NodeState, string> = {
+  idle: 'Idle',
+  running: 'Running',
+  done: 'Done',
+  error: 'Error',
+  cancelled: 'Stopped',
 };
 
 const stateLabelColor: Record<NodeState, string> = {
@@ -76,6 +98,36 @@ const stateEffect: Record<NodeState, string | undefined> = {
   error: 'animate-shake motion-reduce:animate-none',
   cancelled: undefined, // frozen on user stop — no continuous motion
 };
+
+/**
+ * The node's run state as a colored glyph. The icon is aria-hidden and an
+ * `sr-only` word carries the meaning; the running state spins (stops under
+ * reduced motion, where it still reads as a valid indicator).
+ */
+function StatusIndicator({
+  state,
+  className,
+}: {
+  state: NodeState;
+  className?: string;
+}) {
+  const Icon = stateIcon[state];
+  return (
+    <span
+      role="status"
+      className={cn('shrink-0', stateLabelColor[state], className)}
+    >
+      <Icon
+        aria-hidden
+        className={cn(
+          'h-4 w-4',
+          state === 'running' && 'animate-spin motion-reduce:animate-none',
+        )}
+      />
+      <span className="sr-only">{stateAccessibleLabel[state]}</span>
+    </span>
+  );
+}
 
 function nodeIcon(key: string): LucideIcon {
   if (key === 'orchestrator') return Workflow;
@@ -130,14 +182,10 @@ function NodeDetailOverlay({
         {/* Same header as the node card, so the reveal reads as the card growing. */}
         <div className="flex items-center gap-2">
           <Icon className={cn('h-4 w-4 shrink-0', iconColor)} aria-hidden />
-          <span className="flex-1 truncate text-sm font-bold">
+          <span className="min-w-0 flex-1 truncate text-sm font-bold">
             {node.label}
           </span>
-          <span
-            className={cn('text-micro shrink-0', stateLabelColor[node.state])}
-          >
-            {stateLabel[node.state]}
-          </span>
+          <StatusIndicator state={node.state} />
         </div>
         <p className="mt-2.5 text-micro text-muted">[ TASK BRIEF ]</p>
         <p className="mt-1 whitespace-pre-wrap font-mono text-xs">
@@ -213,17 +261,15 @@ function Node({ node, domain }: { node: GraphNode; domain?: string }) {
       )}
       <div className="flex items-center gap-2">
         <Icon className={cn('h-4 w-4 shrink-0', iconColor)} aria-hidden />
-        <span className="flex-1 truncate text-sm font-bold">{node.label}</span>
-        {/* Keyed remount crossfades the status pill on state changes. */}
-        <span
-          key={node.state}
-          className={cn(
-            'text-micro shrink-0 animate-word-in motion-reduce:animate-none',
-            stateLabelColor[node.state],
-          )}
-        >
-          {stateLabel[node.state]}
+        <span className="min-w-0 flex-1 truncate text-sm font-bold">
+          {node.label}
         </span>
+        {/* Keyed remount crossfades the status glyph on state changes. */}
+        <StatusIndicator
+          key={node.state}
+          state={node.state}
+          className="animate-word-in motion-reduce:animate-none"
+        />
       </div>
       {node.sublabel && (
         <p className="mt-1.5 truncate font-mono text-xs text-muted">
