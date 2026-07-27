@@ -384,15 +384,18 @@ function GeneralMotif() {
   return (
     <svg viewBox="0 0 64 64" fill="none" aria-hidden>
       {stars.map((star) => (
-        <path
-          key={`${star.x}-${star.y}`}
-          data-play
-          className="motif-twinkle"
-          d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z"
-          fill="currentColor"
-          transform={`translate(${star.x} ${star.y}) scale(${star.s})`}
-          style={{ transformOrigin: 'center', animationDelay: star.d }}
-        />
+        // The <g> carries positioning via the transform attribute; the inner
+        // <path> carries the CSS scale animation. Keeping them on separate
+        // elements avoids the CSS transform overriding the SVG-attribute one.
+        <g key={`${star.x}-${star.y}`} transform={`translate(${star.x} ${star.y}) scale(${star.s})`}>
+          <path
+            data-play
+            className="motif-twinkle"
+            d="M0 -6 L1.6 -1.6 L6 0 L1.6 1.6 L0 6 L-1.6 1.6 L-6 0 L-1.6 -1.6 Z"
+            fill="currentColor"
+            style={{ transformOrigin: 'center', animationDelay: star.d }}
+          />
+        </g>
       ))}
     </svg>
   );

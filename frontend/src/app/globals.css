@@ -330,33 +330,6 @@ body {
     animation: like-heart-pop 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
-  /* Per-domain squad-card hover motif (see CardMotif / card-motifs/registry).
-     Rendered always but invisible + paused at rest; on card hover it fades in to
-     a faint watermark and its keyframes resume. Only the hovered card animates,
-     so the grid runs zero rAF loops at rest. */
-  .card-motif {
-    opacity: 0;
-    transition: opacity 0.3s ease-out;
-  }
-  .group:hover .card-motif {
-    opacity: 0.16;
-  }
-  /* Every animated node carries [data-play]; fill-box keeps transform-origin
-     relative to the node's own box. Paused until the card is hovered. */
-  .card-motif [data-play] {
-    transform-box: fill-box;
-    animation-play-state: paused;
-  }
-  .group:hover .card-motif [data-play] {
-    animation-play-state: running;
-  }
-  /* Rotations that must pivot on the SVG center rather than each node's own box. */
-  .card-motif .motif-spin,
-  .card-motif .motif-tip {
-    transform-box: view-box;
-    transform-origin: 50% 50%;
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .gradient-border,
     .shimmer-hover:hover::after,
@@ -368,8 +341,7 @@ body {
     .log-flash,
     .toast-in,
     .like-particle,
-    .like-heart-pop,
-    .card-motif [data-play] {
+    .like-heart-pop {
       animation: none;
     }
     .spotlight-beam,
@@ -528,7 +500,49 @@ body {
 /* Decorative loop timings (~2s) sit outside motion.ts's DUR scale (one-shots,
    ≤0.8s), so they are CSS literals here — consistent with the keyframes above.
    The shared EASE.out curve is reused as the cubic-bezier literal. Every motif
-   applies to nodes tagged [data-play], which are paused until the card hovers. */
+   applies to nodes tagged [data-play], which are paused until the card hovers.
+
+   These rules are intentionally unlayered: the `.motif-*` classes below use the
+   `animation` shorthand, which resets `animation-play-state` to `running`. An
+   unlayered rule beats Tailwind's layered utilities, and the higher-specificity
+   `.card-motif [data-play]` selector re-asserts `paused` over that shorthand, so
+   the grid stays idle until a card is hovered. */
+
+/* Rendered always, invisible + paused at rest; fades to a faint watermark and
+   resumes only while the parent card (a `.group`) is hovered. */
+.card-motif {
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+}
+.group:hover .card-motif {
+  opacity: 0.16;
+}
+.card-motif [data-play] {
+  transform-box: fill-box; /* transform-origin relative to each node's own box */
+  animation-play-state: paused;
+}
+.group:hover .card-motif [data-play] {
+  animation-play-state: running;
+}
+/* Rotations/tilts that must pivot on a point in the SVG, not each node's box. */
+.card-motif .motif-spin {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
+}
+.card-motif .motif-tip {
+  transform-box: view-box;
+  transform-origin: 50% 28%;
+}
+.card-motif .motif-swing {
+  transform-box: view-box;
+  transform-origin: 75% 41%; /* the tassel's attachment point on the cap */
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Freeze at the static frame; the hover opacity fade (a transition) stays. */
+  .card-motif [data-play] {
+    animation: none;
+  }
+}
 
 /* Software: each code line wipes in from the left, holds, then retypes. */
 .motif-codeline {
@@ -690,11 +704,9 @@ body {
   }
 }
 
-/* Education: the tassel swings like a pendulum from its attachment point. */
+/* Education: the tassel swings like a pendulum (pivot set in the gating block). */
 .motif-swing {
   animation: motif-swing 2.2s ease-in-out infinite;
-  transform-box: view-box;
-  transform-origin: 75% 41%;
 }
 @keyframes motif-swing {
   0%,
