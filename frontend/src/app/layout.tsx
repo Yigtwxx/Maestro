@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { connection } from 'next/server';
-import { JetBrains_Mono, Space_Grotesk } from 'next/font/google';
+import localFont from 'next/font/local';
 import { Analytics } from '@/components/analytics/Analytics';
 import { CookieNotice } from '@/components/legal/CookieNotice';
 import { SentryInit } from '@/components/observability/SentryInit';
@@ -20,14 +20,22 @@ import {
 import { siteUrl } from '@/lib/seo/site-url';
 import './globals.css';
 
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ['latin', 'latin-ext'],
+// Self-hosted so the build never depends on Google Fonts being reachable. The
+// full variable woff2 files (wght axis, latin + latin-ext) live in ./fonts.
+const jetbrainsMono = localFont({
+  src: './fonts/JetBrainsMono-Variable.woff2',
+  weight: '100 800',
+  display: 'swap',
   variable: '--font-mono',
+  fallback: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
 });
 
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin', 'latin-ext'],
+const spaceGrotesk = localFont({
+  src: './fonts/SpaceGrotesk-Variable.woff2',
+  weight: '300 700',
+  display: 'swap',
   variable: '--font-sans',
+  fallback: ['ui-sans-serif', 'system-ui', 'sans-serif'],
 });
 
 /**
