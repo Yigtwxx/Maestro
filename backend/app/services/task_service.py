@@ -288,6 +288,14 @@ async def _gather_context(user_id: uuid.UUID, prompt: str) -> list[str]:
     try:
         query_vector: list[float] | None = (await llm_service.embed_texts([prompt]))[0]
     except Exception:  # noqa: BLE001 - RAG is best-effort; degrade gracefully
+        # Logged, not swallowed silently: both searches below will then embed on
+        # their own and fail the same way, so without this line a broken
+        # embedding endpoint looks exactly like a user with no stored data.
+        logger.warning(
+            "prompt embedding failed; RAG context degraded",
+            exc_info=True,
+            extra={"user_id": str(user_id)},
+        )
         query_vector = None
 
     convo, docs = await asyncio.gather(
@@ -385,7 +393,11 @@ async def _remember(user_id: uuid.UUID, prompt: str, answer: str) -> None:
             user_id, f"Q: {prompt}\nA: {answer}", metadata={"kind": "task"}
         )
     except Exception:  # noqa: BLE001 - memory is best-effort
-        pass
+        logger.warning(
+            "storing conversation memory failed",
+            exc_info=True,
+            extra={"user_id": str(user_id)},
+        )
 
 
 async def _set_status(task_id: str, status: TaskStatus) -> None:

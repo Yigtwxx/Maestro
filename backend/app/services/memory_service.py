@@ -7,6 +7,7 @@ Embeddings come from the free/local model (see ``llm_service.embed_texts``).
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Any
 
@@ -23,6 +24,8 @@ from app.core.constants import (
 )
 from app.core.database import get_qdrant_client
 from app.services.llm_service import embed_texts
+
+logger = logging.getLogger(__name__)
 
 # Collections confirmed to exist this process; skips the exists round-trip.
 _known_collections: set[str] = set()
@@ -92,11 +95,26 @@ async def retrieve_memories(
     (avoids re-embedding when searching several collections). Returns an empty
     list if the memory backend or embeddings are unavailable — RAG context is
     best-effort and must never block task execution.
+
+    Degradation is silent to the caller but not to the operator: both failure
+    modes are logged at WARNING with a traceback, because an empty list is
+    otherwise indistinguishable from a genuine no-match and a misconfigured
+    ``EMBEDDING_ENDPOINT`` or an unreachable Qdrant would disable RAG with no
+    signal anywhere. The embedding and search steps are separated so the log
+    says which half broke.
     """
+    if query_vector is None:
+        try:
+            query_vector = (await embed_texts([query]))[0]
+        except Exception:  # noqa: BLE001 - best-effort RAG, degrade gracefully
+            logger.warning(
+                "RAG embedding failed; returning no context",
+                exc_info=True,
+                extra={"user_id": str(user_id), "collection": collection},
+            )
+            return []
     try:
         await ensure_collection(collection)
-        if query_vector is None:
-            query_vector = (await embed_texts([query]))[0]
         hits = await get_qdrant_client().search(
             collection_name=collection,
             query_vector=query_vector,
@@ -104,6 +122,11 @@ async def retrieve_memories(
             limit=limit,
         )
     except Exception:  # noqa: BLE001 - best-effort RAG, degrade gracefully
+        logger.warning(
+            "RAG search failed; returning no context",
+            exc_info=True,
+            extra={"user_id": str(user_id), "collection": collection},
+        )
         return []
     return [str(hit.payload.get("text", "")) for hit in hits if hit.payload]
 
@@ -184,6 +207,11 @@ async def export_user_texts(user_id: uuid.UUID, collection: str) -> list[str]:
             with_vectors=False,
         )
     except Exception:  # noqa: BLE001 - best-effort export, degrade gracefully
+        logger.warning(
+            "Vector export failed; user data export is incomplete",
+            exc_info=True,
+            extra={"user_id": str(user_id), "collection": collection},
+        )
         return []
     return [str(point.payload.get("text", "")) for point in points if point.payload]
 
@@ -203,7 +231,13 @@ async def purge_user_vectors(user_id: uuid.UUID) -> None:
 
 
 async def delete_document_chunks(user_id: uuid.UUID, document_id: str) -> None:
-    """Remove all vector points belonging to one of a user's documents."""
+    """Remove all vector points belonging to one of a user's documents.
+
+    Best-effort, unlike ``purge_user_vectors``: the caller has already deleted
+    the Mongo metadata and there is nothing to retry from. A failure therefore
+    orphans the chunks, which is exactly why it is logged rather than passed
+    over — the account purge is the backstop that eventually removes them.
+    """
     try:
         await get_qdrant_client().delete(
             collection_name=QDRANT_DOCUMENT_CHUNKS,
@@ -223,4 +257,8 @@ async def delete_document_chunks(user_id: uuid.UUID, document_id: str) -> None:
             ),
         )
     except Exception:  # noqa: BLE001 - deletion is best-effort
-        pass
+        logger.warning(
+            "Document chunk deletion failed; vectors are orphaned",
+            exc_info=True,
+            extra={"user_id": str(user_id), "document_id": document_id},
+        )
