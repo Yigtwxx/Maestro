@@ -68,6 +68,7 @@ class TaskRun(Base, TimestampMixin):
     __table_args__ = (
         # Backs the reclaim sweep: scan by status, order/filter by lease expiry.
         Index("ix_task_runs_reclaim", "status", "lease_expires_at"),
+        {"comment": "Durable run header: status, lease, resume bookkeeping"},
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
@@ -98,6 +99,7 @@ class TaskCheckpoint(Base):
 
     __table_args__ = (
         UniqueConstraint("task_id", "step_key", name="uq_task_checkpoints_step"),
+        {"comment": "Append-only per-step results (idempotent replay anchor)"},
     )
 
 
@@ -122,3 +124,5 @@ class TaskQuestion(Base):
     expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    __table_args__ = ({"comment": "Persisted human-in-the-loop questions"},)

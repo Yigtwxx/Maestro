@@ -42,5 +42,7 @@ class EmailToken(Base, TimestampMixin):
 
     user: Mapped[User] = relationship(foreign_keys=[user_id])
 
+    __table_args__ = ({"comment": "Single-use email action tokens (SHA-256 hashes)"},)
+
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<EmailToken id={self.id} purpose={self.purpose!r}>"

@@ -37,5 +37,9 @@ class RecoveryCode(Base, TimestampMixin):
 
     user: Mapped[User] = relationship(foreign_keys=[user_id])
 
+    __table_args__ = (
+        {"comment": "Single-use two-factor recovery codes (Argon2 hashes)"},
+    )
+
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return f"<RecoveryCode id={self.id} used={self.used_at is not None}>"

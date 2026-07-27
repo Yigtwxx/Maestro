@@ -52,6 +52,10 @@ class RefreshToken(Base, TimestampMixin):
 
     user: Mapped[User] = relationship(foreign_keys=[user_id])
 
+    __table_args__ = (
+        {"comment": "Server-side refresh-token records for rotation + reuse-detection"},
+    )
+
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         revoked = self.revoked_at is not None
         return f"<RefreshToken id={self.id} family={self.family_id} revoked={revoked}>"
