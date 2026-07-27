@@ -1,23 +1,29 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
-import { Bot } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Bot, Search } from 'lucide-react';
 import { AgentForm } from '@/components/agents/AgentForm';
+import { BuiltinAgentCard } from '@/components/agents/BuiltinAgentCard';
+import { CustomAgentCard } from '@/components/agents/CustomAgentCard';
 import { Button } from '@/components/ui/Button';
-import { Badge } from '@/components/ui/Badge';
-import { Card } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { SkeletonList } from '@/components/ui/Skeleton';
 import { Stagger, StaggerItem } from '@/components/effects/Stagger';
 import { PageShell } from '@/components/layout/PageShell';
 import { api, ApiError } from '@/lib/api';
 import { localizeBuiltinAgent } from '@/lib/agent-locale';
-import { domainColor } from '@/lib/agent-colors';
 import { MODULE_COLOR } from '@/lib/module-colors';
 import type { AgentConfig, BuiltinAgent, ToolCatalogItem } from '@/types';
 
 const mc = MODULE_COLOR.agents;
+
+/** Case-insensitive substring match across an agent's searchable text. */
+function matches(query: string, ...fields: string[]): boolean {
+  if (!query) return true;
+  const needle = query.toLowerCase();
+  return fields.some((field) => field.toLowerCase().includes(needle));
+}
 
 export default function AgentsPage() {
   const [builtin, setBuiltin] = useState<BuiltinAgent[]>([]);
@@ -25,6 +31,7 @@ export default function AgentsPage() {
   const [tools, setTools] = useState<ToolCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
   const [error, setError] = useState<string | undefined>();
 
   const load = useCallback(async () => {
@@ -50,10 +57,36 @@ export default function AgentsPage() {
     await load();
   };
 
+  const toolLabels = useMemo(
+    () => Object.fromEntries(tools.map((tool) => [tool.id, tool.label])),
+    [tools],
+  );
+
+  const filteredBuiltin = useMemo(
+    () =>
+      builtin.filter((agent) =>
+        matches(query, agent.name, agent.domain, agent.description, ...agent.capabilities),
+      ),
+    [builtin, query],
+  );
+
+  const filteredCustom = useMemo(
+    () => custom.filter((agent) => matches(query, agent.name, agent.domain)),
+    [custom, query],
+  );
+
   return (
     <PageShell>
-      <div className="mb-4 flex items-center justify-between">
-        <p className={`text-micro ${mc.text}`}>[ AGENT REGISTRY ]</p>
+      {/* Hero: identity, live counts, and the primary create action. */}
+      <div className="mb-6 flex flex-col gap-5 rounded-lg border border-border bg-surface p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className={`text-micro ${mc.text}`}>[ AGENT REGISTRY ]</p>
+          <h1 className="mt-1.5 text-xl font-bold text-white">Agents</h1>
+          <p className="mt-1 max-w-xl text-sm text-muted">
+            Built-in domain squads ship ready to run. Build your own agents with a
+            custom prompt and a curated tool set.
+          </p>
+        </div>
         <Button
           variant={creating ? 'ghost' : 'solid'}
           module={creating ? undefined : 'agents'}
@@ -61,6 +94,18 @@ export default function AgentsPage() {
         >
           {creating ? 'Close' : '+ New Agent'}
         </Button>
+      </div>
+
+      <div className="mb-6 grid grid-cols-3 gap-3">
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <StatBlock label="Built-in squads" value={builtin.length} module="agents" />
+        </div>
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <StatBlock label="Custom agents" value={custom.length} module="agents" />
+        </div>
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <StatBlock label="Tools available" value={tools.length} module="agents" />
+        </div>
       </div>
 
       {error && <p className="mb-4 text-sm text-danger">&gt; ERROR: {error}</p>}
@@ -79,19 +124,48 @@ export default function AgentsPage() {
         </div>
       )}
 
-      <section className="mb-8">
-        <p className={`text-micro mb-3 ${mc.text}`}>[ BUILT-IN DOMAIN AGENTS ]</p>
-        <div className="flex flex-wrap gap-2">
-          {builtin.map((agent) => (
-            <Badge key={agent.id} domain={agent.domain} className="capitalize">
-              {agent.name}
-            </Badge>
-          ))}
+      <div className="mb-6">
+        <div className="relative max-w-sm">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+            aria-hidden
+          />
+          <Input
+            aria-label="Search agents"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search agents…"
+            module="agents"
+            className="pl-9"
+          />
         </div>
+      </div>
+
+      <section className="mb-10">
+        <div className="mb-3 flex items-baseline gap-2">
+          <p className={`text-micro ${mc.text}`}>[ BUILT-IN DOMAIN AGENTS ]</p>
+          <span className="text-micro text-muted">{filteredBuiltin.length}</span>
+        </div>
+        {loading ? (
+          <SkeletonList module="agents" rows={3} />
+        ) : filteredBuiltin.length === 0 ? (
+          <p className="text-sm text-muted">&gt; No squads match &quot;{query}&quot;.</p>
+        ) : (
+          <Stagger className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredBuiltin.map((agent) => (
+              <StaggerItem key={agent.id}>
+                <BuiltinAgentCard agent={agent} />
+              </StaggerItem>
+            ))}
+          </Stagger>
+        )}
       </section>
 
       <section>
-        <p className={`text-micro mb-3 ${mc.text}`}>[ CUSTOM AGENTS ]</p>
+        <div className="mb-3 flex items-baseline gap-2">
+          <p className={`text-micro ${mc.text}`}>[ CUSTOM AGENTS ]</p>
+          {!loading && <span className="text-micro text-muted">{filteredCustom.length}</span>}
+        </div>
         {loading ? (
           <>
             <p className={`font-mono text-sm ${mc.text}`}>
@@ -102,38 +176,31 @@ export default function AgentsPage() {
             </div>
           </>
         ) : custom.length === 0 ? (
-          <p className="text-sm text-muted">
-            &gt; No custom agents yet. Create one with &quot;New Agent&quot;.
-          </p>
+          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-surface/50 px-6 py-12 text-center">
+            <span className="flex h-12 w-12 items-center justify-center rounded-full border border-border bg-surface-2">
+              <Bot className={`h-6 w-6 ${mc.text}`} aria-hidden />
+            </span>
+            <p className="text-sm text-muted">
+              No custom agents yet. Create one with &quot;New Agent&quot; to tailor a
+              prompt and tool set to your workflow.
+            </p>
+            {!creating && (
+              <Button variant="solid" module="agents" onClick={() => setCreating(true)}>
+                + New Agent
+              </Button>
+            )}
+          </div>
+        ) : filteredCustom.length === 0 ? (
+          <p className="text-sm text-muted">&gt; No custom agents match &quot;{query}&quot;.</p>
         ) : (
-          <Stagger className="grid gap-4 sm:grid-cols-2">
-            {custom.map((agent) => (
+          <Stagger className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredCustom.map((agent) => (
               <StaggerItem key={agent.id}>
-                <Card glow domain={agent.domain} className="p-4">
-                  <div className="mb-3 flex items-center gap-2">
-                    <Bot
-                      className={`h-4 w-4 ${domainColor(agent.domain).text}`}
-                      aria-hidden
-                    />
-                    <p className="flex-1 truncate font-bold text-white">{agent.name}</p>
-                  </div>
-                  <div className="mb-4 grid grid-cols-2 gap-3 rounded-md border border-border bg-surface-2 p-3">
-                    <StatBlock
-                      size="sm"
-                      label="Domain"
-                      value={<span className="capitalize">{agent.domain}</span>}
-                    />
-                    <StatBlock size="sm" label="Tools" value={agent.tools.length} />
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <Link href={`/agents/${agent.id}`}>
-                      <Button variant="cyan-outline">Edit</Button>
-                    </Link>
-                    <Button variant="danger-outline" onClick={() => onDelete(agent.id)}>
-                      Delete
-                    </Button>
-                  </div>
-                </Card>
+                <CustomAgentCard
+                  agent={agent}
+                  toolLabels={toolLabels}
+                  onDelete={onDelete}
+                />
               </StaggerItem>
             ))}
           </Stagger>
