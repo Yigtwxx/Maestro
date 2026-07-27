@@ -4,7 +4,23 @@ import type { CSSProperties } from 'react';
 import { usePathname } from 'next/navigation';
 import { Bell } from 'lucide-react';
 import { ADMIN_LINK, NAV } from '@/components/layout/Sidebar';
+import { STATUS_DOT } from '@/components/ui/Badge';
+import { cn } from '@/lib/cn';
+import { TERMINAL_STATUSES } from '@/lib/constants';
 import { moduleColor, moduleFromPathname } from '@/lib/module-colors';
+import { useTaskStore } from '@/stores/tasks';
+import type { TaskStatus } from '@/types';
+
+// Bell tint per terminal task status, mirroring the text hues of Badge's
+// `statusStyles` (the canonical status palette) so the notification cue reads as
+// the same green/amber/red the task badges use.
+const BELL_TONE: Partial<Record<TaskStatus, string>> = {
+  completed: 'text-success',
+  completed_with_warnings: 'text-warning',
+  cancelled: 'text-warning',
+  failed: 'text-danger',
+  timeout: 'text-orange-300',
+};
 
 export function TopBar() {
   const pathname = usePathname();
@@ -12,6 +28,12 @@ export function TopBar() {
   const moduleKey = moduleFromPathname(pathname);
   const mc = moduleColor(moduleKey);
   const label = current?.label ?? 'Settings';
+
+  // The active architect task's status is a global singleton, so the bell can
+  // reflect its outcome from any page. Neutral until the task lands terminal.
+  const status = useTaskStore((s) => s.status);
+  const terminal = status !== undefined && TERMINAL_STATUSES.has(status);
+  const bellTone = terminal && status ? BELL_TONE[status] : undefined;
 
   return (
     <header className="relative flex h-14 shrink-0 items-center justify-between border-b border-border bg-surface px-6">
@@ -34,10 +56,30 @@ export function TopBar() {
       </span>
       <div className="flex items-center gap-4">
         <button
-          className="text-muted transition-colors hover:text-white"
-          aria-label="Notifications"
+          className={cn('relative transition-colors hover:text-white', bellTone ?? 'text-muted')}
+          aria-label={terminal ? `Notifications — last task ${status}` : 'Notifications'}
         >
-          <Bell className="h-4 w-4" />
+          {/* Keyed remount replays the one-shot flash each time a task lands on
+              a new terminal status; running/idle leaves the bell neutral. */}
+          <span
+            key={terminal ? status : 'idle'}
+            className={cn('block', terminal && 'animate-pop-flash motion-reduce:animate-none')}
+          >
+            <Bell className="h-4 w-4" />
+          </span>
+          {terminal && status && (
+            <span className="absolute -right-0.5 -top-0.5 flex h-2 w-2" aria-hidden>
+              <span
+                className={cn(
+                  'absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 motion-reduce:hidden',
+                  STATUS_DOT[status],
+                )}
+              />
+              <span
+                className={cn('relative inline-flex h-2 w-2 rounded-full', STATUS_DOT[status])}
+              />
+            </span>
+          )}
         </button>
         <span className="flex items-center gap-2 rounded border border-success/40 bg-success-dim px-2.5 py-1 text-micro text-success">
           <span className="relative flex h-1.5 w-1.5" aria-hidden>
