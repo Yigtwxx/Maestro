@@ -1,0 +1,96 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit configuration for Maestro. Tuned for a solo maintainer on a
+# security-sensitive BYOK platform: low-noise, security-first reviews that
+# defer style to the repo's own linters (Ruff, ESLint/Prettier).
+language: en-US
+early_access: false
+enable_free_tier: true
+
+tone_instructions: >-
+  Be concise and direct. Prioritise correctness, security, and the CLAUDE.md
+  invariants. Skip style nits already covered by Ruff, ESLint, and Prettier.
+
+reviews:
+  profile: chill # fewer, higher-signal comments
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  changed_files_summary: true
+  collapse_walkthrough: true
+  related_issues: true
+  related_prs: true
+  poem: false
+  sequence_diagrams: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    base_branches:
+      - main
+
+  # Reviewing generated, locked, or vendored files is pure noise.
+  path_filters:
+    - '!**/package-lock.json'
+    - '!backend/requirements*.txt'
+    - '!backend/alembic/versions/**'
+    - '!**/*.min.*'
+
+  # Point the reviewer at the project's non-negotiable invariants.
+  path_instructions:
+    - path: 'backend/**'
+      instructions: >-
+        FastAPI + Pydantic v2; every endpoint async; business logic in
+        services/; schema changes via Alembic only. Enforce CLAUDE.md
+        invariants: never log, store in plaintext, or return API keys or raw
+        card numbers (PAN); per-user data isolation (every Qdrant/Mongo query
+        scoped by user_id); every route declares an explicit rate_limit
+        dependency; WebSocket auth before accept(); quota only via the
+        usage_records ledger. All identifiers and comments are English.
+    - path: 'backend/app/services/llm_service.py'
+      instructions: >-
+        New LLM providers are added as NEW adapters; do not modify existing
+        adapter code (CLAUDE.md rule 5).
+    - path: 'frontend/**'
+      instructions: >-
+        Next.js App Router; function components only; Zustand for state; all
+        API calls go through lib/ and are typed in types/. TypeScript strict;
+        prefer undefined over null. Flag genuine hook bugs, but do not fight
+        the four react-hooks rules deliberately kept at 'warn' in
+        eslint.config.mjs.
+    - path: '**/*.test.{ts,py}'
+      instructions: >-
+        Assert on behaviour, not implementation. Keep tests deterministic —
+        no real timers, sleeps, or network.
+
+  tools:
+    ruff:
+      enabled: true
+    eslint:
+      enabled: true
+    shellcheck:
+      enabled: true
+    actionlint:
+      enabled: true
+    markdownlint:
+      enabled: false # docs prose; not worth the noise
+
+  # Opt-in comment generators; keep off to stay low-noise.
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+
+chat:
+  auto_reply: true
+  art: false
+
+knowledge_base:
+  learnings:
+    scope: local
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - 'CLAUDE.md'
+      - '**/CLAUDE.md'
