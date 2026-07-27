@@ -94,3 +94,4 @@ knowledge_base:
     filePatterns:
       - 'CLAUDE.md'
       - '**/CLAUDE.md'
+# smoke-test line to open a PR and confirm CodeRabbit is installed — safe to revert
