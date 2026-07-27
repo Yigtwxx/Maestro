@@ -18,6 +18,8 @@ from app.core.constants import (
     DOCUMENT_CHUNK_SIZE,
     QDRANT_CONVERSATION_MEMORIES,
     QDRANT_DOCUMENT_CHUNKS,
+    RAG_NO_RESULTS_NOTICE,
+    UNTRUSTED_CONTENT_NOTICE,
 )
 from app.core.database import get_qdrant_client
 from app.services.llm_service import embed_texts
@@ -104,6 +106,20 @@ async def retrieve_memories(
     except Exception:  # noqa: BLE001 - best-effort RAG, degrade gracefully
         return []
     return [str(hit.payload.get("text", "")) for hit in hits if hit.payload]
+
+
+def format_rag_block(hits: list[str], *, open_tag: str, close_tag: str) -> str:
+    """Render RAG hits as a delimited, untrusted-content prompt block.
+
+    Uploaded documents and past messages are attacker-controllable, so the block
+    carries ``UNTRUSTED_CONTENT_NOTICE`` exactly like web-search and fetch
+    results. An empty hit list returns a plain note rather than a bare wrapper,
+    so the model never reads an empty block as data (RAG is best-effort; a cold
+    Qdrant degrades to no results, never an error)."""
+    body = "\n\n".join(f"- {hit.strip()}" for hit in hits if hit.strip())
+    if not body:
+        return RAG_NO_RESULTS_NOTICE
+    return f"{open_tag}\n{body}\n{close_tag}\n{UNTRUSTED_CONTENT_NOTICE}"
 
 
 def chunk_text(

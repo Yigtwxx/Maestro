@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -50,6 +51,9 @@ class AgentContext:
     max_web_searches: int = 3
     max_data_fetches: int = 3
     max_code_executions: int = 3
+    # RAG tools over the user's own data (document uploads + conversation memory).
+    max_document_searches: int = 3
+    max_memory_recalls: int = 3
     # Connected-API tools (BYOK service keys). repo_intel gets a larger budget
     # because its aspects are deliberately separate calls — a member normally
     # needs two or three to say anything about a project.
@@ -86,6 +90,13 @@ class AgentContext:
     # the empty set, which is the normal case: the connected tools are then
     # withheld and every squad falls back to web_search.
     service_credentials: ServiceCredentials = field(default_factory=ServiceCredentials)
+    # This user's id, needed by the per-user RAG tools (document_search,
+    # memory_recall) to scope every Qdrant query to their own data. Optional so
+    # the many existing AgentContext(...) test constructors keep compiling; when
+    # None, ``specs_for`` builds no RAG specs and those runs simply have no RAG
+    # tools. The per-user isolation invariant (CLAUDE.md §6) rides on this value
+    # reaching the executor — never a global default.
+    user_id: uuid.UUID | None = None
 
     def role_adapter(self, role: str) -> LLMAdapter:
         """The adapter an agent role should use: its pooled per-role model when a

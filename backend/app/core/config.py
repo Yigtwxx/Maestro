@@ -198,6 +198,13 @@ class Settings(BaseSettings):
     web_search_timeout_seconds: int = 10
     web_search_max_uses_per_subtask: int = 3
 
+    # --- RAG tools (search the user's own uploads + conversation memory) ---
+    # Keyless and per-user scoped; the operator switch is the only gate.
+    document_search_enabled: bool = True
+    document_search_max_uses_per_subtask: int = 3
+    memory_recall_enabled: bool = True
+    memory_recall_max_uses_per_subtask: int = 3
+
     # --- Data fetch tool (subagent directive loop, HTTP GET → text/JSON) ---
     data_fetch_enabled: bool = True
     data_fetch_timeout_seconds: int = 15

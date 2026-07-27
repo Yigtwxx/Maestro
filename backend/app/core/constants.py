@@ -1140,6 +1140,8 @@ TOOL_CATALOG: tuple[dict[str, str], ...] = (
     {"id": "web_search", "label": "Web Search"},
     {"id": "code_execution", "label": "Code Execution"},
     {"id": "data_fetch", "label": "Data Fetch (HTTP/API)"},
+    {"id": "document_search", "label": "Document Search (your uploads)"},
+    {"id": "memory_recall", "label": "Memory Recall (past conversations)"},
     {"id": "repo_intel", "label": "Repository Intelligence (GitHub)"},
     {"id": "social_search", "label": "Social Search (X)"},
     {"id": "community_read", "label": "Community Read (Discord/Slack/Telegram)"},
@@ -1157,6 +1159,8 @@ EXECUTABLE_TOOL_IDS = frozenset(
         WEB_SEARCH_ACTION,
         DATA_FETCH_ACTION,
         CODE_EXECUTION_ACTION,
+        DOCUMENT_SEARCH_ACTION,
+        MEMORY_RECALL_ACTION,
         REPO_INTEL_ACTION,
         SOCIAL_SEARCH_ACTION,
         COMMUNITY_READ_ACTION,
@@ -1179,6 +1183,6 @@ CONNECTED_TOOL_IDS = frozenset(
 # model already has (code_execution) or re-reading the task
 # (view_original_request). A member holding one of these and answering without
 # ever calling it is the case the retrieval nudge exists for.
-RETRIEVAL_TOOL_IDS = frozenset({WEB_SEARCH_ACTION, DATA_FETCH_ACTION}) | (
-    CONNECTED_TOOL_IDS
+RETRIEVAL_TOOL_IDS = (
+    frozenset({WEB_SEARCH_ACTION, DATA_FETCH_ACTION}) | RAG_TOOL_IDS | CONNECTED_TOOL_IDS
 )
