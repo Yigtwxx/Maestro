@@ -55,6 +55,11 @@ export const ACCOUNT_DELETION_GRACE_DAYS = 30;
 // Max length of the profile bio (mirrors backend BIO_MAX_LEN).
 export const BIO_MAX_LEN = 280;
 
+// Max upload size for RAG documents (mirrors backend DOCUMENT_MAX_BYTES).
+// Enforced client-side too so an oversize file is rejected before it is sent
+// and never wastes an upload round-trip on a guaranteed 413.
+export const DOCUMENT_MAX_BYTES = 5_000_000;
+
 // Provider lists now live in a single typed registry (`lib/providers.ts`) so
 // the key screen, brain selector and task-start screen never drift. Re-exported
 // here for existing import paths.

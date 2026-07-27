@@ -711,7 +711,7 @@ DOCUMENT_CHUNK_SIZE = 1000
 DOCUMENT_CHUNK_OVERLAP = 150
 # Accepted upload types for the current tier (plain text / markdown only).
 DOCUMENT_ALLOWED_EXTENSIONS = frozenset({".txt", ".md", ".markdown"})
-DOCUMENT_MAX_BYTES = 2_000_000  # 2 MB upload cap
+DOCUMENT_MAX_BYTES = 5_000_000  # 5 MB upload cap
 
 
 # --- Google Gemini (OpenAI-compatible endpoint) ---

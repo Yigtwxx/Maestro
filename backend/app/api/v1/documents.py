@@ -53,12 +53,19 @@ async def upload_document(file: UploadFile, user: ActiveUser) -> dict:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Only {allowed} files are supported.",
         )
+    too_large = HTTPException(
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        detail=f"File size exceeds the {DOCUMENT_MAX_BYTES // 1_000_000} MB limit.",
+    )
+    # Reject before reading the body into memory. Without this a 1 GB upload
+    # would be fully buffered before the check ran, and an oversize document
+    # also balloons the chunk/embedding work that slows every squad run.
+    if file.size is not None and file.size > DOCUMENT_MAX_BYTES:
+        raise too_large
     content = await file.read()
+    # Fallback for the rare case the multipart parser left size unknown.
     if len(content) > DOCUMENT_MAX_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="File size exceeds the 2 MB limit.",
-        )
+        raise too_large
     try:
         return await document_service.ingest(user.id, filename, content)
     except DocumentError as exc:

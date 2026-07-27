@@ -8,10 +8,12 @@ import { Skeleton, SkeletonList } from '@/components/ui/Skeleton';
 import { PageShell } from '@/components/layout/PageShell';
 import { cn } from '@/lib/cn';
 import { api, ApiError } from '@/lib/api';
+import { DOCUMENT_MAX_BYTES } from '@/lib/constants';
 import { MODULE_COLOR } from '@/lib/module-colors';
 import type { DocumentMeta } from '@/types';
 
 const mc = MODULE_COLOR.documents;
+const MAX_MB = DOCUMENT_MAX_BYTES / 1_000_000;
 
 export default function DocumentsPage() {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
@@ -38,6 +40,11 @@ export default function DocumentsPage() {
   const uploadFile = useCallback(
     async (file: File) => {
       setError(undefined);
+      if (file.size > DOCUMENT_MAX_BYTES) {
+        setError(`File size exceeds the ${MAX_MB} MB limit.`);
+        if (inputRef.current) inputRef.current.value = '';
+        return;
+      }
       setUploading(true);
       try {
         await api.uploadDocument(file);
@@ -92,7 +99,9 @@ export default function DocumentsPage() {
         )}
       >
         <UploadCloud className={`h-8 w-8 ${mc.text}`} aria-hidden />
-        <p className="text-sm text-muted">Upload your .txt or .md file (max 2 MB)</p>
+        <p className="text-sm text-muted">
+          Upload your .txt or .md file (max {MAX_MB} MB)
+        </p>
         <input
           ref={inputRef}
           type="file"
