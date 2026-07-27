@@ -280,6 +280,7 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
         max_tool_calls=settings.subagent_max_tool_calls,
         max_tool_grants=settings.subagent_max_tool_grants,
         max_parallel_subagents=settings.subagent_max_parallel,
+        max_discovery_calls=settings.main_agent_discovery_max_calls,
         service_credentials=service_credentials,
         user_id=rc.user_id,
     )

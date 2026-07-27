@@ -205,6 +205,13 @@ class Settings(BaseSettings):
     memory_recall_enabled: bool = True
     memory_recall_max_uses_per_subtask: int = 3
 
+    # --- Main Agent discovery loop (read-only RAG before planning) ---
+    # When on, the Main Agent may run the RAG tools over the user's own data
+    # before planning, to ground its plan and delegation. Bounded and strictly
+    # whitelisted to the RAG tools — no external or action tool runs here.
+    main_agent_discovery_enabled: bool = True
+    main_agent_discovery_max_calls: int = 2
+
     # --- Data fetch tool (subagent directive loop, HTTP GET → text/JSON) ---
     data_fetch_enabled: bool = True
     data_fetch_timeout_seconds: int = 15

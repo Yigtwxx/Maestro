@@ -21,6 +21,7 @@ from typing import Any
 from app.agents import budget
 from app.agents import reviewer as reviewer_agent
 from app.agents import subagent as subagent_worker
+from app.agents import tools as tool_directives
 from app.agents.base import (
     AgentContext,
     SubagentResult,
@@ -36,11 +37,14 @@ from app.agents.prompts import (
     MAIN_AGENT_CLARIFY_RULE,
     MAIN_AGENT_SYSTEM,
     MAIN_AGENT_TOOLS_RULE,
+    MAIN_DISCOVERY_SYSTEM,
     SYNTHESIS_SYSTEM,
+    TOOL_RULE_LINES,
 )
 from app.agents.registry import SubagentSpec, get_domain_info
 from app.agents.schemas import GrantDecision, PlanAssignment, PlanResult
 from app.agents.structured import structured_call
+from app.core.config import settings
 from app.core.constants import (
     EXECUTABLE_TOOL_IDS,
     MAX_SUBTASKS,
@@ -49,6 +53,7 @@ from app.core.constants import (
     ORIGINAL_REQUEST_CLOSE,
     ORIGINAL_REQUEST_OPEN,
     PLAN_MAX_TOKENS,
+    RAG_TOOL_IDS,
     STREAM_DELTA_FLUSH_CHARS,
     SYNTHESIS_MAX_TOKENS,
     SYNTHESIS_MEMBER_OUTPUT_MAX_CHARS,
@@ -442,6 +447,62 @@ def _as_deliverable(assignment: Assignment, info: DomainInfo) -> Assignment:
     )
 
 
+async def _discover(ctx: AgentContext, domain: str, prompt: str) -> list[str]:
+    """Read-only RAG discovery over the user's own data before planning (Phase C).
+
+    Strictly whitelisted to the RAG tools and bounded by ``max_discovery_calls``,
+    so no external or action tool can ever run at the main tier. Returns short
+    context notes to fold into the planning prompt. A no-op without a user id,
+    with the switch off, or when the domain grants no RAG tool. A lookup failure
+    degrades to planning without discovery — it must never fail the task.
+    """
+    if ctx.user_id is None or not settings.main_agent_discovery_enabled:
+        return []
+    # Intersect with the whitelist defensively: even if resolve_enabled_tools
+    # ever returned more, only the RAG tools can run in discovery.
+    available = (
+        await tool_directives.resolve_enabled_tools(
+            domain, credentials=ctx.service_credentials, assigned=RAG_TOOL_IDS
+        )
+    ) & RAG_TOOL_IDS
+    if not available:
+        return []
+    specs = tool_directives.specs_for(
+        available, ctx.service_credentials, user_id=ctx.user_id
+    )
+    tool_lines = "\n".join(
+        TOOL_RULE_LINES[action].format(budget=ctx.max_discovery_calls)
+        for action in sorted(specs)
+        if action in TOOL_RULE_LINES
+    )
+    system = MAIN_DISCOVERY_SYSTEM.format(
+        prompt=truncate_text(prompt.strip(), OBJECTIVE_MAX_CHARS),
+        tool_lines=tool_lines,
+    )
+    messages = [
+        ChatMessage("system", with_current_date(system)),
+        ChatMessage("user", prompt),
+    ]
+    enabled = frozenset(specs)
+    notes: list[str] = []
+    for _ in range(max(0, ctx.max_discovery_calls)):
+        try:
+            response = await ctx.role_adapter("main").chat(
+                messages, temperature=0.2, max_tokens=PLAN_MAX_TOKENS
+            )
+        except LLMError:
+            logger.warning("discovery lookup failed; planning without it")
+            break
+        directive = tool_directives.parse_directive(response.content, enabled)
+        if directive is None:  # the model replied DONE (or anything non-directive)
+            break
+        feedback = await specs[directive.action].executor(directive)
+        notes.append(feedback)
+        messages.append(ChatMessage("assistant", response.content))
+        messages.append(ChatMessage("user", feedback))
+    return notes
+
+
 async def gatekeeper_review(
     ctx: AgentContext,
     *,
@@ -795,6 +856,12 @@ async def run(
         EventType.NODE_UPDATE,
         {"role": AgentRole.MAIN.value, "state": "running", "domain": domain},
     )
+    # Read-only discovery over the user's own data (Phase C): its findings join
+    # the shared memory_context so planning — and the subagent waves that follow —
+    # are grounded in what the user actually has.
+    discovery_notes = await _discover(ctx, domain, prompt)
+    if discovery_notes:
+        ctx.memory_context = [*ctx.memory_context, *discovery_notes]
     assignments = await _assign(ctx, domain, prompt, max_subtasks=max_subtasks)
     await ctx.emit(
         EventType.AGENT_MESSAGE,

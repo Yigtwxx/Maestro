@@ -73,6 +73,8 @@ class AgentContext:
     max_tool_grants: int = 2
     # Concurrent subagents per task (wave execution in main_agent.py).
     max_parallel_subagents: int = 3
+    # Read-only RAG lookups the Main Agent may run before planning (Phase C).
+    max_discovery_calls: int = 2
     # Resolved domain agent for this task. Set for a custom (``custom:{id}``)
     # agent — a one-member team adapted from the user's config; None means use
     # the built-in catalog by domain string (registry.resolve_domain_info).
