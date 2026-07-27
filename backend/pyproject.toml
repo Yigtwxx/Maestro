@@ -22,3 +22,24 @@ known-first-party = ["app"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+# Fail on an unregistered marker (a typo'd @pytest.mark silently no-ops
+# otherwise) or an unknown config key. Cheap correctness guardrails that keep
+# the suite honest; no custom markers are declared, so nothing is exempted.
+addopts = "--strict-markers --strict-config"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+# Exclude generated/entrypoint code that carries no test-worthy logic.
+omit = ["app/main.py", "alembic/*"]
+
+[tool.coverage.report]
+# Reporting only — CI prints coverage but does NOT gate on a threshold, so a
+# legitimate change is never blocked by a coverage dip (no spurious failures).
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
