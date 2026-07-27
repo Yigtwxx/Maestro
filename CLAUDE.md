@@ -348,6 +348,7 @@ npm run dev            # localhost:3000
 npm run build
 npm run lint
 npm run type-check
+npm test               # vitest unit tests (pure logic: stores, lib, color maps)
 
 # Backend
 cd backend
@@ -365,7 +366,23 @@ docker-compose up -d
 ```
 
 A change is done when `pytest` and `ruff check`/`ruff format --check` pass on the backend,
-and `type-check`, `lint`, and `build` pass on the frontend.
+and `type-check`, `lint`, `test`, and `build` pass on the frontend.
+
+### CI quality gates
+
+`.github/workflows/ci.yml` runs the blocking gates: backend `ruff check` / `ruff format
+--check` + `pytest` (with `--cov=app` — coverage is **reported in the log, never gated on
+a threshold**, so a coverage dip cannot fail a PR) + lock-freshness; frontend `eslint` +
+`tsc --noEmit` + `vitest run` + `next build`.
+
+**Lint policy (deliberate — do not "tighten" without auditing the fallout).** Four
+react-hooks v7 rules (`set-state-in-effect`, `refs`, `purity`, `static-components`) are
+kept at `warn` in `eslint.config.mjs`: they fire on *correct* code — the canonical
+fetch-then-`setState` data-loading pattern and intentional imperative canvas/animation
+code. Warnings do not fail CI; only errors do (`eslint` runs without `--max-warnings=0`,
+and `next build` treats warnings as non-fatal). Never add `--max-warnings=0` while these
+are demoted, and do not enable typescript-eslint's type-checked mode — `tsc --noEmit`
+covers type correctness deterministically, without the flakiness of typed lint rules.
 
 ### Dependency locking
 
