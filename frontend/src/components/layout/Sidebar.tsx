@@ -13,7 +13,6 @@ import {
   FileText,
   KeyRound,
   LogOut,
-  Rocket,
   ShieldAlert,
   UserRound,
 } from 'lucide-react';
@@ -146,17 +145,6 @@ export function Sidebar() {
             </span>
           </Link>
         )}
-        <Link
-          href="/architect"
-          className={cn(
-            'flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2',
-            'text-sm font-semibold uppercase tracking-wide text-black',
-            'transition-all hover:bg-primary-hover hover:shadow-glow-primary shimmer-hover',
-          )}
-        >
-          <Rocket className="h-4 w-4" aria-hidden />
-          Deploy Agent
-        </Link>
         <button
           onClick={onLogout}
           className={cn(
