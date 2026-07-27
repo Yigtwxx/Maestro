@@ -2,7 +2,7 @@ import { Card } from '@/components/ui/Card';
 import { StatBlock } from '@/components/ui/StatBlock';
 import CountUp from '@/components/CountUp';
 import type { TraceSummary } from '@/types';
-import { formatCount, formatDurationMs, formatUsd, kindColorHex } from '@/lib/trace';
+import { formatCount, formatDurationMs, formatUsd, kindColorHex, spanKindLabel } from '@/lib/trace';
 
 interface TraceSummaryPanelProps {
   summary: TraceSummary;
@@ -60,6 +60,7 @@ export function TraceSummaryPanel({ summary }: TraceSummaryPanelProps) {
                         <span
                           className="h-2 w-2 shrink-0 rounded-full"
                           style={{ backgroundColor: kindColorHex(node.kind) }}
+                          title={spanKindLabel(node.kind)}
                           aria-hidden
                         />
                         <span className="truncate text-slate-200" title={node.name}>

@@ -12,6 +12,7 @@ import {
   kindColorHex,
   spanColorHex,
   spanGeometry,
+  spanKindLabel,
   traceWindow,
   type TraceNode,
 } from '@/lib/trace';
@@ -57,7 +58,7 @@ export function TraceWaterfall({ spans, selectedSpanId, onSelectSpan }: TraceWat
               style={{ backgroundColor: kindColorHex(kind) }}
               aria-hidden
             />
-            <span className="text-micro text-muted">{kind}</span>
+            <span className="text-micro text-muted">{spanKindLabel(kind)}</span>
           </span>
         ))}
         <span className="ml-auto font-mono text-micro text-muted">
@@ -75,9 +76,10 @@ export function TraceWaterfall({ spans, selectedSpanId, onSelectSpan }: TraceWat
             <span
               key={t.pct}
               className={cn(
-                'absolute font-mono text-micro text-muted',
+                'absolute whitespace-nowrap font-mono text-micro text-muted',
                 i === 0 && 'left-0',
                 i === ticks.length - 1 && 'right-0',
+                i !== 0 && i !== ticks.length - 1 && '-translate-x-1/2',
               )}
               style={i === 0 || i === ticks.length - 1 ? undefined : { left: `${t.pct}%` }}
             >

@@ -3,12 +3,15 @@ import { cn } from '@/lib/cn';
 import type { TraceSpan } from '@/types';
 import {
   formatDurationMs,
+  formatTimestamp,
   formatUsd,
   spanColorHex,
   spanFinishReason,
   spanIsEstimated,
+  spanKindLabel,
   spanModel,
   spanProvider,
+  spanStatusLabel,
   spanTokens,
 } from '@/lib/trace';
 
@@ -59,11 +62,13 @@ export function SpanDetail({ span }: SpanDetailProps) {
       </div>
 
       <div className="divide-y divide-border">
-        <DetailRow label="KIND" value={span.kind} />
+        <DetailRow label="TYPE" value={spanKindLabel(span.kind)} />
         <DetailRow
           label="STATUS"
           value={
-            <span className={cn(isError ? 'text-danger' : 'text-slate-200')}>{span.status}</span>
+            <span className={cn(isError ? 'text-danger' : 'text-slate-200')}>
+              {spanStatusLabel(span.status)}
+            </span>
           }
         />
         <DetailRow label="DURATION" value={formatDurationMs(span.duration_ms)} />
@@ -81,8 +86,8 @@ export function SpanDetail({ span }: SpanDetailProps) {
           />
         )}
         {span.cost_usd > 0 && <DetailRow label="COST" value={formatUsd(span.cost_usd)} />}
-        <DetailRow label="FINISH" value={finish} />
-        <DetailRow label="STARTED" value={span.start_time} />
+        <DetailRow label="FINISH REASON" value={finish} />
+        <DetailRow label="STARTED" value={formatTimestamp(span.start_time)} />
       </div>
 
       {span.attributes['maestro.request.preview'] !== undefined && (
