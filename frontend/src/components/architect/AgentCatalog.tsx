@@ -11,6 +11,7 @@ import {
 import { PROVIDER_MAP } from '@/lib/providers';
 import { ProviderIcon } from '@/components/ProviderIcon';
 import { BorderGlow } from '@/components/effects/BorderGlow';
+import { CardMotif } from '@/components/architect/card-motifs/CardMotif';
 import type { BuiltinAgent, LLMProvider } from '@/types';
 
 interface AgentCatalogProps {
@@ -30,10 +31,13 @@ interface AgentCatalogProps {
 const CARD_GLOW = { sensitivity: 0.05, intensity: 2 } as const;
 
 // `relative` anchors the BorderGlow overlay, which positions itself `-inset-px`
-// against the card and inherits its radius.
+// against the card and inherits its radius. `group` drives the per-domain
+// CardMotif's hover animation; `isolate` gives the card its own stacking context
+// so the motif's `-z-10` layer paints above the card fill but below the text,
+// without escaping behind the card or clipping the BorderGlow bloom.
 const cardBase =
-  'relative flex h-full flex-col rounded-lg border bg-surface p-5 text-left transition-all ' +
-  'disabled:cursor-not-allowed disabled:opacity-60';
+  'group relative isolate flex h-full flex-col rounded-lg border bg-surface p-5 text-left ' +
+  'transition-all disabled:cursor-not-allowed disabled:opacity-60';
 
 /** One connected tool a squad declares, resolved against the stored keys. */
 interface ApiRequirement {
@@ -204,6 +208,7 @@ export function AgentCatalog({
             )}
           >
             {!disabled && <BorderGlow rgb={dc.rgb} {...CARD_GLOW} />}
+            <CardMotif domain={agent.domain} accentHex={dc.accentHex} />
             <span className="flex items-baseline justify-between gap-2">
               <span className="text-base font-bold text-white">{agent.name}</span>
               <span

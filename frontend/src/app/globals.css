@@ -330,6 +330,33 @@ body {
     animation: like-heart-pop 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
+  /* Per-domain squad-card hover motif (see CardMotif / card-motifs/registry).
+     Rendered always but invisible + paused at rest; on card hover it fades in to
+     a faint watermark and its keyframes resume. Only the hovered card animates,
+     so the grid runs zero rAF loops at rest. */
+  .card-motif {
+    opacity: 0;
+    transition: opacity 0.3s ease-out;
+  }
+  .group:hover .card-motif {
+    opacity: 0.16;
+  }
+  /* Every animated node carries [data-play]; fill-box keeps transform-origin
+     relative to the node's own box. Paused until the card is hovered. */
+  .card-motif [data-play] {
+    transform-box: fill-box;
+    animation-play-state: paused;
+  }
+  .group:hover .card-motif [data-play] {
+    animation-play-state: running;
+  }
+  /* Rotations that must pivot on the SVG center rather than each node's own box. */
+  .card-motif .motif-spin,
+  .card-motif .motif-tip {
+    transform-box: view-box;
+    transform-origin: 50% 50%;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .gradient-border,
     .shimmer-hover:hover::after,
@@ -341,7 +368,8 @@ body {
     .log-flash,
     .toast-in,
     .like-particle,
-    .like-heart-pop {
+    .like-heart-pop,
+    .card-motif [data-play] {
       animation: none;
     }
     .spotlight-beam,
@@ -493,5 +521,259 @@ body {
     background-color: transparent;
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* ---- Per-domain squad-card hover motifs ---------------------------------- */
+/* Decorative loop timings (~2s) sit outside motion.ts's DUR scale (one-shots,
+   ≤0.8s), so they are CSS literals here — consistent with the keyframes above.
+   The shared EASE.out curve is reused as the cubic-bezier literal. Every motif
+   applies to nodes tagged [data-play], which are paused until the card hovers. */
+
+/* Software: each code line wipes in from the left, holds, then retypes. */
+.motif-codeline {
+  animation: motif-codeline 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+@keyframes motif-codeline {
+  0% {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  40%,
+  80% {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+}
+
+/* Blinking text caret. */
+.motif-caret {
+  animation: motif-caret 1s steps(1) infinite;
+}
+@keyframes motif-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Finance: a candle grows from the baseline, holds, then the oldest fades out. */
+.motif-candle {
+  animation: motif-candle 2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+@keyframes motif-candle {
+  0% {
+    transform: scaleY(0);
+    opacity: 0;
+  }
+  25%,
+  80% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 0;
+  }
+}
+
+/* Expanding signal ring / ripple (marketing rings, searching + opensource + local). */
+.motif-ping {
+  animation: motif-ping 1.8s ease-out infinite;
+  transform-origin: center;
+}
+@keyframes motif-ping {
+  0% {
+    transform: scale(0.3);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+/* SEO: the magnifier sweeps back and forth across the result rows. */
+.motif-scan {
+  animation: motif-scan 2.4s ease-in-out infinite;
+}
+@keyframes motif-scan {
+  0%,
+  100% {
+    transform: translateX(-8px);
+  }
+  50% {
+    transform: translateX(6px);
+  }
+}
+
+/* SEO: the rank arrow ticks up and fades. */
+.motif-rankup {
+  animation: motif-rankup 2.4s ease-in-out infinite;
+}
+@keyframes motif-rankup {
+  0%,
+  100% {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+  50% {
+    transform: translateY(-2px);
+    opacity: 1;
+  }
+}
+
+/* Continuous rotation (radar sweep, electron orbit). */
+.motif-spin {
+  animation: motif-spin 3s linear infinite;
+}
+@keyframes motif-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Data: a bar rises and falls, staggered into a travelling wave. */
+.motif-bar {
+  animation: motif-bar 1.6s ease-in-out infinite;
+}
+@keyframes motif-bar {
+  0%,
+  100% {
+    transform: scaleY(0.25);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+/* Stroke that draws itself along a normalised path (content frame, git branch). */
+.motif-draw {
+  stroke-dasharray: 1;
+  animation: motif-draw 2.6s ease-in-out infinite;
+}
+@keyframes motif-draw {
+  0% {
+    stroke-dashoffset: 1;
+  }
+  60%,
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* Legal: the balance beam tips gently back and forth. */
+.motif-tip {
+  animation: motif-tip 2.6s ease-in-out infinite;
+}
+@keyframes motif-tip {
+  0%,
+  100% {
+    transform: rotate(-9deg);
+  }
+  50% {
+    transform: rotate(9deg);
+  }
+}
+
+/* Education: the tassel swings like a pendulum from its attachment point. */
+.motif-swing {
+  animation: motif-swing 2.2s ease-in-out infinite;
+  transform-box: view-box;
+  transform-origin: 75% 41%;
+}
+@keyframes motif-swing {
+  0%,
+  100% {
+    transform: rotate(-16deg);
+  }
+  50% {
+    transform: rotate(16deg);
+  }
+}
+
+/* Chat/network dot pulse (social typing dots, community nodes). */
+.motif-typedot {
+  animation: motif-typedot 1.4s ease-in-out infinite;
+}
+@keyframes motif-typedot {
+  0%,
+  70%,
+  100% {
+    transform: scale(0.7);
+    opacity: 0.4;
+  }
+  35% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
+/* Community: a connective link brightens and dims. */
+.motif-link {
+  animation: motif-link 2s ease-in-out infinite;
+}
+@keyframes motif-link {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Local: the pin drops in and settles with a short bounce. */
+.motif-drop {
+  animation: motif-drop 2.4s ease-in-out infinite;
+}
+@keyframes motif-drop {
+  0% {
+    transform: translateY(-16px);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  45% {
+    transform: translateY(0);
+  }
+  58% {
+    transform: translateY(-4px);
+  }
+  70%,
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* General: sparkles twinkle in and out of phase. */
+.motif-twinkle {
+  animation: motif-twinkle 1.8s ease-in-out infinite;
+}
+@keyframes motif-twinkle {
+  0%,
+  100% {
+    transform: scale(0.4);
+    opacity: 0.2;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
   }
 }
