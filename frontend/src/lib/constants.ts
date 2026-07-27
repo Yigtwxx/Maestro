@@ -167,7 +167,7 @@ export const MODEL_PREF_ROLES = [
 // active would send an unknown model id to that provider. The picker suffixes
 // them so this scope is visible to the user.
 export const LOCAL_MODEL_SUGGESTIONS = [
-  'nemotron-3-nano:30b-a3b-q4',
+  'nemotron-3-nano:30b-a3b-q4_K_M',
   'qwen3.5:9b',
 ] as const;
 
