@@ -8,7 +8,11 @@ import { Select } from '@/components/ui/Select';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { cn } from '@/lib/cn';
 import { api, ApiError } from '@/lib/api';
-import { MODEL_PREF_ROLES, MODEL_SUGGESTIONS } from '@/lib/constants';
+import {
+  LOCAL_MODEL_SUGGESTIONS,
+  MODEL_PREF_ROLES,
+  MODEL_SUGGESTIONS,
+} from '@/lib/constants';
 import { useAuthStore } from '@/stores/auth';
 
 // Sentinel for "no pin" (the role falls back to its tier default).
@@ -18,6 +22,14 @@ const CUSTOM_VALUE = '__custom__';
 
 const isSuggestion = (value: string): boolean =>
   (MODEL_SUGGESTIONS as readonly string[]).includes(value);
+
+// Local Ollama tags only apply under the Local LLM brain; flag them in the
+// dropdown so a pin is not mistaken for a cloud-brain model. The stored value
+// stays the raw id — only the visible label is annotated.
+const suggestionLabel = (model: string): string =>
+  (LOCAL_MODEL_SUGGESTIONS as readonly string[]).includes(model)
+    ? `${model} (Local · Ollama)`
+    : model;
 
 /** Per-role model pins; unset roles use the brain's tier default. */
 export function ModelPreferencesCard() {
@@ -117,7 +129,10 @@ export function ModelPreferencesCard() {
                 onChange={(e) => onSelect(role, e.target.value)}
                 options={[
                   { value: DEFAULT_VALUE, label: `Default (${tier})` },
-                  ...MODEL_SUGGESTIONS.map((m) => ({ value: m, label: m })),
+                  ...MODEL_SUGGESTIONS.map((m) => ({
+                    value: m,
+                    label: suggestionLabel(m),
+                  })),
                   { value: CUSTOM_VALUE, label: 'Custom…' },
                 ]}
               />
