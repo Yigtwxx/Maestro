@@ -161,10 +161,22 @@ export const MODEL_PREF_ROLES = [
   { role: 'synthesis', label: 'Synthesis', tier: 'strong' },
 ] as const;
 
-// Suggested model ids for the per-role picker. Mirrors backend
-// PROVIDER_TIER_MODELS / MODEL_PRICING (backend/app/core/constants.py) —
-// keep in sync when the backend lineup is refreshed.
+// Local (Ollama) model tags served via FREE_MODEL_ENDPOINT. Unlike the cloud
+// suggestions below, these only take effect under the Local LLM (Ollama) brain:
+// model_preferences is provider-agnostic, so pinning one while a cloud brain is
+// active would send an unknown model id to that provider. The picker suffixes
+// them so this scope is visible to the user.
+export const LOCAL_MODEL_SUGGESTIONS = [
+  'nemotron-3-nano:30b-a3b-q4',
+  'qwen3.5:9b',
+] as const;
+
+// Suggested model ids for the per-role picker. Cloud ids mirror backend
+// PROVIDER_TIER_MODELS / MODEL_PRICING (backend/app/core/constants.py) — keep in
+// sync when the backend lineup is refreshed. Local ids come first so the local
+// tier is easy to compare head-to-head.
 export const MODEL_SUGGESTIONS = [
+  ...LOCAL_MODEL_SUGGESTIONS,
   'claude-sonnet-5',
   'claude-haiku-4-5',
   'gpt-4o',
