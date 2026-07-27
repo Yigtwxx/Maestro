@@ -965,6 +965,29 @@ CODE_EXECUTION_RESULT_OPEN = "<code_execution_result>"
 CODE_EXECUTION_RESULT_CLOSE = "</code_execution_result>"
 
 
+# --- RAG tools (search the user's OWN data; keyless, per-user scoped) ---
+# Both read from Qdrant collections that are always filtered by user_id
+# (memory_service._user_filter), so they carry no SSRF/BYOK surface but DO carry
+# the per-user isolation invariant (CLAUDE.md §6): the executor must pass the
+# run's user_id and never a global default. Uploaded document text is
+# attacker-controllable, so results are wrapped with UNTRUSTED_CONTENT_NOTICE.
+DOCUMENT_SEARCH_ACTION = "document_search"  # matches the TOOL_CATALOG id
+MEMORY_RECALL_ACTION = "memory_recall"  # matches the TOOL_CATALOG id
+DOCUMENT_SEARCH_RESULTS_OPEN = "<document_search_results>"
+DOCUMENT_SEARCH_RESULTS_CLOSE = "</document_search_results>"
+MEMORY_RECALL_RESULTS_OPEN = "<memory_recall_results>"
+MEMORY_RECALL_RESULTS_CLOSE = "</memory_recall_results>"
+# Fed back when a RAG search finds nothing (cold backend or no match). A plain
+# note, not an empty block, so the model does not read a bare wrapper as data.
+RAG_NO_RESULTS_NOTICE = (
+    "No matching content was found in the user's own data for that query."
+)
+# Tools that search the user's own data. A strict whitelist reused by the Main
+# Agent's read-only discovery loop (Phase C), so no action/external tool can
+# ever enter discovery.
+RAG_TOOL_IDS = frozenset({DOCUMENT_SEARCH_ACTION, MEMORY_RECALL_ACTION})
+
+
 # --- Connected-API tools (BYOK service keys, subagent JSON directive protocol) ---
 # These four tools authenticate against a user's stored SERVICE_PROVIDERS key.
 # Unlike the LLM brain key (CLAUDE.md §8, missing key => task stops), a missing
