@@ -79,8 +79,19 @@ services:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?set QDRANT_API_KEY in .env.prod}
     volumes:
       - qdrantdata:/qdrant/storage
-    # No healthcheck: the image is distroless, so no in-container probe can run.
-    # Monitor /readyz from outside if you want readiness gating.
+    # The image ships no curl/wget and its /bin/sh is dash, so CMD-SHELL cannot
+    # probe anything — but bash *is* installed, and its /dev/tcp redirection
+    # speaks enough HTTP to read Qdrant's own /readyz. That endpoint is exempt
+    # from QDRANT__SERVICE__API_KEY, so the probe carries no credential.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"
+      interval: 10s
+      timeout: 5s
+      retries: 5
     deploy:
       resources:
         limits:
@@ -157,6 +168,12 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
+    # Streams the model straight to the shared volume; 512m is headroom, not a
+    # measured requirement. See the note on `migrate` for why one-shots are capped.
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   # Runs `alembic upgrade head` and exits. The API waits for it to succeed, so a
   # failed migration keeps the old backend serving rather than starting a new
@@ -172,6 +189,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # One-shots get a cap for the same reason the long-running services do: they
+    # share a single host, and an unbounded container that grows (a data
+    # migration rewriting a large table) is reaped by the kernel's OOM killer,
+    # which is free to pick Postgres or the backend instead of the offender.
+    # 512m is several times what `alembic upgrade head` uses on this schema.
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   backend:
     image: ghcr.io/yigtwxx/maestro-backend:${IMAGE_TAG:-latest}
@@ -190,7 +216,7 @@ services:
       mongo:
         condition: service_healthy
       qdrant:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
       migrate:
@@ -268,6 +294,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # A single psql session. See the note on `migrate`.
+    deploy:
+      resources:
+        limits:
+          memory: 128m
 
   # Runs its own Prisma migrations on startup — no separate migrate service.
   # Caddy exposes only /a/script.js and /a/api/send; the dashboard is reachable
@@ -316,6 +347,13 @@ services:
     depends_on:
       - backend
       - frontend
+    # The last unbounded service: a proxy that buffers uploads for every request
+    # in flight is exactly what a flood grows, and it must not be able to starve
+    # the app it fronts. 256m is an order of magnitude above its steady state.
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
 volumes:
   pgdata:
