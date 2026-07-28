@@ -67,6 +67,7 @@ class FakeCollection:
         ]
 
         async def _rows():
+            """Yield the projected matches as Motor's async cursor would."""
             for doc in matched:
                 yield doc
 

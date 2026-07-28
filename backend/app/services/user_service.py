@@ -127,6 +127,7 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
     async def _find(
         collection: MongoCollection, exclude: tuple[str, ...] = ()
     ) -> list[dict[str, Any]]:
+        """The user's documents in one collection, minus any excluded fields."""
         projection = {name: 0 for name in exclude} or None
         cursor = mongo[collection.value].find({"user_id": str(user.id)}, projection)
         return [_serialize(doc) async for doc in cursor]
