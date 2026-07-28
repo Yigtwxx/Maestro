@@ -90,3 +90,27 @@ The short version:
 
 The full policy lives in [`CLAUDE.md`](https://github.com/Yigtwxx/Maestro/blob/main/CLAUDE.md) §9, and the user-facing version — with
 the reasoning behind each decision — is on the platform's `/security` page.
+
+## Commit provenance
+
+If you are auditing this repository rather than using it, you will want to know how much
+the commit history can be trusted. Precisely this much:
+
+- **History is not squashed or collapsed.** Squash merging is disabled repository-wide, so
+  a pull request lands as its own commits and none are rewritten into a single one. `merge`
+  and `rebase` are the only merge methods `main` accepts.
+- **`main` has been protected since 2026-07-12.** Force-pushes and branch deletion are
+  blocked, and every change lands through a pull request with required review and status
+  checks. **Commits dated before 2026-07-12 were made on an unprotected branch** — nothing
+  attests that they were not rewritten before that date, so treat them as the maintainer's
+  word rather than as evidence.
+- **Commits authored from 2026-07-28 onward are SSH-signed** and show as *Verified* on
+  GitHub; release tags from `v0.1.3` onward are signed too. **Everything before that date is
+  unsigned**, which means the author name on those commits is asserted, not proven. Verify
+  for yourself with `git log --show-signature`.
+- **Signatures are not yet enforced by a branch rule.** An unsigned commit on `main` is
+  therefore still possible; check rather than assume. Requiring signatures is on the
+  roadmap and will be announced here when it lands.
+
+We would rather write this down than let a clean-looking log imply a guarantee it does not
+carry.
