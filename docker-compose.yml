@@ -42,7 +42,15 @@ services:
     # whole VM — it ignores the cgroup limit and would get OOM-killed instead.
     command: ["mongod", "--wiredTigerCacheSizeGB", "0.5"]
     ports:
-      - "27017:27017"
+      # Host port 27018, for the same reason Postgres uses 5433: a native
+      # MongoDB service (Homebrew's mongodb-community, Windows' MongoDB
+      # service) already owns 27017 on plenty of dev machines. It binds
+      # 127.0.0.1 specifically while Docker's proxy binds the wildcard, and a
+      # loopback-specific bind wins — so `localhost:27017` silently reaches the
+      # *native* server, not this container. Those installs default to
+      # authorization enabled, which surfaces as an unrelated-looking
+      # "Command update requires authentication" from the seed script.
+      - "27018:27017"
     volumes:
       - ./.data/mongo:/data/db
     healthcheck:

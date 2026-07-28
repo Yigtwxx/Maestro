@@ -38,7 +38,7 @@ Backend lands on <http://localhost:8000> (API docs at `/docs`), frontend on
 ### The manual path
 
 ```bash
-docker compose up -d                       # Postgres :5433, Mongo :27017, Qdrant :6333
+docker compose up -d                       # Postgres :5433, Mongo :27018, Qdrant :6333
 
 cd backend
 python -m venv .venv

@@ -82,8 +82,12 @@ class Settings(BaseSettings):
     trace_retention_days: int = Field(default=30, ge=1)
 
     # --- Databases ---
+    # Both defaults point at the shifted host ports docker-compose.yml publishes,
+    # not the stock 5432/27017: a natively-installed PostgreSQL or MongoDB binds
+    # loopback specifically and therefore wins over Docker's wildcard bind, so
+    # the stock port would silently reach the wrong server.
     postgres_url: str = "postgresql+asyncpg://maestro:maestro@localhost:5433/maestro"
-    mongodb_url: str = "mongodb://localhost:27017"
+    mongodb_url: str = "mongodb://localhost:27018"
     mongodb_db_name: str = "maestro"
 
     # --- Vector DB (Qdrant) ---
