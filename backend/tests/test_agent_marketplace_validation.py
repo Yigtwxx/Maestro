@@ -88,10 +88,9 @@ async def test_install_never_attaches_the_publishers_api_tools(monkeypatch):
         marketplace_service.agent_service, "create_agent", fake_create_agent
     )
     monkeypatch.setattr(marketplace_service, "get_item", fake_get_item)
-    monkeypatch.setattr(
-        marketplace_service, "_installs_collection", lambda: _NoopCollection()
-    )
-    monkeypatch.setattr(marketplace_service, "_collection", lambda: _NoopCollection())
+    # The class itself is the factory: calling it is what the service does.
+    monkeypatch.setattr(marketplace_service, "_installs_collection", _NoopCollection)
+    monkeypatch.setattr(marketplace_service, "_collection", _NoopCollection)
 
     await marketplace_service.install(uuid.uuid4(), "item-1")
 
