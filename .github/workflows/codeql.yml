@@ -48,6 +48,15 @@ jobs:
           languages: ${{ matrix.language }}
           build-mode: none
           queries: security-and-quality
+          # Distinct from the `paths-ignore` on the triggers above: that one
+          # decides whether this workflow runs at all, this one decides what
+          # CodeQL analyses. .semgrep/fixtures holds deliberately vulnerable
+          # sample code (raw SQL, credentials passed to a logger) that exists
+          # to prove the invariant rules still fire. Analysing it would file
+          # real-looking alerts against test data.
+          config: |
+            paths-ignore:
+              - .semgrep/fixtures
 
       - name: Analyze
         uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3

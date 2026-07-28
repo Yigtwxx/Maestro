@@ -92,6 +92,91 @@ jobs:
           sarif_file: semgrep.sarif
           category: semgrep
 
+  invariants:
+    name: Invariants (semgrep, blocking)
+    # Deliberately a separate job from `semgrep` above, not extra --config
+    # arguments to it. That one is advisory by design (continue-on-error, so
+    # pre-existing transitive debt in a public ruleset never fails a
+    # contributor's PR); these rules are the opposite — a hand-written,
+    # zero-finding-today set encoding the CLAUDE.md §9 invariants, where a
+    # single hit means an invariant was broken in this PR and must block it.
+    # Merging the two would force one policy onto both.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install semgrep
+        run: pip install semgrep
+
+      # --error turns a finding into a non-zero exit. Rule paths are anchored to
+      # the repository root, so the scan must start there.
+      - name: Check Maestro invariants
+        run: semgrep scan --config .semgrep/maestro.yml --error --metrics=off backend/
+
+      # Guards the guard: a rule that silently stops matching (a renamed helper,
+      # a moved directory, a pattern broken by a semgrep upgrade) would report
+      # zero findings and look identical to a clean tree. The fixtures make the
+      # difference observable — bad.py must produce exactly the expected
+      # findings and good.py must produce none.
+      - name: Verify the rules still fire
+        run: |
+          # semgrep skips dot-directories, so the fixtures report zero findings
+          # if scanned in place under .semgrep/ — indistinguishable from rules
+          # that no longer match. Copy them to a plain path first.
+          cp -r .semgrep/fixtures "$RUNNER_TEMP/fixtures"
+          cd "$RUNNER_TEMP/fixtures"
+          semgrep scan --config "$GITHUB_WORKSPACE/.semgrep/maestro.yml" \
+            --metrics=off --no-git-ignore --json . > /tmp/fixture.json
+          # A rule set that matched nothing at all would satisfy "no findings"
+          # but not this: the fixtures must actually have been read.
+          python3 -c "
+          import json, sys
+          scanned = json.load(open('/tmp/fixture.json'))['paths']['scanned']
+          if len(scanned) != 2:
+              sys.exit(f'expected 2 fixture files scanned, got {len(scanned)}')
+          "
+          python3 - <<'PY'
+          import collections, json, sys
+
+          EXPECTED = {
+              "maestro-qdrant-query-without-user-scope": 2,
+              "maestro-connected-api-redirect-optin": 2,
+              "maestro-http-client-follows-redirects": 1,
+              "maestro-secret-in-log": 3,
+              "maestro-raw-sql-outside-alembic": 1,
+          }
+
+          results = json.load(open("/tmp/fixture.json"))["results"]
+          found = collections.Counter(
+              r["check_id"].split(".")[-1] for r in results if "bad.py" in r["path"]
+          )
+          clean = [r for r in results if "good.py" in r["path"]]
+
+          problems = []
+          for rule, count in EXPECTED.items():
+              if found[rule] != count:
+                  problems.append(f"{rule}: expected {count} in bad.py, got {found[rule]}")
+          for r in clean:
+              problems.append(
+                  f"false positive in good.py line {r['start']['line']}: "
+                  f"{r['check_id'].split('.')[-1]}"
+              )
+          if problems:
+              print("Invariant rules are not behaving as specified:")
+              for p in problems:
+                  print(f"  - {p}")
+              sys.exit(1)
+          print(f"all {len(EXPECTED)} rules fire as specified; no false positives")
+          PY
+
   pip-audit:
     name: pip-audit (backend)
     runs-on: ubuntu-latest
