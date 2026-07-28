@@ -37,6 +37,18 @@ from app.services.custom_api_service import CustomApiTool
 from app.services.llm_service import ChatMessage, LLMAdapter, LLMResponse
 from app.services.service_key_service import ServiceCredentials
 
+
+@pytest.fixture(autouse=True)
+def _custom_api_tools_on(monkeypatch):
+    """The feature ships off (CUSTOM_API_TOOLS_ENABLED=false, see config.py).
+
+    These tests exercise it, so they opt in explicitly — which also keeps the
+    one test that asserts the *disabled* behaviour honest, since it has to turn
+    the switch back off itself.
+    """
+    monkeypatch.setattr(settings, "custom_api_tools_enabled", True)
+
+
 NO_KEYS = ServiceCredentials()
 FINAL_ANSWER = "Final answer."
 

@@ -279,12 +279,20 @@ class Settings(BaseSettings):
     # rollback — off, every custom_api__* action is dropped from the enabled set
     # and the executor refuses a second time.
     #
-    # Defaults to true, unlike code_execution: the blast radius here is the
-    # network, not the host. It is still the only tool that takes a user-supplied
-    # hostname, so every call passes url_guard at request time as well as at
-    # registration, and redirects are never followed. Operators who cannot accept
-    # outbound requests to arbitrary public hosts should set this to false.
-    custom_api_tools_enabled: bool = True
+    # Off by default, for the same reason code_execution is: the guard in front
+    # of it is real but incomplete. url_guard checks that a hostname resolves to
+    # a globally routable address, and does not pin that address to the socket —
+    # so an attacker who controls the DNS record can answer the check with a
+    # public address and the connection with a private one. Everywhere else that
+    # window is theoretical because the host is ours; here the host is
+    # user-supplied, which makes it the normal case rather than the exotic one.
+    #
+    # Enabling this is a deliberate operator decision that says the deployment
+    # can accept outbound requests to hosts its users choose. Turn it on for a
+    # self-hosted instance on a trusted network; leave it off where the backend
+    # sits next to anything an internal address would reach. Flip the default
+    # only once the execution path connects to the address it validated.
+    custom_api_tools_enabled: bool = False
     custom_api_timeout_seconds: int = 15
     custom_api_max_uses_per_subtask: int = 3
 
