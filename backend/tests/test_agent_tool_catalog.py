@@ -9,12 +9,10 @@ returned to build them.
 
 from __future__ import annotations
 
-import pytest
-
 from app.core.config import settings
 from app.core.constants import (
-    COMMUNITY_READ_ACTION,
     CODE_EXECUTION_ACTION,
+    COMMUNITY_READ_ACTION,
     DECLARATIVE_TOOL_IDS,
     EXECUTABLE_TOOL_IDS,
     REPO_INTEL_ACTION,

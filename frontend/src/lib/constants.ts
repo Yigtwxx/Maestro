@@ -207,6 +207,21 @@ export const AGENT_DOMAINS = [
   'general',
 ] as const;
 
+// Field limits for a custom agent, mirroring backend schemas/agent.py
+// AgentConfigCreate. Kept here so the wizard can validate a step before the
+// round-trip instead of surfacing a 422 four steps later;
+// backend/tests/test_domain_frontend_parity.py compares these to the Pydantic
+// max_length values, so a drift fails CI rather than the user's save.
+export const AGENT_LIMITS = {
+  name: 80,
+  domain: 40,
+  systemPrompt: 8000,
+  systemPromptMin: 1,
+  description: 280,
+  routingHint: 280,
+  outputFormat: 2000,
+} as const;
+
 // Agent tools backed by a BYOK service key, and which providers each can use.
 // Mirrors backend CONNECTED_TOOL_PROVIDERS plus community_read's per-platform
 // dispatch. Drives the Architect connected rail: a squad declaring one of these

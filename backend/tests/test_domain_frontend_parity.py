@@ -15,6 +15,7 @@ import pytest
 
 from app.agents.registry import DOMAIN_CATALOG
 from app.core.constants import CONNECTED_TOOL_IDS
+from app.schemas.agent import AgentConfigCreate
 
 _FRONTEND_LIB = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib"
 
@@ -60,6 +61,54 @@ def _parse_core_connected_tools(source: str) -> dict[str, str]:
     )
     assert match, "SQUAD_CORE_CONNECTED_TOOL map not found in constants.ts"
     return dict(re.findall(r"(\w+): '([a-z_]+)'", match.group("body")))
+
+
+def _parse_agent_limits(source: str) -> dict[str, int]:
+    match = re.search(
+        r"export const AGENT_LIMITS = \{(?P<body>.*?)\} as const",
+        source,
+        re.DOTALL,
+    )
+    assert match, "AGENT_LIMITS object not found in constants.ts"
+    return {k: int(v) for k, v in re.findall(r"(\w+): (\d+)", match.group("body"))}
+
+
+def test_frontend_agent_limits_match_backend_schema():
+    """The wizard validates each step client-side against these numbers.
+
+    A limit that drifts below the backend's is a field the user cannot fill; one
+    that drifts above turns a caught mistake into a 422 several steps later.
+    """
+    limits = _parse_agent_limits(_read_frontend_file("constants.ts"))
+    fields = AgentConfigCreate.model_fields
+    expected = {
+        "name": _max_length(fields["name"]),
+        "domain": _max_length(fields["domain"]),
+        "systemPrompt": _max_length(fields["system_prompt"]),
+        "systemPromptMin": _min_length(fields["system_prompt"]),
+        "description": _max_length(fields["description"]),
+        "routingHint": _max_length(fields["routing_hint"]),
+        "outputFormat": _max_length(fields["output_format"]),
+    }
+    assert limits == expected, (
+        f"AGENT_LIMITS mismatch: frontend={limits}, backend={expected}"
+    )
+
+
+def _constraint(field, name: str) -> int | None:  # noqa: ANN001 - pydantic FieldInfo
+    for meta in field.metadata:
+        value = getattr(meta, name, None)
+        if value is not None:
+            return value
+    return None
+
+
+def _max_length(field) -> int | None:  # noqa: ANN001 - pydantic FieldInfo
+    return _constraint(field, "max_length")
+
+
+def _min_length(field) -> int | None:  # noqa: ANN001 - pydantic FieldInfo
+    return _constraint(field, "min_length")
 
 
 def test_frontend_agent_domains_match_catalog_ids_and_order():

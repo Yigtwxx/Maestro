@@ -468,9 +468,25 @@ export interface CostBreakdown {
 
 // --- Agents (custom configurations) ---
 
+// 'executable' tools have a real runtime behind the subagent directive loop;
+// 'declarative' ones the model performs natively in its reasoning. Mirrors
+// backend schemas/agent.py ToolCatalogEntry.
+export type ToolKind = 'executable' | 'declarative' | 'custom_api';
+
 export interface ToolCatalogItem {
   id: string;
   label: string;
+  description: string;
+  kind: ToolKind;
+  // Which BYOK services this tool can authenticate against. Plural because
+  // community_read picks one per call. Empty means nothing to connect.
+  providers: LLMProvider[];
+  // Still useful with no key at all (repo_intel: GitHub serves anonymous reads).
+  keyless: boolean;
+  // Whether *this* user holds an active key. Always true when providers is empty.
+  connected: boolean;
+  // The operator switch. Distinct from `connected`: the remedies differ.
+  available: boolean;
 }
 
 export interface AgentConfig {
@@ -479,6 +495,10 @@ export interface AgentConfig {
   domain: string;
   system_prompt: string;
   tools: string[];
+  description: string;
+  routing_hint: string;
+  output_format: string;
+  routable: boolean;
   type: string;
   created_at: string;
   updated_at: string;
@@ -521,6 +541,12 @@ export interface AgentConfigInput {
   domain: string;
   system_prompt: string;
   tools: string[];
+  description: string;
+  routing_hint: string;
+  output_format: string;
+  // Lets the orchestrator auto-route matching prompts to this agent, using
+  // routing_hint as the description it classifies against.
+  routable: boolean;
 }
 
 // --- Marketplace ---
