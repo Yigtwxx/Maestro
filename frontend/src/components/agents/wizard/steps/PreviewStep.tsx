@@ -47,6 +47,12 @@ export function PreviewStep({ draft, tools }: PreviewStepProps) {
             </span>
           )}
         </Row>
+        {draft.customApiToolIds.length > 0 && (
+          <Row label="Your own APIs">
+            {draft.customApiToolIds.length} endpoint
+            {draft.customApiToolIds.length === 1 ? '' : 's'} attached.
+          </Row>
+        )}
         <Row label="Routing">
           {draft.routable ? (
             <>

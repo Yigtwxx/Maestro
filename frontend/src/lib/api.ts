@@ -18,6 +18,9 @@ import type {
   AdminUserRow,
   AgentConfig,
   AgentConfigInput,
+  CustomApiTool,
+  CustomApiToolInput,
+  CustomApiToolTestResult,
   AgentList,
   ApiKeyPublic,
   CardInput,
@@ -613,6 +616,39 @@ export const api = {
 
   deleteAgent(id: string) {
     return request<void>(`/api/v1/agents/${id}`, { method: 'DELETE' });
+  },
+
+  // --- Custom API tools (user-registered HTTP endpoints) ---
+
+  listCustomApiTools() {
+    return request<CustomApiTool[]>('/api/v1/custom-api-tools');
+  },
+
+  createCustomApiTool(input: CustomApiToolInput) {
+    return request<CustomApiTool>('/api/v1/custom-api-tools', {
+      method: 'POST',
+      body: input,
+    });
+  },
+
+  // Partial by design: omitting `secret` leaves the stored credential in place,
+  // so renaming a tool cannot silently break a working call.
+  updateCustomApiTool(id: string, input: Partial<CustomApiToolInput>) {
+    return request<CustomApiTool>(`/api/v1/custom-api-tools/${id}`, {
+      method: 'PATCH',
+      body: input,
+    });
+  },
+
+  deleteCustomApiTool(id: string) {
+    return request<void>(`/api/v1/custom-api-tools/${id}`, { method: 'DELETE' });
+  },
+
+  testCustomApiTool(id: string, args: Record<string, string>) {
+    return request<CustomApiToolTestResult>(
+      `/api/v1/custom-api-tools/${id}/test`,
+      { method: 'POST', body: { args } },
+    );
   },
 
   // --- Marketplace ---

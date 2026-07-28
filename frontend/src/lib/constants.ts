@@ -220,6 +220,10 @@ export const AGENT_LIMITS = {
   description: 280,
   routingHint: 280,
   outputFormat: 2000,
+  // Mirrors backend CUSTOM_API_TOOLS_PER_AGENT_MAX. Each attached endpoint adds
+  // a schema and a usage rule to the subagent's system prompt, which is what the
+  // cap is protecting.
+  customApiToolsPerAgent: 5,
 } as const;
 
 // Agent tools backed by a BYOK service key, and which providers each can use.

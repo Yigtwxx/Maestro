@@ -5,6 +5,8 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { cn } from '@/lib/cn';
 import { toolWarning } from '@/lib/agent-wizard';
 import { ConnectedKeysPanel } from '@/components/agents/wizard/ConnectedKeysPanel';
+import { CustomApiToolList } from '@/components/agents/wizard/CustomApiToolList';
+import { AGENT_LIMITS } from '@/lib/constants';
 import type { AgentDraft } from '@/lib/agent-wizard';
 import type { ToolCatalogItem } from '@/types';
 
@@ -98,7 +100,13 @@ export function CapabilitiesStep({
 
       <ConnectedKeysPanel selected={selectedTools} />
 
-      {draft.tools.length === 0 && (
+      <CustomApiToolList
+        selected={draft.customApiToolIds}
+        onChange={(customApiToolIds) => onChange({ customApiToolIds })}
+        max={AGENT_LIMITS.customApiToolsPerAgent}
+      />
+
+      {draft.tools.length === 0 && draft.customApiToolIds.length === 0 && (
         <p className="text-xs text-muted/80">
           An agent with no tools still works — it answers from the model&apos;s own
           knowledge. Add tools when it needs facts it cannot already have.
