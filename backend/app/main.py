@@ -61,7 +61,7 @@ _is_production = settings.environment == "production"
 
 app = FastAPI(
     title="Maestro Platform API",
-    version="0.1.1",
+    version="0.1.2",
     description="AI agent orchestration platform (BYOK).",
     lifespan=lifespan,
     # The frontend owns /docs as a marketing page, and a deployed instance has no

@@ -140,7 +140,7 @@ services:
 
   # Runs `alembic upgrade head` and exits; the API waits for it to succeed.
   migrate:
-    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.1}
+    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.2}
     restart: "no"
     logging: *trial-logging
     command: ["alembic", "upgrade", "head"]
@@ -174,7 +174,7 @@ services:
         condition: service_healthy
 
   backend:
-    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.1}
+    image: ghcr.io/yigtwxx/maestro-backend:${MAESTRO_TAG:-0.1.2}
     restart: unless-stopped
     logging: *trial-logging
     environment: *backend-env
@@ -193,7 +193,7 @@ services:
         condition: service_completed_successfully
 
   frontend:
-    image: ghcr.io/yigtwxx/maestro-frontend:${MAESTRO_TAG:-0.1.1}
+    image: ghcr.io/yigtwxx/maestro-frontend:${MAESTRO_TAG:-0.1.2}
     restart: unless-stopped
     logging: *trial-logging
     environment:
