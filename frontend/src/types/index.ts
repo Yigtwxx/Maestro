@@ -499,6 +499,7 @@ export interface AgentConfig {
   routing_hint: string;
   output_format: string;
   routable: boolean;
+  custom_api_tool_ids: string[];
   type: string;
   created_at: string;
   updated_at: string;
@@ -547,6 +548,70 @@ export interface AgentConfigInput {
   // Lets the orchestrator auto-route matching prompts to this agent, using
   // routing_hint as the description it classifies against.
   routable: boolean;
+  // Ids of the user's own registered endpoints. Deliberately separate from
+  // `tools`: those are catalog ids shared by everyone, these are per-user
+  // records, and the backend rejects one appearing in the other's list.
+  custom_api_tool_ids: string[];
+}
+
+// --- Custom API tools (user-registered HTTP endpoints) ---
+
+export type CustomApiAuthMode = 'none' | 'bearer' | 'header' | 'query';
+export type CustomApiMethod = 'GET' | 'POST';
+export type CustomApiParameterType = 'string' | 'integer' | 'number' | 'boolean';
+
+export interface CustomApiParameter {
+  name: string;
+  type: CustomApiParameterType;
+  description: string;
+  required: boolean;
+  enum?: string[];
+}
+
+export interface CustomApiTool {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  method: CustomApiMethod;
+  base_url: string;
+  path_template: string;
+  query_template: Record<string, string>;
+  headers: Record<string, string>;
+  auth_mode: CustomApiAuthMode;
+  auth_name: string;
+  // Masked tail only — the stored credential is never returned.
+  secret_hint?: string;
+  parameters: CustomApiParameter[];
+  response_json_path: string;
+  response_max_chars: number;
+  timeout_seconds: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CustomApiToolInput {
+  slug: string;
+  name: string;
+  description: string;
+  method: CustomApiMethod;
+  base_url: string;
+  path_template: string;
+  auth_mode: CustomApiAuthMode;
+  auth_name: string;
+  // Write-only. Omit on update to leave the stored credential untouched.
+  secret?: string;
+  parameters: CustomApiParameter[];
+  enabled: boolean;
+}
+
+export interface CustomApiToolTestResult {
+  ok: boolean;
+  status: number;
+  duration_ms: number;
+  preview: string;
+  error?: string;
 }
 
 // --- Marketplace ---

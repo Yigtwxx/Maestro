@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from app.agents.registry import DOMAIN_CATALOG
-from app.core.constants import CONNECTED_TOOL_IDS
+from app.core.constants import CONNECTED_TOOL_IDS, CUSTOM_API_TOOLS_PER_AGENT_MAX
 from app.schemas.agent import AgentConfigCreate
 
 _FRONTEND_LIB = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib"
@@ -89,6 +89,9 @@ def test_frontend_agent_limits_match_backend_schema():
         "description": _max_length(fields["description"]),
         "routingHint": _max_length(fields["routing_hint"]),
         "outputFormat": _max_length(fields["output_format"]),
+        # Not a string length: the cap on how many registered endpoints one
+        # agent may attach, which the wizard enforces before the round-trip.
+        "customApiToolsPerAgent": CUSTOM_API_TOOLS_PER_AGENT_MAX,
     }
     assert limits == expected, (
         f"AGENT_LIMITS mismatch: frontend={limits}, backend={expected}"

@@ -173,6 +173,7 @@ describe('draftToInput', () => {
       domain: 'opensource',
       system_prompt: 'Watch it.',
       tools: ['repo_intel'],
+      custom_api_tool_ids: [],
       description: 'Tracks releases.',
       output_format: '',
       routable: false,
@@ -208,6 +209,7 @@ describe('draftFromAgent', () => {
       routing_hint: 'Release questions',
       output_format: 'A bullet list.',
       routable: true,
+      custom_api_tool_ids: ['endpoint-1'],
       type: 'custom',
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
@@ -217,11 +219,26 @@ describe('draftFromAgent', () => {
       domain: 'opensource',
       system_prompt: 'Watch it.',
       tools: ['repo_intel'],
+      custom_api_tool_ids: ['endpoint-1'],
       description: 'Tracks releases.',
       output_format: 'A bullet list.',
       routable: true,
       routing_hint: 'Release questions',
     });
+  });
+});
+
+describe('draftToInput — custom API endpoints', () => {
+  it('sends endpoint ids in their own field, never mixed into tools', () => {
+    const input = draftToInput(
+      draft({ tools: ['web_search'], customApiToolIds: ['endpoint-1'] }),
+    );
+    expect(input.tools).toEqual(['web_search']);
+    expect(input.custom_api_tool_ids).toEqual(['endpoint-1']);
+  });
+
+  it('defaults to no endpoints', () => {
+    expect(draftToInput(draft()).custom_api_tool_ids).toEqual([]);
   });
 });
 
