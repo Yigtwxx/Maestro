@@ -181,6 +181,7 @@ async def ensure_indexes() -> None:
     items = MongoCollection.MARKETPLACE_ITEMS.value
     reports = MongoCollection.MODERATION_REPORTS.value
     actions = MongoCollection.MODERATION_ACTIONS.value
+    custom_api_tools = MongoCollection.CUSTOM_API_TOOLS.value
     try:
         db = get_mongo_db()
     except Exception:  # noqa: BLE001 - a bad Mongo URL must not block startup
@@ -212,6 +213,8 @@ async def ensure_indexes() -> None:
         (reports, [("target_type", ASCENDING), ("target_id", ASCENDING)]),
         # Backs the audit trail view: most recent moderator actions first.
         (actions, [("created_at", DESCENDING)]),
+        # Backs the custom API tool list and the per-run load at the engine edge.
+        (custom_api_tools, [("user_id", ASCENDING), ("created_at", DESCENDING)]),
     ):
         try:
             await db[collection].create_index(keys)
@@ -230,6 +233,21 @@ async def ensure_indexes() -> None:
     except Exception:  # noqa: BLE001 - a missing index only costs the backstop
         logger.warning(
             "Failed to create the unique review index on %s", reviews, exc_info=True
+        )
+
+    # Same pattern: the backstop for "one slug per user". A slug is what the
+    # model names in a directive, so a duplicate would make one of the two
+    # endpoints unreachable. custom_api_service checks explicitly before writing,
+    # because this build is allowed to fail.
+    try:
+        await db[custom_api_tools].create_index(
+            [("user_id", ASCENDING), ("slug", ASCENDING)], unique=True
+        )
+    except Exception:  # noqa: BLE001 - a missing index only costs the backstop
+        logger.warning(
+            "Failed to create the unique slug index on %s",
+            custom_api_tools,
+            exc_info=True,
         )
 
     # Kept separate: retention must still be attempted if an index above failed.

@@ -18,10 +18,17 @@ which is the richest prompt-injection surface in the product. One hostile
 comment must not blank out 49 legitimate ones, and ``web_search_service`` already
 established the drop convention for list-shaped results.
 
-None of these tools takes a model-supplied host. Every base URL is a constant in
-``core.constants``, so there is no SSRF surface and ``url_guard`` deliberately
-does not appear here. Values that reach a URL *path* (a repo slug, a channel id)
-are pattern-validated by their own service before interpolation.
+None of the *connected* tools takes a model-supplied host. Every base URL is a
+constant in ``core.constants``, so they have no SSRF surface and ``url_guard``
+deliberately does not appear here. Values that reach a URL *path* (a repo slug,
+a channel id) are pattern-validated by their own service before interpolation.
+
+``custom_api_service`` is the one caller that breaks that assumption: its host
+comes from a record the *user* wrote. It therefore does not inherit safety from
+this module — it validates every URL through ``url_guard`` at registration and
+again at call time, passes ``max_bytes`` because an unknown endpoint cannot be
+trusted to return something bounded, and never passes ``follow_redirect_host``.
+Do not read the paragraph above as covering it.
 """
 
 from __future__ import annotations
@@ -67,6 +74,10 @@ class ApiResult:
     data: Any | None = None
     status: int = 0
     rate_limited: bool = False
+    # Set when ``max_bytes`` aborted the read. Distinguishes "the endpoint sent
+    # more than we will hold" from "the endpoint sent nothing usable", which are
+    # different things to tell the model.
+    oversized: bool = False
 
 
 # Module-global so a single client is reused across calls (connection pooling)
@@ -132,6 +143,7 @@ async def request_api(
     timeout: float,
     log_target: str | None = None,
     follow_redirect_host: str | None = None,
+    max_bytes: int | None = None,
 ) -> ApiResult:
     """Call ``url`` and report both the parsed JSON and how the call ended.
 
@@ -145,8 +157,17 @@ async def request_api(
     without this. A hop anywhere else is refused *before* it is requested, which
     is what stops a redirect from carrying ``headers`` — the bearer token — to
     another origin.
+
+    ``max_bytes`` streams the response and abandons it once the cap is passed,
+    reporting ``oversized``. ``None`` (the default) reads the body whole, which
+    is what the four constant-host providers want — they are trusted to return
+    something bounded. A user-registered endpoint is not, so it sets the cap.
     """
     target = log_target or _safe_target(url)
+    if max_bytes is not None:
+        return await _send_capped(
+            method, url, headers, params, json_body, timeout, target, max_bytes
+        )
     response = await _send(method, url, headers, params, json_body, timeout, target)
     if response is None:
         return ApiResult()
@@ -201,6 +222,54 @@ async def _send(
     except Exception:  # noqa: BLE001 - httpx raises assorted types; best-effort
         logger.warning("Connected API request failed: %s", target)
         return None
+
+
+async def _send_capped(
+    method: str,
+    url: str,
+    headers: dict[str, str] | None,
+    params: dict[str, Any] | None,
+    json_body: Any | None,
+    timeout: float,
+    target: str,
+    max_bytes: int,
+) -> ApiResult:
+    """One HTTP call whose body is abandoned past ``max_bytes``.
+
+    Streamed rather than read-then-measured: an endpoint answering with a
+    gigabyte would otherwise be fully buffered before anyone could object, which
+    is the failure mode the cap exists to prevent. Never raises, like
+    :func:`_send`.
+    """
+    try:
+        client = get_client()
+        request = client.build_request(
+            method, url, headers=headers, params=params, json=json_body, timeout=timeout
+        )
+        response = await client.send(request, stream=True)
+        try:
+            if response.status_code >= 400:
+                logger.warning("API returned %s: %s", response.status_code, target)
+                return ApiResult(
+                    status=response.status_code, rate_limited=_is_rate_limited(response)
+                )
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > max_bytes:
+                    logger.warning("API response exceeded the size cap: %s", target)
+                    return ApiResult(status=response.status_code, oversized=True)
+        finally:
+            await response.aclose()
+    except Exception:  # noqa: BLE001 - httpx raises assorted types; best-effort
+        logger.warning("API request failed: %s", target)
+        return ApiResult()
+
+    try:
+        return ApiResult(data=json.loads(body), status=response.status_code)
+    except Exception:  # noqa: BLE001 - a non-JSON body is the endpoint's choice
+        logger.warning("API returned non-JSON: %s", target)
+        return ApiResult(status=response.status_code)
 
 
 def _is_rate_limited(response: httpx.Response) -> bool:

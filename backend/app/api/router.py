@@ -11,6 +11,7 @@ from app.api.v1 import (
     api_keys,
     auth,
     billing,
+    custom_api_tools,
     dashboard,
     documents,
     marketplace,
@@ -30,6 +31,7 @@ api_router.include_router(billing.router, prefix=API_V1_PREFIX)
 api_router.include_router(dashboard.router, prefix=API_V1_PREFIX)
 api_router.include_router(marketplace.router, prefix=API_V1_PREFIX)
 api_router.include_router(agents.router, prefix=API_V1_PREFIX)
+api_router.include_router(custom_api_tools.router, prefix=API_V1_PREFIX)
 api_router.include_router(documents.router, prefix=API_V1_PREFIX)
 api_router.include_router(admin.router, prefix=API_V1_PREFIX)
 

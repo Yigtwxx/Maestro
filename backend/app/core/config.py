@@ -272,6 +272,22 @@ class Settings(BaseSettings):
     places_intel_max_results: int = 20
     places_intel_max_uses_per_subtask: int = 3
 
+    # --- Custom API tools (user-registered HTTP endpoints) ---
+    # Unlike the connected tools above, nothing here is configured per provider:
+    # the endpoint, the credential and the parameter schema are all the user's,
+    # stored under Settings > API Tools. This switch is the whole-feature
+    # rollback — off, every custom_api__* action is dropped from the enabled set
+    # and the executor refuses a second time.
+    #
+    # Defaults to true, unlike code_execution: the blast radius here is the
+    # network, not the host. It is still the only tool that takes a user-supplied
+    # hostname, so every call passes url_guard at request time as well as at
+    # registration, and redirects are never followed. Operators who cannot accept
+    # outbound requests to arbitrary public hosts should set this to false.
+    custom_api_tools_enabled: bool = True
+    custom_api_timeout_seconds: int = 15
+    custom_api_max_uses_per_subtask: int = 3
+
     # --- Code execution tool (Docker sandbox; degrades gracefully if absent) ---
     # Off by default, and deliberately so: this is the one tool whose blast
     # radius is the *host*. Running it means the backend can reach a Docker

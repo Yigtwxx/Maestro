@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import os
+from types import SimpleNamespace
 
 # Must be set before any `app.*` import (settings are cached at import time).
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-that-is-long-enough-32b")
@@ -31,6 +32,7 @@ from app.services import (  # noqa: E402
     code_execution_service,
     community_read_service,
     connected_common,
+    custom_api_service,
     data_fetch_service,
     email_service,
     places_intel_service,
@@ -240,3 +242,103 @@ def sent_emails(monkeypatch):
     provider = RecordingEmailProvider()
     monkeypatch.setattr(email_service, "get_email_provider", lambda: provider)
     return provider.messages
+
+
+# --- In-memory Mongo collection (custom API tools) --------------------------
+
+
+def _mongo_matches(doc: dict, criteria: dict) -> bool:
+    """The subset of Motor's query language the custom-API paths use."""
+    for key, value in criteria.items():
+        actual = doc.get(key)
+        if isinstance(value, dict):
+            for operator, operand in value.items():
+                if operator == "$in":
+                    if actual not in operand:
+                        return False
+                else:  # pragma: no cover - unmodelled operator
+                    raise NotImplementedError(operator)
+        elif actual != value:
+            return False
+    return True
+
+
+class FakeMongoCursor:
+    def __init__(self, docs: list[dict]) -> None:
+        self._docs = docs
+
+    def sort(self, field: str, direction: int) -> FakeMongoCursor:
+        self._docs.sort(key=lambda d: d[field], reverse=direction < 0)
+        return self
+
+    def limit(self, count: int) -> FakeMongoCursor:
+        self._docs = self._docs[:count]
+        return self
+
+    async def __aiter__(self):
+        for doc in self._docs:
+            yield doc
+
+
+class FakeMongoCollection:
+    """The slice of Motor the custom-API service uses, projections included.
+
+    Projections are honoured for real, which is the point: the service relies on
+    them to keep ``encrypted_secret`` out of every response, and a fake that
+    ignored them would let that regression pass.
+    """
+
+    def __init__(self, docs: list[dict] | None = None) -> None:
+        self.docs: list[dict] = docs if docs is not None else []
+
+    def _project(self, doc: dict, projection: dict | None) -> dict:
+        if not projection:
+            return dict(doc)
+        included = {k for k, v in projection.items() if v == 1}
+        excluded = {k for k, v in projection.items() if v == 0}
+        if included:
+            return {k: v for k, v in doc.items() if k in included}
+        return {k: v for k, v in doc.items() if k not in excluded}
+
+    async def find_one(self, criteria: dict, projection: dict | None = None):
+        for doc in self.docs:
+            if _mongo_matches(doc, criteria):
+                return self._project(doc, projection)
+        return None
+
+    def find(self, criteria: dict, projection: dict | None = None) -> FakeMongoCursor:
+        return FakeMongoCursor(
+            [
+                self._project(d, projection)
+                for d in self.docs
+                if _mongo_matches(d, criteria)
+            ]
+        )
+
+    async def count_documents(self, criteria: dict) -> int:
+        return sum(1 for doc in self.docs if _mongo_matches(doc, criteria))
+
+    async def insert_one(self, doc: dict) -> None:
+        self.docs.append(dict(doc))
+
+    async def update_one(self, criteria: dict, update: dict):
+        for doc in self.docs:
+            if _mongo_matches(doc, criteria):
+                doc.update(update.get("$set", {}))
+                return SimpleNamespace(matched_count=1)
+        return SimpleNamespace(matched_count=0)
+
+    async def delete_one(self, criteria: dict):
+        for index, doc in enumerate(self.docs):
+            if _mongo_matches(doc, criteria):
+                del self.docs[index]
+                return SimpleNamespace(deleted_count=1)
+        return SimpleNamespace(deleted_count=0)
+
+
+@pytest.fixture
+def custom_api_db(monkeypatch) -> FakeMongoCollection:
+    """Point custom_api_service at an in-memory collection."""
+    collection = FakeMongoCollection()
+    monkeypatch.setattr(custom_api_service, "_collection", lambda: collection)
+    return collection

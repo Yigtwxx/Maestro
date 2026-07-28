@@ -278,7 +278,7 @@ requests to arbitrary hosts — which is a second reason `DATA_FETCH_RENDER_ENAB
 defaults to `false`. Fetched content is delimited and carries
 `UNTRUSTED_CONTENT_NOTICE`, and is injection-scanned before it is shown to a model.
 
-The connected-API tools have **no SSRF surface** and deliberately do not use `url_guard`:
+The **connected**-API tools have **no SSRF surface** and deliberately do not use `url_guard`:
 every host is a constant in `constants.py`, never model-supplied. What they do validate is
 any value that reaches a URL *path* — a repo slug and a channel id are pattern-matched
 before a request can be built. Their results are the richest prompt-injection surface in
@@ -292,8 +292,28 @@ per call via `request_api(follow_redirect_host=...)`: GitHub answers a renamed r
 with 301, so refusing to follow one turns every moved project into a missing one. It is
 **one** hop, to **one** hard-coded host, and a `Location` pointing anywhere else is
 refused before the request is built — which is also what keeps the `Authorization` header
-from ever reaching another origin. Widening this to a general "follow redirects" flag
+from ever reaching another origin. `custom_api` never opts in: a 3xx from a user endpoint
+is reported as a failure, because there is no hard-coded host to bound the hop to.
+Widening this to a general "follow redirects" flag
 would reintroduce the SSRF surface the paragraph above says these tools do not have.
+
+**Custom API tools (`custom_api__{slug}`).** The one exception to everything above: a user
+registers their own endpoint under Settings > API Tools, so the *host is user-supplied* and
+none of the "it's a constant" reasoning applies. Safety comes from `url_guard` instead, run
+**twice** — at registration (`schemas/custom_api_tool` for the shape, the route for the DNS
+resolution) and again inside `custom_api_service.call`, because a record outlives its
+validation and the DNS for a host the user owns is theirs to change. Path parameters are
+percent-encoded with an empty safe set (`urljoin` is deliberately not used — an
+absolute-looking value would replace the base), query values go through httpx `params=`,
+static headers cannot be `Authorization`/`Cookie`/`Host`, responses are byte-capped while
+streaming, and the tool's own `name`/`description` pass `prompt_guard` at write time
+because they are interpolated into the subagent's system prompt. The stored credential is
+AES-256-GCM in Mongo — the first ciphertext in that datastore — kept out of every response
+by both a query projection and an explicit `CustomApiToolPublic` field list. The residual
+risk is DNS rebinding, which `url_guard` already documents as unclosed. A per-user action
+id never enters `TOOL_CATALOG`/`TOOL_IDS`: those are process-wide constants that
+`agent_service._validate_tools`, the marketplace publish filter and the frontend parity
+tests all key off.
 
 **General.** JWT on every non-public endpoint, including WebSockets. Rate limiting on
 every route. Pydantic validation on every input. In the single-origin production topology
@@ -460,6 +480,11 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
   outside the sandbox. The daemon probe in `code_execution_service` is an availability
   check, not a security boundary — it must never be the only gate, which is exactly why the
   default is off rather than "on, but harmless without Docker".
+- `CUSTOM_API_TOOLS_ENABLED` — user-registered HTTP endpoints exposed as agent tools.
+  Defaults to `true`, unlike `CODE_EXECUTION_ENABLED`, because the blast radius is the
+  network rather than the host — but it is the only tool that takes a user-supplied
+  hostname, so read the `custom_api` paragraph in §8 before leaving it on. Off removes
+  every `custom_api__*` action from the enabled set and the executor refuses a second time.
 - `DOCUMENT_SEARCH_ENABLED` / `MEMORY_RECALL_ENABLED` — the RAG tools over the user's own
   data (uploads and conversation memory). Keyless and per-user scoped, so unlike the
   connected tools there is nothing to configure beyond the switch; setting one to `false`
