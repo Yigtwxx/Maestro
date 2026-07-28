@@ -121,6 +121,12 @@ class _CustomApiToolBase(BaseModel):
                     )
                 if not name.isascii() or not name.strip() or "\n" in name:
                     raise ValueError(f"header name {name!r} is not a valid token.")
+                # Values too, not just names: a CR/LF here is header injection,
+                # and left to httpx it surfaces at call time as a generic
+                # "could not be completed" with nothing pointing at the cause.
+                value = headers[name]
+                if not value.isascii() or "\n" in value or "\r" in value:
+                    raise ValueError(f"header {name!r} has an invalid value.")
 
         # Every placeholder must be a declared parameter. Without this the model
         # could be handed a template it can never satisfy, and a stray

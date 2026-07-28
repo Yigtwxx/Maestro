@@ -33,6 +33,17 @@ def _no_ssrf_guard(monkeypatch):
     monkeypatch.setattr(settings, "llm_ssrf_guard_enabled", False)
 
 
+@pytest.fixture(autouse=True)
+def _custom_api_tools_on(monkeypatch):
+    """The feature ships off (CUSTOM_API_TOOLS_ENABLED=false, see config.py).
+
+    These tests exercise it, so they opt in explicitly — which also keeps the
+    one test that asserts the *disabled* behaviour honest, since it has to turn
+    the switch back off itself.
+    """
+    monkeypatch.setattr(settings, "custom_api_tools_enabled", True)
+
+
 def _tool(**overrides) -> CustomApiTool:
     base = {
         "id": "tool-1",
@@ -366,3 +377,25 @@ def test_rule_line_never_leaks_the_endpoint_or_the_secret() -> None:
     line = custom_api_service.build_rule_line(tool, budget=3)
     assert _SECRET not in line
     assert "api.example.com" not in line
+
+
+async def test_response_max_chars_is_honoured_on_a_list_response(api) -> None:  # noqa: ANN001
+    """The per-item cap alone lets MAX_ITEMS x ITEM_MAX_CHARS through.
+
+    A tool configured with a small response_max_chars would otherwise have that
+    setting silently do nothing on the shape most APIs actually return.
+    """
+    api([{"text": "x" * 200} for _ in range(CUSTOM_API_MAX_ITEMS)])
+    tool = _tool(response_max_chars=400)
+    block = await custom_api_service.call(tool, {"customer_id": "42"})
+
+    body = block.splitlines()[2]
+    assert len(body) <= 400, f"rendered {len(body)} chars against a 400 cap"
+    assert json.loads(body), "the cap emptied the list entirely"
+
+
+async def test_response_max_chars_still_allows_a_full_small_list(api) -> None:  # noqa: ANN001
+    api([{"n": n} for n in range(3)])
+    tool = _tool(response_max_chars=8000)
+    block = await custom_api_service.call(tool, {"customer_id": "42"})
+    assert len(json.loads(block.splitlines()[2])) == 3
