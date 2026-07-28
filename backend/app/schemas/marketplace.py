@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.constants import (
     REPORT_NOTE_MAX_LEN,
@@ -21,7 +21,17 @@ from app.core.constants import (
 
 
 class MarketplacePublish(BaseModel):
-    """Payload to publish an agent team to the marketplace."""
+    """Payload to publish an agent team to the marketplace.
+
+    ``extra="forbid"`` is load-bearing, not tidiness: a published item must not
+    be able to carry ``custom_api_tool_ids``. Those name endpoints (and
+    encrypted credentials) belonging to the publisher's account, and the field's
+    absence here is the first of three layers that keep them from travelling to
+    an installer. Silently ignoring the field would leave the invariant true but
+    invisible; a 422 says so out loud.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1, max_length=80)
     description: str = Field(min_length=1, max_length=500)

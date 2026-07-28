@@ -9,10 +9,11 @@ domain may use at runtime.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
+from app.agents.prompts import TOOL_RULE_LINES
 from app.agents.registry import DomainInfo, get_domain_info
 from app.core.config import settings
 from app.core.constants import (
@@ -24,6 +25,9 @@ from app.core.constants import (
     CONNECTED_TOOL_IDS,
     CONNECTED_TOOL_PROVIDERS,
     CONNECTED_WINDOWS,
+    CUSTOM_API_ACTION_PREFIX,
+    CUSTOM_API_ARG_MAX_CHARS,
+    CUSTOM_API_MAX_PARAMETERS,
     DATA_FETCH_ACTION,
     DATA_FETCH_SELECTOR_MAX_CHARS,
     DOCUMENT_SEARCH_ACTION,
@@ -56,6 +60,7 @@ from app.core.constants import (
 from app.services import (
     code_execution_service,
     community_read_service,
+    custom_api_service,
     data_fetch_service,
     memory_service,
     places_intel_service,
@@ -63,6 +68,7 @@ from app.services import (
     social_search_service,
     web_search_service,
 )
+from app.services.custom_api_service import CustomApiTool
 from app.services.service_key_service import ServiceCredentials
 
 from .base import extract_json, truncate_text
@@ -115,6 +121,21 @@ class ToolSpec:
     # which deliberately get no lane. A callable rather than a constant because
     # community_read's provider is chosen per call by its ``platform`` argument.
     provider_of: Callable[[ToolDirective], str | None] | None = None
+    # Per-run overrides for the three module-level lookup tables below
+    # (``_TOOL_PARAMETERS``, ``TOOL_DESCRIPTIONS``, ``prompts.TOOL_RULE_LINES``).
+    # A tool that exists only for one user — a registered HTTP endpoint — carries
+    # its schema and prompt text here instead. Those tables are process-wide, so
+    # writing a user's endpoint into them would leak its shape to every other
+    # user's run in a multi-worker server.
+    parameters: dict | None = None
+    description: str | None = None
+    # A *finished* prompt line teaching the JSON directive protocol — already
+    # carrying its budget, unlike the ``{budget}``-formattable templates in
+    # ``TOOL_RULE_LINES``. Deliberately not a template: this text is built from
+    # a user's tool name and parameter descriptions, and running ``str.format``
+    # over attacker-influenced text is an attribute-traversal surface
+    # (``{0.__class__}``), not just a KeyError risk.
+    rule: str | None = None
 
 
 async def _run_web_search(directive: ToolDirective) -> str:
@@ -356,23 +377,70 @@ def make_connected_tool_specs(credentials: ServiceCredentials) -> dict[str, Tool
     }
 
 
+def make_custom_api_tool_specs(
+    tools: Sequence[CustomApiTool], budget: int
+) -> dict[str, ToolSpec]:
+    """Build one spec per registered endpoint this run may call.
+
+    Takes already-loaded, already-decrypted tools rather than a ``user_id``,
+    mirroring ``make_connected_tool_specs``: decryption stays at the engine edge
+    and this module never touches the database or the master key.
+    """
+    specs: dict[str, ToolSpec] = {}
+    for tool in tools:
+
+        def _run(directive: ToolDirective, _tool: CustomApiTool = tool) -> Any:
+            return custom_api_service.call(_tool, directive.args)
+
+        def _describe(
+            directive: ToolDirective, done: bool, _tool: CustomApiTool = tool
+        ) -> str:
+            # Only the registration-validated, length-capped, newline-stripped
+            # name. Never the URL, and never the model-supplied arguments.
+            return f"API call done: {_tool.name}" if done else f"Calling: {_tool.name}"
+
+        specs[tool.action] = ToolSpec(
+            action=tool.action,
+            budget_attr="max_custom_api_calls",
+            # Per tool, not shared: ``_run_subtask`` writes
+            # ``metadata[spec.metadata_key]``, so a shared key would have the
+            # last spec in dict order clobber every other tool's count.
+            metadata_key=f"custom_api_{tool.slug}_used",
+            # None: the args are model-supplied free text that would otherwise
+            # land verbatim in the Architect event payload.
+            event_arg=None,
+            executor=_run,
+            describe=_describe,
+            # No provider_of: the Architect rail is keyed to LLMProvider values
+            # and a user endpoint has none, so it draws no lane (like web_search).
+            parameters=custom_api_service.build_parameter_schema(tool),
+            description=custom_api_service.tool_description(tool),
+            rule=custom_api_service.build_rule_line(tool, budget),
+        )
+    return specs
+
+
 def specs_for(
     enabled: frozenset[str],
     credentials: ServiceCredentials,
     user_id: uuid.UUID | None = None,
+    custom_api_tools: Sequence[CustomApiTool] = (),
+    custom_api_budget: int = 3,
 ) -> dict[str, ToolSpec]:
     """Assemble one run's specs: stateless built-ins plus per-run ones.
 
-    The single place the three registries are merged, so the subagent loop never
+    The single place the four registries are merged, so the subagent loop never
     has to know that some specs are process-wide (``TOOL_SPECS``), some close
-    over BYOK credentials (connected), and some close over the user's id (RAG).
+    over BYOK credentials (connected), some close over the user's id (RAG), and
+    some close over one of the user's own registered endpoints (custom API).
     RAG specs are only built when ``user_id`` is known; without it those actions
     resolve to nothing and are dropped, so a run with no user id simply has no
     RAG tools.
     """
     connected = make_connected_tool_specs(credentials)
     rag = make_rag_tool_specs(user_id) if user_id is not None else {}
-    per_run = {**connected, **rag}
+    custom = make_custom_api_tool_specs(custom_api_tools, custom_api_budget)
+    per_run = {**connected, **rag, **custom}
     return {
         action: TOOL_SPECS[action] if action in TOOL_SPECS else per_run[action]
         for action in enabled
@@ -410,6 +478,29 @@ TOOL_SPECS: dict[str, ToolSpec] = {
 }
 
 
+def _parse_custom_api(action: str, parsed: dict) -> ToolDirective:
+    """Sanitize a custom API directive into the ``dict[str, str]`` args shape.
+
+    Deliberately does *no* schema validation: this function has no access to the
+    tool's declared parameters. Required fields, enums and types are checked in
+    ``custom_api_service.call``, which owns the schema and answers a violation
+    with a sentence the model can act on. Returning None here instead would make
+    the loop read the directive JSON as the member's final answer, which is
+    strictly worse — the same reasoning as data_fetch's malformed selector.
+
+    Args live in a nested ``"args"`` object so a parameter named ``action``
+    cannot collide with the directive's own key.
+    """
+    raw = parsed.get("args")
+    args: dict[str, str] = {}
+    if isinstance(raw, dict):
+        for key, value in list(raw.items())[:CUSTOM_API_MAX_PARAMETERS]:
+            if isinstance(value, (dict, list)):
+                continue
+            args[str(key)] = str(value)[:CUSTOM_API_ARG_MAX_CHARS]
+    return ToolDirective(action, args)
+
+
 def parse_directive(content: str, enabled: frozenset[str]) -> ToolDirective | None:
     """Parse a reply as a tool directive, or None if it is a final answer.
 
@@ -436,6 +527,9 @@ def parse_directive(content: str, enabled: frozenset[str]) -> ToolDirective | No
 
     if action not in enabled:
         return None
+
+    if action.startswith(CUSTOM_API_ACTION_PREFIX):
+        return _parse_custom_api(action, parsed)
 
     if action == VIEW_ORIGINAL_REQUEST_ACTION:
         return ToolDirective(action)
@@ -562,6 +656,7 @@ async def resolve_enabled_tools(
     *,
     credentials: ServiceCredentials | None = None,
     assigned: frozenset[str] | None = None,
+    custom_api_tools: Sequence[CustomApiTool] = (),
 ) -> frozenset[str]:
     """Executable tools this domain may use, filtered by runtime switches.
 
@@ -580,7 +675,13 @@ async def resolve_enabled_tools(
     Passing the object keeps the two tiers reading one source.
     """
     info = domain if isinstance(domain, DomainInfo) else get_domain_info(domain)
-    declared = set(info.tools) & EXECUTABLE_TOOL_IDS
+    # A custom API action is per user, so it is never in EXECUTABLE_TOOL_IDS —
+    # the universe is widened by exactly the endpoints this run actually loaded,
+    # which is also what stops one user's action name resolving for another.
+    custom_actions = {tool.action for tool in custom_api_tools}
+    declared = set(info.tools) & (EXECUTABLE_TOOL_IDS | custom_actions)
+    if not settings.custom_api_tools_enabled:
+        declared -= custom_actions
     if assigned is not None:
         declared &= assigned
     if not settings.web_search_enabled:
@@ -766,13 +867,28 @@ def tool_defs_for(specs: dict[str, ToolSpec]) -> list:
     return [
         ToolDef(
             name=action,
-            description=TOOL_DESCRIPTIONS.get(action, action),
-            parameters=_TOOL_PARAMETERS.get(
-                action, {"type": "object", "properties": {}}
-            ),
+            description=spec.description or TOOL_DESCRIPTIONS.get(action, action),
+            parameters=spec.parameters
+            or _TOOL_PARAMETERS.get(action, {"type": "object", "properties": {}}),
         )
-        for action in specs
+        for action, spec in specs.items()
     ]
+
+
+def rule_line_for(action: str, spec: ToolSpec | None, budget: int) -> str:
+    """The prompt line teaching a model to call ``action``, or "".
+
+    Reads the spec's own rule before the module table, so a per-user tool is
+    visible to the JSON directive protocol. Every lookup of ``TOOL_RULE_LINES``
+    in the agent layer must go through here: a tool missing from that table is
+    invisible to every model that is not using native function calling, which is
+    the failure ``test_subagent_connected_tools`` pins for the built-in tools.
+    """
+    if spec is not None and spec.rule:
+        # Already finished, and never passed through ``format`` — see ToolSpec.rule.
+        return spec.rule
+    template = TOOL_RULE_LINES.get(action, "")
+    return template.format(budget=budget) if template else ""
 
 
 def request_tool_def(grantable: frozenset[str]):

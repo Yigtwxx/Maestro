@@ -231,6 +231,12 @@ async def install(user_id: uuid.UUID, item_id: str) -> dict[str, Any] | None:
             system_prompt=item["system_prompt"],
             tools=item.get("tools", []),
             description=item.get("description", ""),
+            # A literal, never ``item.get(...)``. A registered endpoint belongs
+            # to the account that created it — its URL and its encrypted
+            # credential both — so installing someone's agent must never attach
+            # theirs. Written explicitly rather than left to the default so the
+            # invariant is visible at the point it matters (CLAUDE.md §8).
+            custom_api_tool_ids=[],
         ),
         source="marketplace",
         marketplace_item_id=item_id,
