@@ -76,7 +76,17 @@ export function CustomApiToolList({
   };
 
   const remove = async (tool: CustomApiTool) => {
-    await api.deleteCustomApiTool(tool.id);
+    setError(undefined);
+    try {
+      await api.deleteCustomApiTool(tool.id);
+    } catch (err) {
+      // Matches load/runTest: a rejection here would otherwise surface as an
+      // unhandled promise with nothing shown to the user.
+      setError(
+        err instanceof ApiError ? err.message : `${tool.name} could not be deleted.`,
+      );
+      return;
+    }
     onChange(selected.filter((entry) => entry !== tool.id));
     await load();
   };
