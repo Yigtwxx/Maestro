@@ -3,16 +3,24 @@
 # security-sensitive BYOK platform: low-noise, security-first reviews that
 # defer style to the repo's own linters (Ruff, ESLint/Prettier).
 #
-# Cost: nothing, and not because of a trial. CodeRabbit's Open Source plan gives
-# public repositories the Pro+ feature set with no paid subscription
-# (docs.coderabbit.ai/management/plans), which is why a review on this repo
-# reports "Plan: Pro Plus" without one being bought.
+# Plan, and why it is worth writing down. Two separate things grant Pro-tier
+# features here and they expire differently:
 #
-# That is load-bearing for the file below: `reviews.tools` (the linter/SAST
-# integrations) and `knowledge_base` are Pro-tier features. Taking this
-# repository private would drop it to the generic Free plan, where those are
-# unavailable and reviews degrade to PR summaries — silently, with no error and
-# no config change to point at.
+#   1. The organization is on a Pro Plus *trial* (no card on file; the billing
+#      page says the org drops to the Free plan when it lapses). This is what
+#      currently makes reviews report "Plan: Pro Plus".
+#   2. This repository is public, and CodeRabbit's FAQ states public repos
+#      "receive free reviews forever ... No additional setup is required".
+#
+# The billing page models (1) only, so it does not say what happens to (2)
+# afterwards. Verify against a real PR once the trial lapses rather than
+# assuming the features survive.
+#
+# That matters for the file below: `reviews.tools` (the linter/SAST
+# integrations) and `knowledge_base` are Pro-tier features. On the generic Free
+# plan they are unavailable and reviews degrade to PR summaries — silently, with
+# no error and no config change to point at. Making this repository private
+# would have the same effect, and would also forfeit (2) permanently.
 language: en-US
 early_access: false
 # Only consulted for accounts without a paid plan, and true is already the
