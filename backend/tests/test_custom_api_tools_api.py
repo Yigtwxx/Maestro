@@ -83,9 +83,8 @@ async def test_create_returns_the_tool_without_its_secret(
 async def test_stored_document_encrypts_the_secret(client, custom_api_db) -> None:  # noqa: ANN001
     """What lands in Mongo is ciphertext, never the plaintext credential."""
     headers = await _register_and_login(client, "owner@user.com")
-    assert (
-        await _create(client, headers, auth_mode="bearer", secret=_SECRET)
-    ).status_code == 201
+    created = await _create(client, headers, auth_mode="bearer", secret=_SECRET)
+    assert created.status_code == 201, created.text
 
     doc = custom_api_db.docs[0]
     assert doc["encrypted_secret"] != _SECRET
@@ -161,7 +160,8 @@ async def test_delete_removes_the_tool(client, custom_api_db) -> None:  # noqa: 
 async def test_slug_is_unique_per_user(client, custom_api_db) -> None:  # noqa: ANN001
     """A duplicate slug would make one of the two endpoints unreachable."""
     headers = await _register_and_login(client, "owner@user.com")
-    assert (await _create(client, headers)).status_code == 201
+    first = await _create(client, headers)
+    assert first.status_code == 201, first.text
     duplicate = await _create(client, headers, name="Another")
     assert duplicate.status_code == 400, duplicate.text
     assert "crm_lookup" in duplicate.json()["detail"]
@@ -170,10 +170,12 @@ async def test_slug_is_unique_per_user(client, custom_api_db) -> None:  # noqa: 
 async def test_slug_may_repeat_across_users(client, custom_api_db) -> None:  # noqa: ANN001
     """Slugs are namespaced per user; two accounts may both use 'crm_lookup'."""
     owner = await _register_and_login(client, "owner@user.com")
-    assert (await _create(client, owner)).status_code == 201
+    mine = await _create(client, owner)
+    assert mine.status_code == 201, mine.text
 
     other = await _register_and_login(client, "other@user.com")
-    assert (await _create(client, other)).status_code == 201
+    theirs = await _create(client, other)
+    assert theirs.status_code == 201, theirs.text
 
 
 async def test_registration_count_is_capped(client, custom_api_db, monkeypatch) -> None:  # noqa: ANN001
@@ -193,30 +195,28 @@ async def test_another_users_tool_is_not_found(client, custom_api_db) -> None:  
     created = (await _create(client, owner, auth_mode="bearer", secret=_SECRET)).json()
     other = await _register_and_login(client, "other@user.com")
 
+    # Each request runs outside its assert: an assert body is stripped under
+    # `python -O`, which would leave this test silently making no calls at all.
     tool_id = created["id"]
-    assert (
-        await client.get(f"/api/v1/custom-api-tools/{tool_id}", headers=other)
-    ).status_code == 404
-    assert (
-        await client.patch(
-            f"/api/v1/custom-api-tools/{tool_id}", json={"name": "x"}, headers=other
+    url = f"/api/v1/custom-api-tools/{tool_id}"
+    responses = {
+        "GET": await client.get(url, headers=other),
+        "PATCH": await client.patch(url, json={"name": "x"}, headers=other),
+        "POST test": await client.post(f"{url}/test", json={"args": {}}, headers=other),
+        "DELETE": await client.delete(url, headers=other),
+    }
+    for method, resp in responses.items():
+        assert resp.status_code == 404, (
+            f"{method} leaked another user's tool: {resp.text}"
         )
-    ).status_code == 404
-    assert (
-        await client.post(
-            f"/api/v1/custom-api-tools/{tool_id}/test", json={"args": {}}, headers=other
-        )
-    ).status_code == 404
-    assert (
-        await client.delete(f"/api/v1/custom-api-tools/{tool_id}", headers=other)
-    ).status_code == 404
     # And it is still there afterwards.
     assert len(custom_api_db.docs) == 1
 
 
 async def test_other_users_list_is_empty(client, custom_api_db) -> None:  # noqa: ANN001
     owner = await _register_and_login(client, "owner@user.com")
-    assert (await _create(client, owner)).status_code == 201
+    created = await _create(client, owner)
+    assert created.status_code == 201, created.text
 
     other = await _register_and_login(client, "other@user.com")
     resp = await client.get("/api/v1/custom-api-tools", headers=other)
@@ -224,10 +224,10 @@ async def test_other_users_list_is_empty(client, custom_api_db) -> None:  # noqa
 
 
 async def test_routes_require_authentication(client, custom_api_db) -> None:  # noqa: ANN001
-    assert (await client.get("/api/v1/custom-api-tools")).status_code == 401
-    assert (
-        await client.post("/api/v1/custom-api-tools", json=_payload())
-    ).status_code == 401
+    listed = await client.get("/api/v1/custom-api-tools")
+    created = await client.post("/api/v1/custom-api-tools", json=_payload())
+    assert listed.status_code == 401, listed.text
+    assert created.status_code == 401, created.text
 
 
 async def test_auth_mode_requires_a_secret(client, custom_api_db) -> None:  # noqa: ANN001
