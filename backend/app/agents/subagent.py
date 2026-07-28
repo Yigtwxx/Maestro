@@ -47,7 +47,6 @@ from app.agents.prompts import (
     SUBAGENT_SYSTEM,
     SUBAGENT_TOOLS_RULE,
     SUBAGENT_UPSTREAM_HEADER,
-    TOOL_RULE_LINES,
 )
 from app.agents.registry import SubagentSpec
 from app.agents.schemas import GrantDecision
@@ -119,9 +118,13 @@ def _tools_rule(
     nothing is grantable, so it is not told about a door it cannot open.
     """
     lines = [
-        TOOL_RULE_LINES[action].format(budget=_tool_budget(ctx, action, specs))
+        line
         for action in sorted(specs)
-        if action in TOOL_RULE_LINES
+        if (
+            line := tool_directives.rule_line_for(
+                action, specs[action], _tool_budget(ctx, action, specs)
+            )
+        )
     ]
     rule = ""
     if lines:
@@ -167,7 +170,11 @@ async def _handle_grant_request(
     # gates, so ``specs_for`` can always build the spec for a tool it contains.
     # user_id is threaded through so a granted RAG tool gets its user-scoped spec.
     specs[tool] = tool_directives.specs_for(
-        frozenset({tool}), ctx.service_credentials, user_id=ctx.user_id
+        frozenset({tool}),
+        ctx.service_credentials,
+        user_id=ctx.user_id,
+        custom_api_tools=ctx.custom_api_tools,
+        custom_api_budget=ctx.max_custom_api_calls,
     )[tool]
     grants.used += 1
     logger.info(
@@ -176,8 +183,9 @@ async def _handle_grant_request(
         tool,
         extra={"member_id": member.id},
     )
-    rule = TOOL_RULE_LINES.get(tool, "")
-    line = rule.format(budget=_tool_budget(ctx, tool, specs)) if rule else ""
+    line = tool_directives.rule_line_for(
+        tool, specs.get(tool), _tool_budget(ctx, tool, specs)
+    )
     return f"The Main Agent granted {tool}. You may now use it.\n{line}"
 
 
@@ -261,7 +269,10 @@ async def _run_subtask(
     # catalog entry, so resolving the string would fall back to ``general``).
     domain_source = ctx.domain_info or domain
     enabled = await tool_directives.resolve_enabled_tools(
-        domain_source, credentials=ctx.service_credentials, assigned=assigned_tools
+        domain_source,
+        credentials=ctx.service_credentials,
+        assigned=assigned_tools,
+        custom_api_tools=ctx.custom_api_tools,
     )
     # Per-run directive registry: domain tools plus the built-in original-
     # request viewer (available whenever this run carries an objective, even
@@ -269,7 +280,11 @@ async def _run_subtask(
     # built-ins with the connected-API specs, whose executors close over this
     # user's decrypted service keys.
     specs = tool_directives.specs_for(
-        enabled, ctx.service_credentials, user_id=ctx.user_id
+        enabled,
+        ctx.service_credentials,
+        user_id=ctx.user_id,
+        custom_api_tools=ctx.custom_api_tools,
+        custom_api_budget=ctx.max_custom_api_calls,
     )
     if objective.strip():
         specs[VIEW_ORIGINAL_REQUEST_ACTION] = (
@@ -283,7 +298,10 @@ async def _run_subtask(
     # the member was unassigned (it already holds the whole domain set).
     grantable = (
         await tool_directives.resolve_enabled_tools(
-            domain_source, credentials=ctx.service_credentials, assigned=None
+            domain_source,
+            credentials=ctx.service_credentials,
+            assigned=None,
+            custom_api_tools=ctx.custom_api_tools,
         )
         - enabled
     )

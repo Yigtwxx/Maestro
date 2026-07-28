@@ -28,7 +28,7 @@ from app.core.constants import (
 )
 from app.core.database import get_mongo_db
 from app.schemas.agent import AgentConfigCreate, AgentConfigUpdate, ToolCatalogEntry
-from app.services import service_key_service
+from app.services import custom_api_service, service_key_service
 from app.utils import prompt_guard
 
 
@@ -47,6 +47,28 @@ def _validate_tools(tools: list[str]) -> list[str]:
         raise AgentValidationError(f"Unknown tools: {', '.join(unknown)}")
     # De-duplicate while preserving order.
     return list(dict.fromkeys(tools))
+
+
+async def _validate_custom_api_tool_ids(
+    user_id: uuid.UUID, tool_ids: list[str]
+) -> list[str]:
+    """Keep only endpoint ids this user owns; reject the rest.
+
+    The ownership gate for attaching a registered endpoint to an agent. Refusing
+    with a 400 rather than silently dropping matters: a marketplace item or a
+    hand-written payload naming someone else's id should be told no, not quietly
+    given an agent that is missing the tool it claims to have. The runtime is
+    still scoped independently — ``custom_api_service.load_tools`` filters by
+    ``user_id`` — so this is the readable layer, not the only one.
+    """
+    if not tool_ids:
+        return []
+    deduped = list(dict.fromkeys(tool_ids))
+    owned = await custom_api_service.get_tool_ids(user_id, deduped)
+    unknown = [t for t in deduped if t not in owned]
+    if unknown:
+        raise AgentValidationError(f"Unknown API tools: {', '.join(unknown)}")
+    return deduped
 
 
 def _guard_prompt(system_prompt: str) -> None:
@@ -152,6 +174,9 @@ async def create_agent(
     """
     _guard_prompt(payload.system_prompt)
     tools = _validate_tools(payload.tools)
+    custom_api_tool_ids = await _validate_custom_api_tool_ids(
+        user_id, payload.custom_api_tool_ids
+    )
     now = datetime.now(UTC)
     document = {
         "id": str(uuid.uuid4()),
@@ -164,6 +189,7 @@ async def create_agent(
         "routing_hint": payload.routing_hint,
         "output_format": payload.output_format,
         "routable": payload.routable,
+        "custom_api_tool_ids": custom_api_tool_ids,
         "source": source,
         "marketplace_item_id": marketplace_item_id,
         "security_scan": {"version": prompt_guard.SCANNER_VERSION, "passed": True},
@@ -201,6 +227,10 @@ async def update_agent(
         changes["output_format"] = payload.output_format
     if payload.routable is not None:
         changes["routable"] = payload.routable
+    if payload.custom_api_tool_ids is not None:
+        changes["custom_api_tool_ids"] = await _validate_custom_api_tool_ids(
+            user_id, payload.custom_api_tool_ids
+        )
     if not changes:
         return await get_agent(user_id, agent_id)
 

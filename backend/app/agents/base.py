@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.agents.prompts import CURRENT_DATE_LINE
 from app.core.constants import EventType, SubagentStatus
+from app.services.custom_api_service import CustomApiTool
 from app.services.llm_service import LLMAdapter
 from app.services.service_key_service import ServiceCredentials
 
@@ -99,6 +100,14 @@ class AgentContext:
     # tools. The per-user isolation invariant (CLAUDE.md §6) rides on this value
     # reaching the executor — never a global default.
     user_id: uuid.UUID | None = None
+    # This user's registered HTTP endpoints, loaded and decrypted at the engine
+    # edge like ``service_credentials``. Empty is the normal case. The budget is
+    # shared across them rather than per endpoint, which is what it looks like:
+    # ``_tool_budget`` reads one attribute, but ``usage`` is keyed per action,
+    # so each tool independently gets this many calls while ``max_tool_calls``
+    # still bounds the total (CLAUDE.md §9.2).
+    custom_api_tools: tuple[CustomApiTool, ...] = ()
+    max_custom_api_calls: int = 3
 
     def role_adapter(self, role: str) -> LLMAdapter:
         """The adapter an agent role should use: its pooled per-role model when a

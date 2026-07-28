@@ -14,9 +14,14 @@ per-agent tools and system prompts.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from app.agents.domains import DOMAIN_CATALOG, DomainInfo, SubagentSpec
 from app.core.constants import EXECUTABLE_TOOL_IDS
+
+if TYPE_CHECKING:  # type-only: keeps this early-imported module light
+    from app.services.custom_api_service import CustomApiTool
 
 __all__ = [
     "CUSTOM_DOMAIN_PREFIX",
@@ -88,13 +93,21 @@ def _persona_block(system_prompt: str) -> str:
     )
 
 
-def to_domain_info(doc: dict) -> DomainInfo:
+def to_domain_info(
+    doc: dict, custom_api_tools: Sequence[CustomApiTool] = ()
+) -> DomainInfo:
     """Adapt a stored custom-agent document into a runnable one-member team.
 
     The custom agent inherits the built-in methodology, expertise and review
     rubric of its ``domain`` field, so it gets domain-appropriate planning and
     reviewing for free; its own system prompt becomes the member's (sandboxed)
     instructions and its tools are intersected with the executable set.
+
+    ``custom_api_tools`` are the caller's *own* registered endpoints, already
+    loaded at the engine edge. Only those whose id the document attached are
+    added, so an id belonging to another user simply never matches — the second
+    of the three layers that keep an installed marketplace agent from inheriting
+    the publisher's endpoints (CLAUDE.md §8).
     """
     base = get_domain_info(doc.get("domain", DEFAULT_DOMAIN))
     name = doc.get("name") or "Custom Agent"
@@ -108,7 +121,14 @@ def to_domain_info(doc: dict) -> DomainInfo:
         instructions=_persona_block(doc.get("system_prompt", "")),
         output_format=output_format,
     )
-    exec_tools = tuple(t for t in doc.get("tools", []) if t in EXECUTABLE_TOOL_IDS)
+    attached = set(doc.get("custom_api_tool_ids") or [])
+    exec_tools = tuple(t for t in doc.get("tools", []) if t in EXECUTABLE_TOOL_IDS) + (
+        tuple(
+            tool.action
+            for tool in sorted(custom_api_tools, key=lambda t: t.slug)
+            if tool.id in attached
+        )
+    )
     return DomainInfo(
         id=f"{CUSTOM_DOMAIN_PREFIX}{doc['id']}",
         name=name,
@@ -126,7 +146,11 @@ def to_domain_info(doc: dict) -> DomainInfo:
     )
 
 
-async def resolve_domain_info(user_id: uuid.UUID, domain_key: str) -> DomainInfo:
+async def resolve_domain_info(
+    user_id: uuid.UUID,
+    domain_key: str,
+    custom_api_tools: Sequence[CustomApiTool] = (),
+) -> DomainInfo:
     """Resolve a domain selector to a runnable ``DomainInfo``.
 
     Built-in keys come from the catalog. A ``custom:{id}`` selector loads the
@@ -149,4 +173,4 @@ async def resolve_domain_info(user_id: uuid.UUID, domain_key: str) -> DomainInfo
         raise CustomAgentUnavailable(
             "This custom agent's system prompt failed the current security scan."
         )
-    return to_domain_info(doc)
+    return to_domain_info(doc, custom_api_tools)

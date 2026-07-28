@@ -12,6 +12,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import CUSTOM_API_TOOLS_PER_AGENT_MAX
+
 
 class ToolCatalogEntry(BaseModel):
     """One declarable capability, with everything the wizard needs to explain it.
@@ -51,6 +53,13 @@ class AgentConfigCreate(BaseModel):
     routing_hint: str = Field(default="", max_length=280)
     output_format: str = Field(default="", max_length=2000)
     routable: bool = False
+    # Ids of the caller's own registered HTTP endpoints. Deliberately separate
+    # from ``tools``: those are process-wide catalog ids, these are per-user
+    # records, and mixing them would break _validate_tools, the marketplace
+    # publish filter and the frontend parity tests at once.
+    custom_api_tool_ids: list[str] = Field(
+        default_factory=list, max_length=CUSTOM_API_TOOLS_PER_AGENT_MAX
+    )
 
 
 class AgentConfigUpdate(BaseModel):
@@ -64,6 +73,9 @@ class AgentConfigUpdate(BaseModel):
     routing_hint: str | None = Field(default=None, max_length=280)
     output_format: str | None = Field(default=None, max_length=2000)
     routable: bool | None = None
+    custom_api_tool_ids: list[str] | None = Field(
+        default=None, max_length=CUSTOM_API_TOOLS_PER_AGENT_MAX
+    )
 
 
 class SystemPromptUpdate(BaseModel):
@@ -84,6 +96,7 @@ class AgentConfigPublic(BaseModel):
     routing_hint: str = ""
     output_format: str = ""
     routable: bool = False
+    custom_api_tool_ids: list[str] = Field(default_factory=list)
     source: str = "custom"
     type: str = "custom"
     created_at: datetime

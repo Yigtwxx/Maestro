@@ -12,6 +12,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.constants import (
     MARKETPLACE_COMMUNITY_AUTHOR,
@@ -203,23 +204,26 @@ async def test_publish_never_marks_an_item_featured(fake_collection) -> None:
     assert "author_id" not in item, "publish() returned the author identity"
 
 
-async def test_publish_payload_rejects_a_featured_field() -> None:
-    # Pydantic ignores unknown keys by default; assert the field never lands on
-    # the model, so a crafted request cannot smuggle `featured` through.
-    payload = MarketplacePublish.model_validate(
-        {
-            "name": "Sneaky",
-            "description": "Tries to self-feature.",
-            "domain": "finance",
-            "system_prompt": "You are helpful.",
-            "tools": [],
-            "featured": True,
-        }
-    )
+@pytest.mark.parametrize("smuggled", ["featured", "custom_api_tool_ids", "author_id"])
+async def test_publish_payload_refuses_an_unknown_field(smuggled: str) -> None:
+    """``extra="forbid"``: a crafted request is refused, not quietly trimmed.
 
-    assert not hasattr(payload, "featured"), (
-        "MarketplacePublish gained a featured field"
-    )
+    Pydantic's default would drop the key, which leaves the invariant true but
+    invisible — and silently accepting ``custom_api_tool_ids`` would look, to
+    the publisher, like their endpoints travelled with the item. A 422 says
+    otherwise out loud.
+    """
+    with pytest.raises(ValidationError):
+        MarketplacePublish.model_validate(
+            {
+                "name": "Sneaky",
+                "description": "Tries to smuggle a field.",
+                "domain": "finance",
+                "system_prompt": "You are helpful.",
+                "tools": [],
+                smuggled: True,
+            }
+        )
 
 
 async def test_public_plans_without_a_token_returns_list_prices(client) -> None:

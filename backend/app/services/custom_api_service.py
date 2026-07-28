@@ -376,6 +376,17 @@ def build_parameter_schema(tool: CustomApiTool) -> dict[str, Any]:
     return schema
 
 
+def tool_description(tool: CustomApiTool) -> str:
+    """The ``description`` a native-function-calling model sees.
+
+    Names the tool and what it is for, never its host: the endpoint is the
+    user's infrastructure detail, and putting it in a prompt only invites the
+    model to talk about it.
+    """
+    detail = f" {tool.description}" if tool.description else ""
+    return f'Call the user\'s own "{tool.name}" API.{detail}'
+
+
 def build_rule_line(tool: CustomApiTool, budget: int) -> str:
     """The prompt line teaching a non-native model to call this endpoint.
 

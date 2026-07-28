@@ -39,7 +39,6 @@ from app.agents.prompts import (
     MAIN_AGENT_TOOLS_RULE,
     MAIN_DISCOVERY_SYSTEM,
     SYNTHESIS_SYSTEM,
-    TOOL_RULE_LINES,
 )
 from app.agents.registry import SubagentSpec, get_domain_info
 from app.agents.schemas import GrantDecision, PlanAssignment, PlanResult
@@ -473,9 +472,13 @@ async def _discover(ctx: AgentContext, domain: str, prompt: str) -> list[str]:
         available, ctx.service_credentials, user_id=ctx.user_id
     )
     tool_lines = "\n".join(
-        TOOL_RULE_LINES[action].format(budget=ctx.max_discovery_calls)
+        line
         for action in sorted(specs)
-        if action in TOOL_RULE_LINES
+        if (
+            line := tool_directives.rule_line_for(
+                action, specs[action], ctx.max_discovery_calls
+            )
+        )
     )
     system = MAIN_DISCOVERY_SYSTEM.format(
         prompt=truncate_text(prompt.strip(), OBJECTIVE_MAX_CHARS),

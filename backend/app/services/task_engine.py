@@ -37,7 +37,13 @@ from app.core.constants import (
     TaskStep,
 )
 from app.schemas.task import TaskCreate
-from app.services import checkpoint_store, quota_service, task_run_store, usage_service
+from app.services import (
+    checkpoint_store,
+    custom_api_service,
+    quota_service,
+    task_run_store,
+    usage_service,
+)
 from app.services.llm_service import AdapterPool, set_retry_observer
 from app.services.service_key_service import load_service_credentials
 from app.utils import tracing
@@ -259,6 +265,9 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
     # LLM brain key. Never raises: an absent or unreadable key just means the
     # connected tools are withheld and the squad works from web_search.
     service_credentials = await load_service_credentials(rc.user_id)
+    # Same edge, same contract: loaded and decrypted once, handed down as plain
+    # values. Never raises — an unreadable credential skips that one endpoint.
+    custom_api_tools = await custom_api_service.load_tools(rc.user_id)
     ctx = AgentContext(
         adapter=pool.for_role("main"),
         adapter_pool=pool,
@@ -282,6 +291,8 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
         max_parallel_subagents=settings.subagent_max_parallel,
         max_discovery_calls=settings.main_agent_discovery_max_calls,
         service_credentials=service_credentials,
+        custom_api_tools=custom_api_tools,
+        max_custom_api_calls=settings.custom_api_max_uses_per_subtask,
         user_id=rc.user_id,
     )
 
@@ -332,7 +343,9 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
     # Resolve the effective domain agent once the domain is known. For a custom
     # (``custom:{id}``) agent this loads and sandboxes the user's config; raises
     # CustomAgentUnavailable (a normal task failure) if it is gone or now unsafe.
-    ctx.domain_info = await resolve_domain_info(rc.user_id, domain)
+    ctx.domain_info = await resolve_domain_info(
+        rc.user_id, domain, ctx.custom_api_tools
+    )
 
     # Step-boundary quota re-check (D19): cap this task's spend at the remaining
     # monthly quota (or the default budget, whichever is lower). Recomputed here
