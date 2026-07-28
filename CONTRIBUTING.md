@@ -179,6 +179,30 @@ Branch off `main`, keep one logical change per pull request, and fill in the
 [pull request template](https://github.com/Yigtwxx/Maestro/blob/main/.github/pull_request_template.md). Link the issue your PR
 closes.
 
+**Your pull request will not be squashed.** Squash merging is disabled on this repository,
+so the commits you push are the commits that land on `main`. Write them as you want them
+read: one logical change each, no `wip` or `fix typo` noise. Clean the branch up with an
+interactive rebase before you ask for review.
+
+### Sign your commits
+
+Signing is **strongly encouraged** and not yet enforced, so an unsigned pull request will
+still be reviewed. It is what lets a reader confirm the author of a commit is who the
+commit says it is — see [Commit provenance](./SECURITY.md#commit-provenance). If you have
+never set it up, SSH signing takes a minute and reuses the key format you already know:
+
+```bash
+ssh-keygen -t ed25519 -C "you@example.com (git signing)" -f ~/.ssh/id_ed25519_signing
+
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519_signing.pub
+git config --global commit.gpgsign true
+```
+
+Then add the **public** key (`~/.ssh/id_ed25519_signing.pub`) to your GitHub account under
+*Settings → SSH and GPG keys*, choosing key type **Signing key** — an authentication key
+does not verify commits. Your commits will show as *Verified*.
+
 ## Licensing of contributions
 
 Maestro is distributed under the [Sustainable Use License](https://github.com/Yigtwxx/Maestro/blob/main/LICENSE) (fair-code). By
