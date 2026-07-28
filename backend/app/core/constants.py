@@ -664,6 +664,10 @@ class MongoCollection(StrEnum):
     MODERATION_REPORTS = "moderation_reports"
     # Append-only audit trail of every moderator action (who did what to whom).
     MODERATION_ACTIONS = "moderation_actions"
+    # User-registered HTTP endpoints exposed to their own agents as tools.
+    # Carries user_id *and* an encrypted credential, so it joins the
+    # account-purge contract and must never be read without a projection.
+    CUSTOM_API_TOOLS = "custom_api_tools"
 
 
 # --- Qdrant collection names ---
@@ -697,6 +701,11 @@ RATE_LIMIT_PAYMENT = RateLimitTier("payment", 10, 60.0)
 RATE_LIMIT_EXPENSIVE = RateLimitTier("expensive", 30, 60.0)
 # Uploads pay for chunking + embedding of the whole file.
 RATE_LIMIT_UPLOAD = RateLimitTier("upload", 10, 60.0)
+# Dry-running a user-registered API tool. Tighter than `expensive` because the
+# cost lands on a third-party host the caller chose, not on our own tokens:
+# this is the one endpoint that turns an authenticated session into an outbound
+# request generator, so its ceiling is set for that rather than for convenience.
+RATE_LIMIT_OUTBOUND_PROBE = RateLimitTier("outbound_probe", 10, 60.0)
 # WebSocket *connection attempts*; an open socket costs nothing further.
 RATE_LIMIT_WEBSOCKET = RateLimitTier("websocket", 30, 60.0)
 
@@ -1083,6 +1092,53 @@ CONNECTED_TOOL_PROVIDERS: dict[str, LLMProvider] = {
 # GitHub qualifies: its REST API serves anonymous reads. The others are dropped
 # from the enabled set when their key is missing.
 KEYLESS_CONNECTED_TOOL_IDS = frozenset({REPO_INTEL_ACTION})
+
+
+# --- Custom API tools (user-registered HTTP endpoints) ---
+# Deliberately NOT in TOOL_CATALOG / TOOL_IDS: those are process-wide constants
+# that agent_service._validate_tools, the marketplace publish filter and the
+# frontend parity tests all key off. A per-user id in them would break all three.
+# A custom tool's action is built per run instead, from the owner's own records.
+#
+# Double underscore, not a colon: native function-calling tool names must match
+# ^[a-zA-Z0-9_-]{1,64} on every provider, and a colon is rejected. With the slug
+# capped at 30 characters the full action stays well inside the limit.
+CUSTOM_API_ACTION_PREFIX = "custom_api__"
+CUSTOM_API_SLUG_PATTERN = r"^[a-z][a-z0-9_]{1,30}$"
+CUSTOM_API_PARAM_PATTERN = r"^[a-z][a-z0-9_]{0,30}$"
+CUSTOM_API_RESULT_OPEN = "<custom_api_result>"
+CUSTOM_API_RESULT_CLOSE = "</custom_api_result>"
+
+# How many endpoints one account may register, and how many may be attached to
+# a single agent. The second bound matters more: every attached tool adds a
+# schema and a usage rule to the subagent's system prompt.
+CUSTOM_API_TOOLS_MAX = 20
+CUSTOM_API_TOOLS_PER_AGENT_MAX = 5
+
+CUSTOM_API_MAX_PARAMETERS = 12
+CUSTOM_API_MAX_HEADERS = 10
+CUSTOM_API_MAX_QUERY_PARAMS = 10
+CUSTOM_API_MAX_ENUM_VALUES = 20
+CUSTOM_API_ARG_MAX_CHARS = 500
+
+# Far below DATA_FETCH_MAX_BYTES (2 MB): this is structured JSON headed for a
+# prompt, not a web page. Unlike the four constant-host tools, a user endpoint
+# cannot be trusted to return something bounded.
+CUSTOM_API_MAX_BYTES = 200_000
+CUSTOM_API_MAX_ITEMS = 25
+CUSTOM_API_ITEM_MAX_CHARS = 600
+CUSTOM_API_RESULT_MAX_CHARS = 8000
+# The dry-run endpoint is an authenticated outbound-request oracle, so what it
+# echoes back is kept deliberately small.
+CUSTOM_API_PREVIEW_MAX_CHARS = 500
+
+# Header names a user may not set on their own endpoint. Authorization and
+# Cookie would smuggle a second credential past the auth_mode the record
+# declares; Host would rebind the request after url_guard validated it; the
+# content-* pair would corrupt a body httpx builds itself.
+CUSTOM_API_FORBIDDEN_HEADERS = frozenset(
+    {"authorization", "cookie", "host", "content-length", "content-encoding"}
+)
 
 
 # --- View original request (built-in subagent JSON directive) ---

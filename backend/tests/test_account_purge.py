@@ -57,6 +57,21 @@ class FakeCollection:
     async def distinct(self, field: str, criteria: dict[str, Any]) -> list[Any]:
         return sorted({doc[field] for doc in self.documents if _matches(doc, criteria)})
 
+    def find(self, criteria: dict[str, Any], projection: dict[str, int] | None = None):
+        """Honours exclusion projections, which is what the export relies on."""
+        excluded = {k for k, v in (projection or {}).items() if v == 0}
+        matched = [
+            {k: v for k, v in doc.items() if k not in excluded}
+            for doc in self.documents
+            if _matches(doc, criteria)
+        ]
+
+        async def _rows():
+            for doc in matched:
+                yield doc
+
+        return _rows()
+
     async def delete_many(self, criteria: dict[str, Any]) -> None:
         self.documents[:] = [
             doc for doc in self.documents if not _matches(doc, criteria)
@@ -152,6 +167,13 @@ def _seed_mongo() -> FakeMongo:
                 {"id": "r1", "item_id": "m2", "user_id": str(_USER_ID), "rating": 5},
                 {"id": "r2", "item_id": "m2", "user_id": str(_OTHER_ID), "rating": 3},
             ],
+            # Each row carries an encrypted credential of the user's, so this
+            # collection has to go with the account, not linger keyed to a
+            # user_id that no longer resolves.
+            MongoCollection.CUSTOM_API_TOOLS.value: [
+                {"id": "c1", "user_id": str(_USER_ID), "encrypted_secret": "cipher"},
+                {"id": "c2", "user_id": str(_OTHER_ID), "encrypted_secret": "cipher"},
+            ],
         }
     )
 
@@ -189,6 +211,7 @@ async def test_purge_clears_every_user_scoped_collection(stores):
         MongoCollection.TASK_SESSIONS,
         MongoCollection.AGENT_CONFIGURATIONS,
         MongoCollection.DOCUMENTS,
+        MongoCollection.CUSTOM_API_TOOLS,
     ):
         owners = [doc.get("user_id") for doc in mongo.documents(collection)]
         assert str(_USER_ID) not in owners, f"{collection.value} still holds the user"
@@ -248,6 +271,36 @@ async def test_purge_raises_when_a_store_is_unreachable(monkeypatch):
 
     with pytest.raises(ConnectionError):
         await user_service.purge_user_data(_USER_ID)
+
+
+# --- Export (GDPR Art.20) -----------------------------------------------------
+
+
+async def test_export_includes_api_tools_without_their_stored_secret(
+    db_session, monkeypatch
+):
+    """An export is a file the user downloads and forwards on.
+
+    The endpoint definitions belong in it; the AES-256-GCM ciphertext of the
+    credential does not. ``secret_hint`` still travels so a key is identifiable.
+    """
+    mongo = _seed_mongo()
+    mongo[MongoCollection.CUSTOM_API_TOOLS.value].documents[0]["secret_hint"] = (
+        "****9f3a"
+    )
+    monkeypatch.setattr(user_service, "get_mongo_db", lambda: mongo)
+
+    user = User(id=_USER_ID, email="exporter@user.com", hashed_password="x")
+    db_session.add(user)
+    await db_session.commit()
+
+    exported = await user_service.export_user_data(db_session, user)
+
+    tools = exported["custom_api_tools"]
+    assert [t["id"] for t in tools] == ["c1"], "only the caller's rows are exported"
+    assert "encrypted_secret" not in tools[0], tools[0]
+    assert tools[0]["secret_hint"] == "****9f3a"
+    assert "cipher" not in str(exported)
 
 
 # --- The sweep ----------------------------------------------------------------

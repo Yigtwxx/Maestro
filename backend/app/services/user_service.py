@@ -50,6 +50,8 @@ _USER_SCOPED_COLLECTIONS = (
     MongoCollection.DOCUMENTS,
     # Execution trace spans carry user_id (Backend v2 §4.5); erased wholesale.
     MongoCollection.TRACE_SPANS,
+    # Registered endpoints, each holding an encrypted credential of the user's.
+    MongoCollection.CUSTOM_API_TOOLS,
 )
 
 
@@ -122,8 +124,11 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
         await db.scalars(select(UsageRecord).where(UsageRecord.user_id == user.id))
     ).all()
 
-    async def _find(collection: MongoCollection) -> list[dict[str, Any]]:
-        cursor = mongo[collection.value].find({"user_id": str(user.id)})
+    async def _find(
+        collection: MongoCollection, exclude: tuple[str, ...] = ()
+    ) -> list[dict[str, Any]]:
+        projection = {name: 0 for name in exclude} or None
+        cursor = mongo[collection.value].find({"user_id": str(user.id)}, projection)
         return [_serialize(doc) async for doc in cursor]
 
     return {
@@ -185,6 +190,12 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
         "agents": await _find(MongoCollection.AGENT_CONFIGURATIONS),
         "documents": await _find(MongoCollection.DOCUMENTS),
         "marketplace_reviews": await _find(MongoCollection.MARKETPLACE_REVIEWS),
+        # The endpoint definitions, never the stored credential: an export is a
+        # file the user downloads and forwards, and ciphertext has no business
+        # in it. `secret_hint` still travels, so a key is identifiable.
+        "custom_api_tools": await _find(
+            MongoCollection.CUSTOM_API_TOOLS, exclude=("encrypted_secret",)
+        ),
         "conversation_memories": await memory_service.export_user_texts(
             user.id, QDRANT_CONVERSATION_MEMORIES
         ),
