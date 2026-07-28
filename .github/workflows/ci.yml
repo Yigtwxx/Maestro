@@ -166,3 +166,116 @@ jobs:
           push: false
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  smoke:
+    name: Smoke (stack boots, readiness green)
+    # The `docker` job above proves both Dockerfiles still *build*. Nothing
+    # proved the backend image still *runs*: 95 backend test files exercise the
+    # app under pytest's ASGI transport, where Postgres/Mongo/Qdrant/Redis are
+    # fixtures rather than real servers. A broken migration chain, a missing
+    # runtime dependency dropped from requirements.txt, or a settings default
+    # that only fails at import time all pass every existing gate and surface
+    # for the first time on deploy. This job closes that gap.
+    #
+    # Same draft gate as `docker` — it costs a couple of minutes and a draft
+    # cannot merge anyway.
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # Loaded into the local daemon (rather than only built) so `docker run`
+      # below can use it. Shares the `docker` job's cache scope, so this is
+      # usually a cache hit rather than a second full build.
+      - name: Build backend image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: maestro-backend:smoke
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      # Only the four backing services from the dev compose file. The app
+      # services live in docker-compose.prod.yml and drag in Ollama (a model
+      # pull) and Umami, none of which /health/ready consults.
+      - name: Start backing services
+        run: docker compose up -d --wait postgres mongo qdrant redis
+
+      # Ports and credentials mirror .env.example, which points at the same
+      # compose file (5433/27018 are deliberate — see the comments there).
+      # ENVIRONMENT stays at its non-production default, so the placeholder
+      # secrets below are accepted by the _guard_production_secrets validator.
+      - name: Write run configuration
+        run: |
+          cat > .env.smoke <<'EOF'
+          ENVIRONMENT=development
+          POSTGRES_URL=postgresql+asyncpg://maestro:maestro@localhost:5433/maestro
+          MONGODB_URL=mongodb://localhost:27018
+          MONGODB_DB_NAME=maestro
+          QDRANT_URL=http://localhost:6333
+          REDIS_URL=redis://localhost:6379
+          WEB_CONCURRENCY=1
+          EMAIL_PROVIDER=console
+          PAYMENT_PROVIDER=mock
+          EOF
+
+      # Runs the real migration chain from an empty database — the same check
+      # the `migrations` job makes, but through the shipped image rather than a
+      # host virtualenv, so a migration that depends on something only present
+      # in the dev environment fails here.
+      - name: Apply migrations
+        run: |
+          docker run --rm --network host --env-file .env.smoke \
+            maestro-backend:smoke alembic upgrade head
+
+      - name: Start backend
+        run: |
+          docker run -d --name maestro-backend-smoke --network host \
+            --env-file .env.smoke maestro-backend:smoke
+
+      # /health is dependency-free (liveness); /health/ready pings all four
+      # services and answers 503 until each one is reachable. Polling the
+      # latter is therefore the assertion that the whole stack wired up.
+      - name: Wait for readiness
+        run: |
+          for attempt in $(seq 1 60); do
+            code=$(curl -s -o /tmp/ready.json -w '%{http_code}' \
+              http://localhost:8000/health/ready || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "ready after ${attempt}s"
+              cat /tmp/ready.json
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::backend never became ready; last response:"
+          cat /tmp/ready.json 2>/dev/null || echo "(no response body)"
+          exit 1
+
+      # A readiness probe that reports "ready" while the API router failed to
+      # mount would still pass the step above, so assert one real route answers.
+      # /billing/plans/public is the anonymous listing — its authenticated
+      # sibling /billing/plans would answer 401 here and prove nothing.
+      - name: Check the API surface responds
+        run: |
+          code=$(curl -s -o /tmp/plans.json -w '%{http_code}' \
+            http://localhost:8000/api/v1/billing/plans/public)
+          if [ "$code" != "200" ]; then
+            echo "::error::GET /api/v1/billing/plans/public returned $code"
+            cat /tmp/plans.json
+            exit 1
+          fi
+
+      # Runs even when an earlier step failed — without the container log a
+      # failure here is undiagnosable from the job summary alone.
+      - name: Dump logs
+        if: always()
+        run: |
+          echo '--- backend ---'
+          docker logs maestro-backend-smoke 2>&1 | tail -100 || true
+          echo '--- backing services ---'
+          docker compose logs --tail=50 postgres mongo qdrant redis || true

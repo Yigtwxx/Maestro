@@ -1,0 +1,160 @@
+# Maestro-specific Semgrep rules.
+#
+# These encode CLAUDE.md invariants that no public ruleset can know about. They
+# are deliberately kept separate from the generic `p/python` + `p/security-audit`
+# scan in `.github/workflows/security.yml`: that scan is advisory
+# (`continue-on-error: true`, results uploaded as SARIF), while this file is a
+# blocking gate. A finding here fails the pull request.
+#
+# Scope discipline: a rule belongs here only if no existing pytest already
+# enforces the same invariant. Rate limits (`test_rate_limiter.py`), WebSocket
+# auth ordering (`test_ws_auth_order.py`), PAN persistence
+# (`test_pan_not_stored.py`) and domain/frontend parity
+# (`test_domain_frontend_parity.py`) are covered there and are intentionally
+# NOT duplicated here — two enforcement points for one rule is maintenance debt,
+# not defence in depth.
+#
+# Paths are written relative to the repository root; run semgrep from there.
+rules:
+  # --------------------------------------------------------------------------
+  # CLAUDE.md §8 "Per-user RAG isolation" / non-negotiable rule 4.
+  #
+  # Every Qdrant read or delete must be scoped to one user. `memory_service`
+  # expresses that scope two different ways — the `_user_filter()` helper, and
+  # an inline `models.Filter` carrying a `user_id` FieldCondition (the document
+  # purge path, which also filters on document_id). Both are accepted; what is
+  # rejected is a query with no user scope at all, which would read or delete
+  # across every tenant in the collection.
+  #
+  # `upsert` and `get_collections` are excluded by design: the former carries
+  # the user_id in the point payload rather than a filter, the latter is the
+  # health probe in core/database.py.
+  # --------------------------------------------------------------------------
+  - id: maestro-qdrant-query-without-user-scope
+    languages: [python]
+    severity: ERROR
+    message: >-
+      This Qdrant query is not scoped to a user. Pass query_filter/scroll_filter/
+      points_selector built from _user_filter(user_id) (or an inline
+      models.Filter with a user_id FieldCondition). An unscoped query reads or
+      deletes another user's vectors — CLAUDE.md rule 4.
+    patterns:
+      - pattern-either:
+          - pattern: get_qdrant_client().search(...)
+          - pattern: get_qdrant_client().scroll(...)
+          - pattern: get_qdrant_client().delete(...)
+          - pattern: get_qdrant_client().count(...)
+          - pattern: get_qdrant_client().retrieve(...)
+      # A scope can be spelled either way, so both are accepted. The deep
+      # expression operator is what lets the user_id condition sit arbitrarily
+      # deep inside a FilterSelector -> Filter -> FieldCondition nest.
+      - pattern-not: get_qdrant_client().$METHOD(..., $ARG=<... _user_filter(...) ...>, ...)
+      - pattern-not: get_qdrant_client().$METHOD(..., $ARG=<... "user_id" ...>, ...)
+    paths:
+      include:
+        - /backend/app/**
+
+  # --------------------------------------------------------------------------
+  # CLAUDE.md §8 "Outbound fetches (SSRF)".
+  #
+  # "The shared client follows no redirects. `repo_intel` is the single
+  # exception and opts in per call via `request_api(follow_redirect_host=...)`."
+  # The opt-in is what keeps the Authorization header from reaching another
+  # origin, so a second caller adopting it is a security decision that must be
+  # made deliberately, not inherited by copy-paste.
+  #
+  # Both call styles are matched: repo_intel imports the symbol directly,
+  # custom_api_service calls it through the module.
+  # --------------------------------------------------------------------------
+  - id: maestro-connected-api-redirect-optin
+    languages: [python]
+    severity: ERROR
+    message: >-
+      follow_redirect_host is repo_intel's documented exception (GitHub answers
+      a renamed repository with a 301). Adopting it elsewhere widens the SSRF
+      surface CLAUDE.md §8 states the connected tools do not have. If this is
+      genuinely needed, update CLAUDE.md §8 in the same change.
+    pattern-either:
+      - pattern: request_api(..., follow_redirect_host=$HOST, ...)
+      - pattern: connected_common.request_api(..., follow_redirect_host=$HOST, ...)
+    paths:
+      include:
+        - /backend/app/**
+      exclude:
+        - /backend/app/services/repo_intel_service.py
+
+  # --------------------------------------------------------------------------
+  # CLAUDE.md §8, same section.
+  #
+  # data_fetch_service is exempt: its httpx tier is the documented
+  # DATA_FETCH_ENGINE=httpx rollback path, which follows redirects and
+  # re-validates the landed URL afterwards. Every other outbound client in the
+  # codebase must be constructed with follow_redirects disabled.
+  # --------------------------------------------------------------------------
+  - id: maestro-http-client-follows-redirects
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Outbound HTTP clients are constructed with follow_redirects=False so a
+      redirect cannot carry credentials to another origin. Build the client
+      without redirects and, if one hop is genuinely required, gate it on a
+      hard-coded host the way connected_common.request_api does.
+    pattern-either:
+      - pattern: httpx.AsyncClient(..., follow_redirects=True, ...)
+      - pattern: httpx.Client(..., follow_redirects=True, ...)
+    paths:
+      include:
+        - /backend/app/**
+      exclude:
+        - /backend/app/services/data_fetch_service.py
+
+  # --------------------------------------------------------------------------
+  # CLAUDE.md non-negotiable rules 1 and 9: never log a decrypted key, a master
+  # key, a TOTP secret, a password or a raw card number. The existing code logs
+  # only identifiers (user_id, task_id, member_id, collection), so this rule is
+  # clean today and exists to keep it that way.
+  #
+  # The regex anchors on a dotted identifier so a message string that merely
+  # mentions "api key" is not reported — only a value being passed in is.
+  # Deliberately excluded: `token`, which would fire on tokens_used /
+  # max_tokens / task token accounting, all of which are counters, not secrets.
+  # --------------------------------------------------------------------------
+  - id: maestro-secret-in-log
+    languages: [python]
+    severity: ERROR
+    message: >-
+      This looks like a credential being passed to a logger. CLAUDE.md rule 1
+      and 9: keys, secrets, passwords and raw card numbers are never logged, not
+      even at DEBUG. Log an identifier or the provider name instead.
+    patterns:
+      - pattern-either:
+          - pattern: logger.$LEVEL(..., $SECRET, ...)
+          - pattern: 'logger.$LEVEL(..., extra={..., $KEY: $SECRET, ...}, ...)'
+          - pattern: logging.$LEVEL(..., $SECRET, ...)
+      - metavariable-regex:
+          metavariable: $SECRET
+          regex: '^[\w.\[\]]*(?i:api_key|encrypted_key|secret_key|client_secret|master_key|totp_secret|password|card_number|cvv|raw_key|plaintext_key)[\w.\[\]]*$'
+    paths:
+      include:
+        - /backend/app/**
+
+  # --------------------------------------------------------------------------
+  # CLAUDE.md non-negotiable rule 7: "Migrations go through Alembic. Never
+  # hand-run SQL." The connection health probe in core/database.py is the one
+  # legitimate use of sqlalchemy.text() in the application; anything else is
+  # either a migration that belongs in alembic/versions or an ORM query that
+  # should be expressed through SQLAlchemy.
+  # --------------------------------------------------------------------------
+  - id: maestro-raw-sql-outside-alembic
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Raw SQL in application code. Schema changes belong in an Alembic revision
+      (CLAUDE.md rule 7) and queries belong in the SQLAlchemy ORM layer. The
+      only sanctioned text() call is the SELECT 1 connection probe.
+    patterns:
+      - pattern: text($SQL)
+      - pattern-not: text("SELECT 1")
+    paths:
+      include:
+        - /backend/app/**

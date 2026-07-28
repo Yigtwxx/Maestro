@@ -396,6 +396,31 @@ and `type-check`, `lint`, `test`, and `build` pass on the frontend.
 a threshold**, so a coverage dip cannot fail a PR) + lock-freshness; frontend `eslint` +
 `tsc --noEmit` + `vitest run` + `next build`.
 
+Two further blocking gates cover what those cannot:
+
+- **Smoke (`ci.yml`).** Boots the built backend image against the four compose services,
+  runs `alembic upgrade head` from inside that image, then polls `/health/ready` until all
+  of Postgres/Mongo/Qdrant/Redis answer and asserts one public route responds. pytest
+  exercises the app over an ASGI transport with fixtures in place of real servers, so a
+  runtime dependency missing from `requirements.txt`, a broken migration chain, or a
+  settings default that only fails at import time passes every other gate and surfaces
+  first on deploy. Draft PRs skip it, like the image build.
+- **Invariants (`security.yml`).** `semgrep --error` over `.semgrep/maestro.yml`:
+  hand-written rules for the §9 invariants that no public ruleset knows — unscoped Qdrant
+  queries, `follow_redirect_host` outside `repo_intel`, a redirect-following HTTP client
+  outside `data_fetch`, a credential reaching a logger, raw SQL outside Alembic. It is a
+  **separate job from the advisory `SAST (semgrep)` scan on purpose**: that one is
+  `continue-on-error` so pre-existing debt in a public ruleset never fails a contributor's
+  PR, while a hit here means an invariant was broken in this PR. Do not merge them.
+  A second step re-runs the rules against `.semgrep/fixtures/` and asserts the exact
+  per-rule hit count on `bad.py` and zero on `good.py` — a rule that silently stops
+  matching otherwise reports zero findings and looks identical to a clean tree. Add a
+  fixture case and update the expected counts in the same commit as any rule change.
+
+A rule belongs in `maestro.yml` only when no pytest already enforces it. Rate limits,
+WebSocket auth ordering, PAN persistence and domain/frontend parity are covered by
+`tests/` and are deliberately not duplicated there.
+
 **Lint policy (deliberate — do not "tighten" without auditing the fallout).** Four
 react-hooks v7 rules (`set-state-in-effect`, `refs`, `purity`, `static-components`) are
 kept at `warn` in `eslint.config.mjs`: they fire on *correct* code — the canonical
