@@ -57,9 +57,15 @@ async def _register_and_login(client, email: str) -> dict[str, str]:  # noqa: AN
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
 
-async def _create(client, headers, **overrides):  # noqa: ANN001
+async def _create(client, auth, **overrides):  # noqa: ANN001
+    """``auth`` is the bearer header; ``overrides`` patch the JSON payload.
+
+    Named apart on purpose: the payload has a ``headers`` field of its own, so a
+    shared name here is a TypeError at best and, worse, sends the auth header as
+    the tool's static headers.
+    """
     return await client.post(
-        "/api/v1/custom-api-tools", json=_payload(**overrides), headers=headers
+        "/api/v1/custom-api-tools", json=_payload(**overrides), headers=auth
     )
 
 
@@ -274,3 +280,123 @@ async def test_newlines_are_collapsed_out_of_the_name(client, custom_api_db) -> 
     assert resp.status_code == 201, resp.text
     assert "\n" not in resp.json()["name"]
     assert resp.json()["name"] == "CRM Lookup"
+
+
+# --- Partial updates must not escape the cross-field invariants --------------
+#
+# CustomApiToolUpdate can only check the fields a PATCH carries, and every
+# cross-field rule needs two of them. Validating the delta therefore used to let
+# a PATCH leave a record the create path would have rejected.
+
+
+async def test_patch_cannot_set_a_credentialed_mode_without_a_secret(
+    client, custom_api_db
+) -> None:  # noqa: ANN001
+    """Otherwise the tool is saved authenticated but keyless, and calls go out
+    unauthenticated with nothing surfaced until run time."""
+    headers = await _register_and_login(client, "owner@user.com")
+    created = (await _create(client, headers)).json()
+
+    resp = await client.patch(
+        f"/api/v1/custom-api-tools/{created['id']}",
+        json={"auth_mode": "bearer"},
+        headers=headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "secret" in resp.text.lower()
+
+
+async def test_patch_may_set_a_credentialed_mode_together_with_a_secret(
+    client, custom_api_db
+) -> None:  # noqa: ANN001
+    headers = await _register_and_login(client, "owner@user.com")
+    created = (await _create(client, headers)).json()
+
+    resp = await client.patch(
+        f"/api/v1/custom-api-tools/{created['id']}",
+        json={"auth_mode": "bearer", "secret": _SECRET},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["auth_mode"] == "bearer"
+
+
+async def test_patch_keeps_a_credentialed_mode_using_the_stored_secret(
+    client, custom_api_db
+) -> None:  # noqa: ANN001
+    """A stored credential satisfies the rule; only renaming should not 400."""
+    headers = await _register_and_login(client, "owner@user.com")
+    created = (
+        await _create(client, headers, auth_mode="bearer", secret=_SECRET)
+    ).json()
+
+    resp = await client.patch(
+        f"/api/v1/custom-api-tools/{created['id']}",
+        json={"name": "Renamed"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+
+async def test_patch_cannot_switch_to_get_while_a_body_is_stored(
+    client, custom_api_db
+) -> None:  # noqa: ANN001
+    headers = await _register_and_login(client, "owner@user.com")
+    created = (
+        await _create(
+            client,
+            headers,
+            method="POST",
+            path_template="/v1/customers",
+            body_template={"id": "{customer_id}"},
+        )
+    ).json()
+
+    resp = await client.patch(
+        f"/api/v1/custom-api-tools/{created['id']}",
+        json={"method": "GET"},
+        headers=headers,
+    )
+    assert resp.status_code == 400, resp.text
+
+
+async def test_patch_cannot_orphan_a_template_placeholder(
+    client, custom_api_db
+) -> None:  # noqa: ANN001
+    """Dropping the parameter a stored path template references would leave the
+    brace unsubstituted in the outgoing URL."""
+    headers = await _register_and_login(client, "owner@user.com")
+    created = (await _create(client, headers)).json()
+
+    resp = await client.patch(
+        f"/api/v1/custom-api-tools/{created['id']}",
+        json={"parameters": []},
+        headers=headers,
+    )
+    assert resp.status_code == 400, resp.text
+    assert "customer_id" in resp.text
+
+
+async def test_patch_of_a_missing_tool_is_still_a_404(client, custom_api_db) -> None:  # noqa: ANN001
+    """The merged-validation read must not turn a missing tool into a 400."""
+    headers = await _register_and_login(client, "owner@user.com")
+    resp = await client.patch(
+        "/api/v1/custom-api-tools/does-not-exist",
+        json={"name": "x"},
+        headers=headers,
+    )
+    assert resp.status_code == 404, resp.text
+
+
+# --- Header values, not just names ------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["a\r\nX-Injected: 1", "a\nb", "café"])
+async def test_a_header_value_with_crlf_or_non_ascii_is_rejected(
+    client, custom_api_db, value: str
+) -> None:  # noqa: ANN001
+    """A CR/LF here is header injection; left to httpx it surfaces at call time
+    as a generic failure with nothing pointing at the cause."""
+    headers = await _register_and_login(client, "owner@user.com")
+    resp = await _create(client, headers, **{"headers": {"X-Trace": value}})
+    assert resp.status_code == 422, f"{value!r} was accepted: {resp.text}"

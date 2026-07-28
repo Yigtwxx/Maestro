@@ -37,6 +37,9 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
+from pydantic import ValidationError
+from pymongo.errors import DuplicateKeyError
+
 from app.core.config import settings
 from app.core.constants import (
     CUSTOM_API_ACTION_PREFIX,
@@ -228,8 +231,67 @@ async def create_tool(
         "created_at": now,
         "updated_at": now,
     }
-    await _collection().insert_one(dict(doc))
+    try:
+        await _collection().insert_one(dict(doc))
+    except DuplicateKeyError as exc:
+        # The checks above are read-then-write, so two concurrent POSTs can both
+        # pass them. The unique index is the authoritative gate; this translates
+        # its error into the same message the friendly path produces.
+        raise CustomApiValidationError(
+            f"You already have an API tool with the slug '{payload.slug}'."
+        ) from exc
     return {k: v for k, v in doc.items() if k not in ("user_id", "encrypted_secret")}
+
+
+_MERGED_VALIDATION_FIELDS = (
+    "slug",
+    "name",
+    "description",
+    "method",
+    "base_url",
+    "path_template",
+    "query_template",
+    "headers",
+    "auth_mode",
+    "auth_name",
+    "parameters",
+    "body_template",
+    "response_json_path",
+    "response_max_chars",
+    "timeout_seconds",
+    "enabled",
+)
+
+
+def _validate_merged(stored: dict[str, Any], changes: dict[str, Any]) -> None:
+    """Re-run the create-shaped validation over the *merged* record.
+
+    ``CustomApiToolUpdate`` can only check the fields a PATCH actually carries,
+    and every cross-field rule needs two of them. Validating the delta therefore
+    lets a partial update leave a record the create path would have rejected:
+    ``auth_mode="bearer"`` alone on a tool that never had a secret (calls go out
+    unauthenticated), ``method="GET"`` alone while a ``body_template`` is stored
+    (a GET with a body), or a new ``path_template`` whose placeholder no stored
+    parameter declares (the brace is sent literally in the URL).
+
+    So the merged document is what gets validated, not the change set.
+    """
+    merged = {
+        key: changes.get(key, stored.get(key))
+        for key in _MERGED_VALIDATION_FIELDS
+        if key in changes or key in stored
+    }
+    # The stored credential counts: CustomApiToolCreate requires a secret for a
+    # credentialed auth_mode, and an untouched one still satisfies that.
+    if "secret" not in merged and (
+        changes.get("encrypted_secret") or stored.get("encrypted_secret")
+    ):
+        merged["secret"] = "<stored>"
+    try:
+        CustomApiToolCreate.model_validate(merged)
+    except ValidationError as exc:
+        first = exc.errors()[0]
+        raise CustomApiValidationError(str(first.get("msg", exc))) from exc
 
 
 async def update_tool(
@@ -259,6 +321,14 @@ async def update_tool(
     _guard_text(changes.get("name", ""), changes.get("description", ""))
     if not changes:
         return await get_tool(user_id, tool_id)
+
+    # Read the whole record, secret flag included, to validate the merged state.
+    stored = await _collection().find_one(
+        {"id": tool_id, "user_id": str(user_id)}, {"_id": 0, "user_id": 0}
+    )
+    if stored is None:
+        return None
+    _validate_merged(stored, changes)
 
     changes["updated_at"] = datetime.now(UTC)
     result = await _collection().update_one(
@@ -529,6 +599,13 @@ def _shape(tool: CustomApiTool, payload: Any) -> tuple[Any, str]:
             )
             for item in kept
         ]
+        # The per-item cap alone lets MAX_ITEMS x ITEM_MAX_CHARS through, so a
+        # tool configured with a small response_max_chars would silently get a
+        # far larger block. Drop whole items until the rendered list fits.
+        while shaped and len(json.dumps(shaped, ensure_ascii=False)) > (
+            tool.response_max_chars
+        ):
+            shaped.pop()
     else:
         serialized = json.dumps(extracted, ensure_ascii=False, default=str)
         if prompt_guard.is_suspicious(serialized):
