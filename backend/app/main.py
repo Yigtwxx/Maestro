@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import secrets
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -18,6 +19,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.router import api_router
 from app.core.config import settings
+from app.core.constants import HEALTH_DETAIL_HEADER
 from app.core.database import check_readiness, close_connections, ensure_indexes
 from app.core.observability import configure_logging, init_sentry
 from app.services import reconcile
@@ -189,19 +191,41 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _health_detail_authorized(request: Request) -> bool:
+    """True when the caller proved it is an operator, via ``HEALTH_DETAIL_TOKEN``.
+
+    An unset token means "no caller is an operator": the per-check map is then
+    withheld from everyone, which is the safe default for a probe that must stay
+    publicly reachable.
+    """
+    expected = settings.health_detail_token
+    if not expected:
+        return False
+    return secrets.compare_digest(
+        request.headers.get(HEALTH_DETAIL_HEADER, ""), expected
+    )
+
+
 @app.get("/health/ready", tags=["health"])
-async def readiness() -> JSONResponse:
+async def readiness(request: Request) -> JSONResponse:
     """Readiness probe: pings every backing service (Postgres/Mongo/Qdrant/Redis).
 
-    Returns 200 ``{"status": "ready", ...}`` when all required dependencies
-    answer, or 503 ``{"status": "degraded", ...}`` with per-check results when
-    any fail — the shape an external uptime monitor alerts on.
+    Returns 200 ``{"status": "ready"}`` when all required dependencies answer, or
+    503 ``{"status": "degraded"}`` when any fail — the shape an external uptime
+    monitor alerts on.
+
+    The per-dependency ``checks`` map is operator-only: it names *which* backing
+    service is down, which is free reconnaissance for an anonymous caller (a
+    degraded Redis, for one, means rate-limit buckets fell back to process-local
+    counters). It is included only for a caller presenting ``HEALTH_DETAIL_TOKEN``
+    in the ``X-Health-Token`` header. The status code carries the alertable signal
+    either way, so an uptime monitor needs no credential.
     """
     ready, checks = await check_readiness()
-    return JSONResponse(
-        status_code=200 if ready else 503,
-        content={"status": "ready" if ready else "degraded", "checks": checks},
-    )
+    body: dict[str, object] = {"status": "ready" if ready else "degraded"}
+    if _health_detail_authorized(request):
+        body["checks"] = checks
+    return JSONResponse(status_code=200 if ready else 503, content=body)
 
 
 app.include_router(api_router)

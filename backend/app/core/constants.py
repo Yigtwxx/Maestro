@@ -10,6 +10,10 @@ from typing import NamedTuple
 
 API_V1_PREFIX = "/api/v1"
 
+# Header carrying HEALTH_DETAIL_TOKEN. `/health/ready` names the failing
+# dependency only for a caller presenting it; the status code alone is public.
+HEALTH_DETAIL_HEADER = "X-Health-Token"
+
 
 # --- User roles (authorization) ---
 
