@@ -211,7 +211,12 @@ export function CustomApiToolForm({
                   ? `Stored (${initial.secret_hint}) — leave blank to keep it`
                   : 'Pasted once, encrypted at rest'
               }
-              required={!editing}
+              // Required whenever no credential is stored, not merely on
+              // create: switching an existing tool from 'none' to a
+              // credentialed mode has nothing to keep, and a blank field would
+              // omit `secret` from the payload and save an authenticated mode
+              // with no key — failing only later, at call time.
+              required={!initial?.secret_hint}
               module="agents"
             />
             <p className="mt-1.5 text-xs text-muted/70">
