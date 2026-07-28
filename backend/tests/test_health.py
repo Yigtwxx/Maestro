@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from app.core import database
+from app.core.config import settings
+from app.core.constants import HEALTH_DETAIL_HEADER
+
+_DETAIL_TOKEN = "operator-token-for-tests"
 
 
 async def test_health_liveness_returns_ok(client) -> None:
@@ -29,12 +33,6 @@ async def test_readiness_all_dependencies_ok_returns_200(client, monkeypatch) ->
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["status"] == "ready", body
-    assert body["checks"] == {
-        "postgres": "ok",
-        "mongo": "ok",
-        "qdrant": "ok",
-        "redis": "ok",
-    }
 
 
 async def test_readiness_dependency_down_returns_503(client, monkeypatch) -> None:
@@ -57,8 +55,113 @@ async def test_readiness_dependency_down_returns_503(client, monkeypatch) -> Non
     assert resp.status_code == 503, resp.text
     body = resp.json()
     assert body["status"] == "degraded", body
-    assert body["checks"]["mongo"] == "error", body
     # A raw exception message must never leak into the probe body.
+    assert "connection refused" not in resp.text
+
+
+async def test_readiness_withholds_checks_from_anonymous_caller(
+    client, monkeypatch
+) -> None:
+    """Which dependency is down is operator-only, degraded or not."""
+
+    async def _ok() -> None:
+        return None
+
+    async def _boom() -> None:
+        raise RuntimeError("down")
+
+    async def _redis_ok() -> str:
+        return "ok"
+
+    monkeypatch.setattr(settings, "health_detail_token", _DETAIL_TOKEN)
+    monkeypatch.setattr(database, "ping_postgres", _ok)
+    monkeypatch.setattr(database, "ping_mongo", _boom)
+    monkeypatch.setattr(database, "ping_qdrant", _ok)
+    monkeypatch.setattr(database, "ping_redis", _redis_ok)
+
+    resp = await client.get("/health/ready")
+
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert "checks" not in body, body
+    assert "mongo" not in resp.text, resp.text
+
+
+async def test_readiness_wrong_detail_token_gets_no_checks(client, monkeypatch) -> None:
+    async def _ok() -> None:
+        return None
+
+    async def _redis_ok() -> str:
+        return "ok"
+
+    monkeypatch.setattr(settings, "health_detail_token", _DETAIL_TOKEN)
+    monkeypatch.setattr(database, "ping_postgres", _ok)
+    monkeypatch.setattr(database, "ping_mongo", _ok)
+    monkeypatch.setattr(database, "ping_qdrant", _ok)
+    monkeypatch.setattr(database, "ping_redis", _redis_ok)
+
+    resp = await client.get(
+        "/health/ready", headers={HEALTH_DETAIL_HEADER: "not-the-token"}
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert "checks" not in resp.json(), resp.text
+
+
+async def test_readiness_unset_detail_token_never_authorizes(
+    client, monkeypatch
+) -> None:
+    """An empty token must not turn an empty header into a valid credential."""
+
+    async def _ok() -> None:
+        return None
+
+    async def _redis_ok() -> str:
+        return "ok"
+
+    monkeypatch.setattr(settings, "health_detail_token", "")
+    monkeypatch.setattr(database, "ping_postgres", _ok)
+    monkeypatch.setattr(database, "ping_mongo", _ok)
+    monkeypatch.setattr(database, "ping_qdrant", _ok)
+    monkeypatch.setattr(database, "ping_redis", _redis_ok)
+
+    resp = await client.get("/health/ready", headers={HEALTH_DETAIL_HEADER: ""})
+
+    assert resp.status_code == 200, resp.text
+    assert "checks" not in resp.json(), resp.text
+
+
+async def test_readiness_detail_token_reveals_per_check_results(
+    client, monkeypatch
+) -> None:
+    async def _ok() -> None:
+        return None
+
+    async def _boom() -> None:
+        raise RuntimeError("connection refused")
+
+    async def _redis_skipped() -> str:
+        return "skipped"
+
+    monkeypatch.setattr(settings, "health_detail_token", _DETAIL_TOKEN)
+    monkeypatch.setattr(database, "ping_postgres", _ok)
+    monkeypatch.setattr(database, "ping_mongo", _boom)
+    monkeypatch.setattr(database, "ping_qdrant", _ok)
+    monkeypatch.setattr(database, "ping_redis", _redis_skipped)
+
+    resp = await client.get(
+        "/health/ready", headers={HEALTH_DETAIL_HEADER: _DETAIL_TOKEN}
+    )
+
+    assert resp.status_code == 503, resp.text
+    body = resp.json()
+    assert body["checks"] == {
+        "postgres": "ok",
+        "mongo": "error",
+        "qdrant": "ok",
+        "redis": "skipped",
+    }, body
+    # Detail means "which one", never the raw exception.
     assert "connection refused" not in resp.text
 
 

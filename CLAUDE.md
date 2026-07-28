@@ -451,6 +451,13 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
 - `REDIS_URL` — empty falls back to in-process rate-limit buckets and event bus. Boot is
   refused if `WEB_CONCURRENCY > 1` while this is empty.
 - `TRUST_PROXY_HEADERS` — see rule 13 above.
+- `HEALTH_DETAIL_TOKEN` — unlocks the per-dependency `checks` map on
+  `/health/ready` for callers sending it as `X-Health-Token`. Empty (the default)
+  withholds the map from everyone. The probe has to stay publicly reachable for an
+  uptime monitor, but *which* backing service is down is reconnaissance: a
+  degraded Redis, for instance, announces that rate-limit buckets just fell back
+  to process-local counters. The 200/503 status code carries the alertable signal
+  without the token, so monitoring needs no credential.
 - `EMBEDDING_ENDPOINT` — separate from `FREE_MODEL_ENDPOINT`; falls back to it when empty.
 - `OLLAMA_NATIVE_API` — the Ollama adapter drives Ollama's own `/api/chat` rather than its
   OpenAI-compatible `/v1` shim, because three controls exist only there. Set `false` to

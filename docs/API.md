@@ -11,6 +11,8 @@ validated with Pydantic v2.
 # Health
 GET    /health                              # liveness
 GET    /health/ready                        # Postgres / Mongo / Qdrant / Redis probes
+                                            # 200/503 public; per-service detail
+                                            # only with X-Health-Token
 
 # Authentication
 POST   /api/v1/auth/register

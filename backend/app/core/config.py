@@ -104,6 +104,13 @@ class Settings(BaseSettings):
     # the header and mint a fresh bucket per request.
     trust_proxy_headers: bool = False
 
+    # --- Health probes ---
+    # Unlocks the per-dependency `checks` map on /health/ready, which names the
+    # service that is down. Empty (the default) withholds it from everyone: the
+    # probe stays publicly reachable for uptime monitors, which only need its
+    # status code. Any opaque random string works — it grants no other access.
+    health_detail_token: str = ""
+
     # --- Security ---
     jwt_secret: str = _DEV_JWT_SECRET
     jwt_algorithm: str = "HS256"

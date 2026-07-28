@@ -322,8 +322,8 @@ Two endpoints, both reachable through Caddy without authentication:
 - **`GET /health`** — liveness. Returns `{"status":"ok"}` without touching any
   dependency. The Docker `HEALTHCHECK` uses this; keep an uptime monitor on it.
 - **`GET /health/ready`** — readiness. Pings Postgres, Mongo, Qdrant and Redis
-  and returns `200 {"status":"ready", ...}` or, if any required service is down,
-  `503 {"status":"degraded","checks":{...}}`.
+  and returns `200 {"status":"ready"}` or, if any required service is down,
+  `503 {"status":"degraded"}`.
 
 Point a free uptime monitor (UptimeRobot, Better Stack, …) at both:
 
@@ -335,6 +335,21 @@ https://<your-domain>/health/ready   # expect 200 — dependencies are up
 Set a 1–3 minute interval and an email/Slack alert on a non-200 response. The
 `/health/ready` monitor catches "the API is running but Mongo/Qdrant is
 unreachable" — a state `/health` alone would miss.
+
+**Which** dependency is down is not in the public response: naming it hands an
+anonymous caller a live map of your infrastructure, including the moment Redis
+drops and rate-limit buckets fall back to process-local counters. Set
+`HEALTH_DETAIL_TOKEN` in `.env.prod` (any random string — it grants nothing else)
+and pass it to get the per-dependency breakdown:
+
+```bash
+curl -H "X-Health-Token: $HEALTH_DETAIL_TOKEN" https://<your-domain>/health/ready
+# {"status":"degraded","checks":{"postgres":"ok","mongo":"error", …}}
+```
+
+Leave it unset and the map is withheld from everyone; the status code an uptime
+monitor alerts on is unaffected either way. `redis: "skipped"` means no
+`REDIS_URL` is configured, which is a supported topology, not a failure.
 
 ### Error tracking (Sentry)
 

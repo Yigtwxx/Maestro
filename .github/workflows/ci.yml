@@ -221,6 +221,7 @@ jobs:
           WEB_CONCURRENCY=1
           EMAIL_PROVIDER=console
           PAYMENT_PROVIDER=mock
+          HEALTH_DETAIL_TOKEN=smoke-detail-token
           EOF
 
       # Runs the real migration chain from an empty database — the same check
@@ -240,10 +241,13 @@ jobs:
       # /health is dependency-free (liveness); /health/ready pings all four
       # services and answers 503 until each one is reachable. Polling the
       # latter is therefore the assertion that the whole stack wired up.
+      # The token matches .env.smoke above: without it the response names no
+      # service, and the failure dump below would say only "degraded".
       - name: Wait for readiness
         run: |
           for attempt in $(seq 1 60); do
             code=$(curl -s -o /tmp/ready.json -w '%{http_code}' \
+              -H 'X-Health-Token: smoke-detail-token' \
               http://localhost:8000/health/ready || echo 000)
             if [ "$code" = "200" ]; then
               echo "ready after ${attempt}s"
