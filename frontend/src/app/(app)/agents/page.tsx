@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Bot, Search } from 'lucide-react';
-import { AgentForm } from '@/components/agents/AgentForm';
 import { BuiltinAgentCard } from '@/components/agents/BuiltinAgentCard';
 import { CustomAgentCard } from '@/components/agents/CustomAgentCard';
-import { Button } from '@/components/ui/Button';
+import { moduleButtonClass } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { SkeletonList } from '@/components/ui/Skeleton';
@@ -30,7 +30,6 @@ export default function AgentsPage() {
   const [custom, setCustom] = useState<AgentConfig[]>([]);
   const [tools, setTools] = useState<ToolCatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
   const [error, setError] = useState<string | undefined>();
 
@@ -87,13 +86,9 @@ export default function AgentsPage() {
             custom prompt and a curated tool set.
           </p>
         </div>
-        <Button
-          variant={creating ? 'ghost' : 'solid'}
-          module={creating ? undefined : 'agents'}
-          onClick={() => setCreating((v) => !v)}
-        >
-          {creating ? 'Close' : '+ New Agent'}
-        </Button>
+        <Link href="/agents/new" className={moduleButtonClass('agents')}>
+          + New Agent
+        </Link>
       </div>
 
       <div className="mb-6 grid grid-cols-3 gap-3">
@@ -109,20 +104,6 @@ export default function AgentsPage() {
       </div>
 
       {error && <p className="mb-4 text-sm text-danger">&gt; ERROR: {error}</p>}
-
-      {creating && (
-        <div className="mb-8">
-          <AgentForm
-            tools={tools}
-            submitLabel="Create agent"
-            onSubmit={async (input) => {
-              await api.createAgent(input);
-              setCreating(false);
-              await load();
-            }}
-          />
-        </div>
-      )}
 
       <div className="mb-6">
         <div className="relative max-w-sm">
@@ -184,11 +165,9 @@ export default function AgentsPage() {
               No custom agents yet. Create one with &quot;New Agent&quot; to tailor a
               prompt and tool set to your workflow.
             </p>
-            {!creating && (
-              <Button variant="solid" module="agents" onClick={() => setCreating(true)}>
-                + New Agent
-              </Button>
-            )}
+            <Link href="/agents/new" className={moduleButtonClass('agents')}>
+              + New Agent
+            </Link>
           </div>
         ) : filteredCustom.length === 0 ? (
           <p className="text-sm text-muted">&gt; No custom agents match &quot;{query}&quot;.</p>

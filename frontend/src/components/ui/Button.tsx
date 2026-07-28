@@ -53,6 +53,23 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   loading?: boolean;
 }
 
+/**
+ * The module-tinted treatment as a bare class string, so a `next/link` can look
+ * like a module button without this logic being copied. `Button` itself uses it
+ * below, which is what keeps the two from drifting.
+ */
+export function moduleButtonClass(
+  module?: ModuleKey,
+  variant: ModuleVariant = 'solid',
+): string {
+  const mc = moduleColor(module);
+  return cn(
+    // variant: null skips the lime default and its hover:bg-primary-hover.
+    buttonVariants({ variant: null }),
+    variant === 'outline' ? mc.btnOutline : cn(mc.btnSolid, 'shimmer-hover'),
+  );
+}
+
 const spinnerColor: Record<CvaVariant, string> = {
   lime: 'border-black/30 border-t-black',
   'lime-outline': 'border-primary/30 border-t-primary',
@@ -72,13 +89,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   let classes: string;
   let spinner: string;
   if (modulePath) {
-    const mc = moduleColor(module);
     const outline = variant === 'outline';
-    classes = cn(
-      buttonVariants({ variant: null }),
-      outline ? mc.btnOutline : cn(mc.btnSolid, 'shimmer-hover'),
-      className,
-    );
+    classes = cn(moduleButtonClass(module, outline ? 'outline' : 'solid'), className);
     spinner = outline ? 'border-white/20 border-t-current' : 'border-black/30 border-t-black';
   } else {
     const resolved: CvaVariant =
