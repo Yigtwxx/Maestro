@@ -94,3 +94,12 @@ def test_multi_worker_with_redis_accepted() -> None:
 def test_single_worker_without_redis_accepted() -> None:
     settings = _make(web_concurrency=1, redis_url="")
     assert settings.web_concurrency == 1
+
+
+def test_code_execution_defaults_off() -> None:
+    # Fail-closed: enabling this tool means the backend can reach a Docker
+    # daemon, so a deployment that never sets the variable must not get it.
+    settings = _make()
+    assert settings.code_execution_enabled is False, (
+        "CODE_EXECUTION_ENABLED must default to false — see config.py"
+    )

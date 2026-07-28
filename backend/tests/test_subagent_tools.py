@@ -11,6 +11,7 @@ from app.agents import subagent
 from app.agents import tools as tool_directives
 from app.agents.base import AgentContext
 from app.agents.registry import get_domain_info
+from app.core.config import settings
 from app.core.constants import (
     CODE_EXECUTION_ACTION,
     DATA_FETCH_ACTION,
@@ -76,6 +77,8 @@ def exec_calls(monkeypatch) -> list[str]:
 
     monkeypatch.setattr(code_execution_service, "run_python", fake_run)
     monkeypatch.setattr(code_execution_service, "_availability", True)
+    # The operator switch ships off, so the tool needs both gates opened here.
+    monkeypatch.setattr(settings, "code_execution_enabled", True)
     return calls
 
 

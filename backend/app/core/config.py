@@ -269,7 +269,20 @@ class Settings(BaseSettings):
     places_intel_max_uses_per_subtask: int = 3
 
     # --- Code execution tool (Docker sandbox; degrades gracefully if absent) ---
-    code_execution_enabled: bool = True
+    # Off by default, and deliberately so: this is the one tool whose blast
+    # radius is the *host*. Running it means the backend can reach a Docker
+    # daemon, and a deployment that mounts /var/run/docker.sock to get it hands
+    # agent-authored code the ability to start privileged containers outside the
+    # sandbox. Defaulting to true made the socket the only thing standing
+    # between a config slip and host takeover; defaulting to false means an
+    # operator has to say yes twice — mount the socket *and* set this. The
+    # Docker probe in code_execution_service is an availability check, not a
+    # security boundary, so it must not be the sole gate.
+    #
+    # Self-host only, like DATA_FETCH_RENDER_ENABLED. Nothing degrades when it
+    # is off: resolve_enabled_tools withholds the tool and the squad answers
+    # without it.
+    code_execution_enabled: bool = False
     code_execution_image: str = "python:3.12-slim"
     code_execution_timeout_seconds: int = 30
     code_execution_memory_limit: str = "512m"
