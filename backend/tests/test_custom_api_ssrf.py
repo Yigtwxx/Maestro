@@ -14,6 +14,18 @@ from app.core.config import settings
 from app.services import connected_common, custom_api_service
 from app.utils import url_guard
 
+
+@pytest.fixture(autouse=True)
+def _custom_api_tools_on(monkeypatch):
+    """The feature ships off (CUSTOM_API_TOOLS_ENABLED=false, see config.py).
+
+    These tests exercise it, so they opt in explicitly — which also keeps the
+    one test that asserts the *disabled* behaviour honest, since it has to turn
+    the switch back off itself.
+    """
+    monkeypatch.setattr(settings, "custom_api_tools_enabled", True)
+
+
 _PASSWORD = "supersecret"
 
 _BASE = {
@@ -98,8 +110,16 @@ async def test_registration_rejects_a_private_or_metadata_host(
 
 
 async def test_registration_rejects_a_host_that_does_not_resolve(
-    client, custom_api_db
+    client, custom_api_db, monkeypatch
 ) -> None:  # noqa: ANN001
+    """Resolution is pinned rather than asked of the network.
+
+    Every other case in this file is deterministic — the private-host cases are
+    literal IPs, the call-time ones monkeypatch the resolver. Leaving this one to
+    real DNS would let a wildcard or hijacking resolver answer for
+    ``api.example.com`` and turn a guard test red for an unrelated reason.
+    """
+    monkeypatch.setattr(url_guard, "resolve_is_public", lambda _host: False)
     auth = await _register_and_login(client)
     resp = await _create(client, auth, base_url="https://api.example.com")
     assert resp.status_code == 422, resp.text

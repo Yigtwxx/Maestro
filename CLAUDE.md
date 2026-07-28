@@ -310,7 +310,8 @@ streaming, and the tool's own `name`/`description` pass `prompt_guard` at write 
 because they are interpolated into the subagent's system prompt. The stored credential is
 AES-256-GCM in Mongo — the first ciphertext in that datastore — kept out of every response
 by both a query projection and an explicit `CustomApiToolPublic` field list. The residual
-risk is DNS rebinding, which `url_guard` already documents as unclosed. A per-user action
+risk is DNS rebinding, which `url_guard` already documents as unclosed — and which is why
+`CUSTOM_API_TOOLS_ENABLED` defaults to `false` rather than shipping on. A per-user action
 id never enters `TOOL_CATALOG`/`TOOL_IDS`: those are process-wide constants that
 `agent_service._validate_tools`, the marketplace publish filter and the frontend parity
 tests all key off.
@@ -481,10 +482,14 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
   check, not a security boundary — it must never be the only gate, which is exactly why the
   default is off rather than "on, but harmless without Docker".
 - `CUSTOM_API_TOOLS_ENABLED` — user-registered HTTP endpoints exposed as agent tools.
-  Defaults to `true`, unlike `CODE_EXECUTION_ENABLED`, because the blast radius is the
-  network rather than the host — but it is the only tool that takes a user-supplied
-  hostname, so read the `custom_api` paragraph in §8 before leaving it on. Off removes
-  every `custom_api__*` action from the enabled set and the executor refuses a second time.
+  Off by default, like `CODE_EXECUTION_ENABLED` and for the same kind of reason: the
+  guard in front of it is real but incomplete. `url_guard` checks that a hostname
+  resolves to a globally routable address without pinning that address to the socket, so
+  whoever controls the DNS record can answer the check and the connection differently.
+  Everywhere else that window is theoretical because the host is a constant of ours;
+  this is the only tool where a *user* supplies it. Turning it on says the deployment
+  can accept outbound requests to hosts its users choose. Off removes every
+  `custom_api__*` action from the enabled set and the executor refuses a second time.
 - `DOCUMENT_SEARCH_ENABLED` / `MEMORY_RECALL_ENABLED` — the RAG tools over the user's own
   data (uploads and conversation memory). Keyless and per-user scoped, so unlike the
   connected tools there is nothing to configure beyond the switch; setting one to `false`
