@@ -454,8 +454,12 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
   60/hour, so the `opensource` squad is fully functional with no key and a stored token
   only raises the ceiling to 5000. It is therefore the only connected tool that can be
   smoke-tested live from this repo.
-- `CODE_EXECUTION_ENABLED` — must stay `false` in production; enabling it requires mounting
-  the Docker socket.
+- `CODE_EXECUTION_ENABLED` — the one tool whose blast radius is the *host*, so it defaults
+  to `false` and must stay there in production: enabling it requires mounting the Docker
+  socket, which hands agent-authored code the ability to start privileged containers
+  outside the sandbox. The daemon probe in `code_execution_service` is an availability
+  check, not a security boundary — it must never be the only gate, which is exactly why the
+  default is off rather than "on, but harmless without Docker".
 - `DOCUMENT_SEARCH_ENABLED` / `MEMORY_RECALL_ENABLED` — the RAG tools over the user's own
   data (uploads and conversation memory). Keyless and per-user scoped, so unlike the
   connected tools there is nothing to configure beyond the switch; setting one to `false`

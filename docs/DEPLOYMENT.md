@@ -270,11 +270,14 @@ you are not running Redis.
 
 ## Security notes
 
-- **`CODE_EXECUTION_ENABLED=false`** in production. The tool shells out to the
-  `docker` CLI, so enabling it means mounting `/var/run/docker.sock` into the
-  backend — which hands agent-generated code the ability to start privileged
-  containers on the host. The tool detects the missing daemon and disables
-  itself cleanly, so leaving it off costs nothing but that one feature.
+- **`CODE_EXECUTION_ENABLED`** ships `false` and must stay that way in
+  production. The tool shells out to the `docker` CLI, so enabling it means
+  mounting `/var/run/docker.sock` into the backend — which hands agent-generated
+  code the ability to start privileged containers on the host. Two independent
+  things have to go wrong before that happens now (the socket mounted *and* the
+  variable set), and the missing-daemon probe is a third, but it is an
+  availability check rather than a security boundary — do not treat it as the
+  gate. Leaving the tool off costs nothing but that one feature.
 - **`PAYMENT_PROVIDER=mock`.** No real money moves, and no real card should ever
   be entered: `payment_methods` would fall under PCI scope. Ship a real
   processor adapter before advertising billing.

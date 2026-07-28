@@ -18,7 +18,7 @@ variant. The tables below group the settings by concern.
 | Variable | Description | Default |
 |---|---|---|
 | `POSTGRES_URL` | Async PostgreSQL connection string | `postgresql+asyncpg://maestro:maestro@localhost:5433/maestro` |
-| `MONGODB_URL` | MongoDB connection string | `mongodb://localhost:27017` |
+| `MONGODB_URL` | MongoDB connection string. Port 27018, not the stock 27017 — a natively-installed MongoDB binds loopback and beats Docker's wildcard bind, so 27017 can silently reach the wrong server | `mongodb://localhost:27018` |
 | `MONGODB_DB_NAME` | MongoDB database name | `maestro` |
 | `QDRANT_URL` | Qdrant vector DB address | `http://localhost:6333` |
 | `QDRANT_API_KEY` | Qdrant API key (optional for local) | — |
@@ -81,7 +81,7 @@ the proxy's single bucket.
 | `SOCIAL_SEARCH_ENABLED` | X post search for the Social Listening squad. Needs the user's X key; withheld without one | `true` |
 | `COMMUNITY_READ_ENABLED` | Discord / Slack / Telegram channel reading for the Community squad. Needs the user's key for that platform | `true` |
 | `PLACES_INTEL_ENABLED` | Google Places lookup for the Local Market squad. Needs the user's Maps key | `true` |
-| `CODE_EXECUTION_ENABLED` | Docker code sandbox; requires access to the Docker daemon — keep `false` on hosted deployments | `true` |
+| `CODE_EXECUTION_ENABLED` | Docker code sandbox. Off by default and self-host only: it needs access to the Docker daemon, so enabling it on a hosted deployment puts the host in the tool's blast radius | `false` |
 | `CODE_EXECUTION_IMAGE` | Sandbox container image | `python:3.12-slim` |
 | `CODE_EXECUTION_TIMEOUT_SECONDS` | Per-run timeout | `30` |
 | `CODE_EXECUTION_MEMORY_LIMIT` / `CODE_EXECUTION_CPUS` | Sandbox resource limits | `512m` / `1` |
