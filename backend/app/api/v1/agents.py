@@ -10,13 +10,14 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, status
 
 from app.agents.registry import DOMAIN_CATALOG
-from app.core.constants import RATE_LIMIT_READ, RATE_LIMIT_WRITE, TOOL_CATALOG
+from app.core.constants import RATE_LIMIT_READ, RATE_LIMIT_WRITE
 from app.core.deps import ActiveUser
 from app.schemas.agent import (
     AgentConfigCreate,
     AgentConfigPublic,
     AgentConfigUpdate,
     SystemPromptUpdate,
+    ToolCatalogEntry,
 )
 from app.services import agent_service
 from app.services.agent_service import AgentValidationError
@@ -56,10 +57,19 @@ async def list_agents(user: ActiveUser) -> dict:
     return {"builtin": builtin, "custom": custom}
 
 
-@router.get("/tools", dependencies=[_read_rate_limit])
-async def list_tools(user: ActiveUser) -> list[dict]:
-    """Return the catalog of tools that can be assigned to a custom agent."""
-    return [dict(tool) for tool in TOOL_CATALOG]
+@router.get(
+    "/tools",
+    response_model=list[ToolCatalogEntry],
+    dependencies=[_read_rate_limit],
+)
+async def list_tools(user: ActiveUser) -> list[ToolCatalogEntry]:
+    """Return the catalog of tools that can be assigned to a custom agent.
+
+    Annotated per caller: which tools have a real runtime, which need a BYOK
+    key, and whether this user already holds it. Presence is read from the
+    provider column alone — no key is ever decrypted to build this response.
+    """
+    return await agent_service.tool_catalog_for(user.id)
 
 
 @router.post(

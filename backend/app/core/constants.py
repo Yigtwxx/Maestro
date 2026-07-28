@@ -1136,6 +1136,10 @@ OBJECTIVE_MAX_CHARS = 2000
 # EXECUTABLE_TOOL_IDS are executed via the subagent directive loop; the rest
 # (summarize, sentiment_analysis, file_read) are declared metadata for the
 # current tier — the LLM performs them natively in its reasoning.
+SUMMARIZE_TOOL_ID = "summarize"
+SENTIMENT_ANALYSIS_TOOL_ID = "sentiment_analysis"
+FILE_READ_TOOL_ID = "file_read"
+
 TOOL_CATALOG: tuple[dict[str, str], ...] = (
     {"id": "web_search", "label": "Web Search"},
     {"id": "code_execution", "label": "Code Execution"},
@@ -1146,9 +1150,9 @@ TOOL_CATALOG: tuple[dict[str, str], ...] = (
     {"id": "social_search", "label": "Social Search (X)"},
     {"id": "community_read", "label": "Community Read (Discord/Slack/Telegram)"},
     {"id": "places_intel", "label": "Place Intelligence (Google Maps)"},
-    {"id": "summarize", "label": "Summarize"},
-    {"id": "sentiment_analysis", "label": "Sentiment Analysis"},
-    {"id": "file_read", "label": "File / Document Read"},
+    {"id": SUMMARIZE_TOOL_ID, "label": "Summarize"},
+    {"id": SENTIMENT_ANALYSIS_TOOL_ID, "label": "Sentiment Analysis"},
+    {"id": FILE_READ_TOOL_ID, "label": "File / Document Read"},
 )
 
 TOOL_IDS = frozenset(tool["id"] for tool in TOOL_CATALOG)
@@ -1188,3 +1192,60 @@ RETRIEVAL_TOOL_IDS = (
     | RAG_TOOL_IDS
     | CONNECTED_TOOL_IDS
 )
+
+# Catalog tools with no runtime: the model performs them natively in its
+# reasoning, so they are declared for planning but never reach the tool loop.
+DECLARATIVE_TOOL_IDS = TOOL_IDS - EXECUTABLE_TOOL_IDS
+
+# One human-readable sentence per tool. Single source of truth for two very
+# different readers: the ``description`` field of a native function-calling
+# ``ToolDef`` (app.agents.tools.tool_defs_for) and the tool catalog the agent
+# wizard renders. It lives here, not in app.agents.tools, because a service may
+# import from core.constants but not from the agent layer (app.agents.tools
+# imports app.services, so the reverse edge would be a cycle). Do not write a
+# second copy for the UI — a description that drifts from what the model is told
+# is worse than no description.
+TOOL_DESCRIPTIONS: dict[str, str] = {
+    WEB_SEARCH_ACTION: "Search the web for up-to-date information.",
+    DATA_FETCH_ACTION: (
+        "Fetch a URL and return its readable text. Pass a CSS selector to get "
+        "just the matching elements as a JSON array instead of the whole page."
+    ),
+    CODE_EXECUTION_ACTION: "Run Python code in a sandbox and return its output.",
+    REPO_INTEL_ACTION: (
+        "Read structured facts about a GitHub repository — health, activity, "
+        "issue backlog and release cadence — one aspect per call."
+    ),
+    SOCIAL_SEARCH_ACTION: (
+        "Search recent public posts on X, with author, timestamp and "
+        "engagement counts for each, so you can measure rather than guess."
+    ),
+    COMMUNITY_READ_ACTION: (
+        "Read recent messages from a Discord, Slack or Telegram channel the "
+        "user has connected."
+    ),
+    PLACES_INTEL_ACTION: (
+        "Find places in an area with their ratings, review counts and price "
+        "level, or read their reviews for complaint and theme mining."
+    ),
+    DOCUMENT_SEARCH_ACTION: (
+        "Search the user's own uploaded documents for passages relevant to a "
+        "query, returned as a list of matching excerpts."
+    ),
+    MEMORY_RECALL_ACTION: (
+        "Recall relevant snippets from the user's past conversations for a query."
+    ),
+    VIEW_ORIGINAL_REQUEST_ACTION: "Read the original user request for context.",
+    SUMMARIZE_TOOL_ID: (
+        "Condense long input into its key points. Performed by the model "
+        "itself — no external call, so it needs no key and no network."
+    ),
+    SENTIMENT_ANALYSIS_TOOL_ID: (
+        "Judge the tone and polarity of text. Performed by the model itself — "
+        "no external call, so it needs no key and no network."
+    ),
+    FILE_READ_TOOL_ID: (
+        "Read content the task already carries. Performed by the model "
+        "itself; to search your uploaded documents use Document Search."
+    ),
+}

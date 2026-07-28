@@ -8,8 +8,34 @@ write (CLAUDE.md §9.3).
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+
+class ToolCatalogEntry(BaseModel):
+    """One declarable capability, with everything the wizard needs to explain it.
+
+    ``kind`` separates the tools with a real runtime behind the directive loop
+    from the ones the model performs natively in its reasoning — a distinction
+    the previous ``{id, label}`` catalog left the UI unable to make, so every
+    tool looked equally powerful.
+
+    ``available`` is the operator switch; ``connected`` is whether *this* user
+    holds the BYOK key. They are separate because the remedies differ: the first
+    is the operator's to change, the second the user's.
+    """
+
+    id: str
+    label: str
+    description: str = ""
+    kind: Literal["executable", "declarative", "custom_api"]
+    # Plural: community_read authenticates against whichever of Discord, Slack
+    # or Telegram the call names, so it has no single provider.
+    providers: list[str] = Field(default_factory=list)
+    keyless: bool = False
+    connected: bool = True
+    available: bool = True
 
 
 class AgentConfigCreate(BaseModel):

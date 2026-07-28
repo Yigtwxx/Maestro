@@ -13,9 +13,22 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.agents.registry import normalize_domain
-from app.core.constants import ROUTING_CUSTOM_AGENTS_MAX, TOOL_IDS, MongoCollection
+from app.core.config import settings
+from app.core.constants import (
+    COMMUNITY_PLATFORMS,
+    COMMUNITY_READ_ACTION,
+    CONNECTED_TOOL_PROVIDERS,
+    EXECUTABLE_TOOL_IDS,
+    KEYLESS_CONNECTED_TOOL_IDS,
+    ROUTING_CUSTOM_AGENTS_MAX,
+    TOOL_CATALOG,
+    TOOL_DESCRIPTIONS,
+    TOOL_IDS,
+    MongoCollection,
+)
 from app.core.database import get_mongo_db
-from app.schemas.agent import AgentConfigCreate, AgentConfigUpdate
+from app.schemas.agent import AgentConfigCreate, AgentConfigUpdate, ToolCatalogEntry
+from app.services import service_key_service
 from app.utils import prompt_guard
 
 
@@ -43,6 +56,52 @@ def _guard_prompt(system_prompt: str) -> None:
         raise AgentValidationError(
             "System prompt failed the security scan (possible prompt injection)."
         )
+
+
+async def tool_catalog_for(user_id: uuid.UUID) -> list[ToolCatalogEntry]:
+    """The declarable tool catalog, annotated for one user.
+
+    Composed from the existing single sources of truth rather than a second
+    hand-maintained table: ids/labels from ``TOOL_CATALOG``, the executable
+    split from ``EXECUTABLE_TOOL_IDS``, credential requirements from
+    ``CONNECTED_TOOL_PROVIDERS``, and prose from ``TOOL_DESCRIPTIONS`` — the
+    same text the model is given for native function calling.
+
+    ``available`` reads the operator switch with the same expression
+    ``resolve_enabled_tools`` uses. It deliberately does *not* run the Docker
+    probe that gates ``code_execution`` at runtime: this is a read endpoint, and
+    the switch (off by default, CLAUDE.md §11) already answers the question for
+    every deployment that has not deliberately turned it on.
+    """
+    connected = await service_key_service.connected_providers(user_id)
+    entries: list[ToolCatalogEntry] = []
+    for tool in TOOL_CATALOG:
+        tool_id = tool["id"]
+        if tool_id == COMMUNITY_READ_ACTION:
+            # No single provider: the call's ``platform`` argument picks one, so
+            # any one connected community key makes the tool usable.
+            providers = sorted(COMMUNITY_PLATFORMS)
+        elif tool_id in CONNECTED_TOOL_PROVIDERS:
+            providers = [CONNECTED_TOOL_PROVIDERS[tool_id].value]
+        else:
+            providers = []
+        entries.append(
+            ToolCatalogEntry(
+                id=tool_id,
+                label=tool["label"],
+                description=TOOL_DESCRIPTIONS.get(tool_id, ""),
+                kind=(
+                    "executable" if tool_id in EXECUTABLE_TOOL_IDS else "declarative"
+                ),
+                providers=providers,
+                keyless=tool_id in KEYLESS_CONNECTED_TOOL_IDS,
+                # Nothing to connect for a keyless or non-connected tool, so it
+                # reports connected rather than misleadingly "missing a key".
+                connected=(not providers) or bool(connected & set(providers)),
+                available=getattr(settings, f"{tool_id}_enabled", True),
+            )
+        )
+    return entries
 
 
 async def list_agents(user_id: uuid.UUID) -> list[dict[str, Any]]:

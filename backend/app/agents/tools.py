@@ -47,6 +47,7 @@ from app.core.constants import (
     REPO_INTEL_DEFAULT_ASPECT,
     REQUEST_TOOL_ACTION,
     SOCIAL_SEARCH_ACTION,
+    TOOL_DESCRIPTIONS,
     VIEW_ORIGINAL_REQUEST_ACTION,
     WEB_SEARCH_ACTION,
     WEB_SEARCH_CATEGORIES,
@@ -754,39 +755,6 @@ _TOOL_PARAMETERS: dict[str, dict] = {
     VIEW_ORIGINAL_REQUEST_ACTION: {"type": "object", "properties": {}},
 }
 
-_TOOL_DESCRIPTIONS: dict[str, str] = {
-    WEB_SEARCH_ACTION: "Search the web for up-to-date information.",
-    DATA_FETCH_ACTION: (
-        "Fetch a URL and return its readable text. Pass a CSS selector to get "
-        "just the matching elements as a JSON array instead of the whole page."
-    ),
-    CODE_EXECUTION_ACTION: "Run Python code in a sandbox and return its output.",
-    REPO_INTEL_ACTION: (
-        "Read structured facts about a GitHub repository — health, activity, "
-        "issue backlog and release cadence — one aspect per call."
-    ),
-    SOCIAL_SEARCH_ACTION: (
-        "Search recent public posts on X, with author, timestamp and "
-        "engagement counts for each, so you can measure rather than guess."
-    ),
-    COMMUNITY_READ_ACTION: (
-        "Read recent messages from a Discord, Slack or Telegram channel the "
-        "user has connected."
-    ),
-    PLACES_INTEL_ACTION: (
-        "Find places in an area with their ratings, review counts and price "
-        "level, or read their reviews for complaint and theme mining."
-    ),
-    DOCUMENT_SEARCH_ACTION: (
-        "Search the user's own uploaded documents for passages relevant to a "
-        "query, returned as a list of matching excerpts."
-    ),
-    MEMORY_RECALL_ACTION: (
-        "Recall relevant snippets from the user's past conversations for a query."
-    ),
-    VIEW_ORIGINAL_REQUEST_ACTION: "Read the original user request for context.",
-}
-
 
 def tool_defs_for(specs: dict[str, ToolSpec]) -> list:
     """Build native-function-calling ``ToolDef``s from the enabled specs.
@@ -798,7 +766,7 @@ def tool_defs_for(specs: dict[str, ToolSpec]) -> list:
     return [
         ToolDef(
             name=action,
-            description=_TOOL_DESCRIPTIONS.get(action, action),
+            description=TOOL_DESCRIPTIONS.get(action, action),
             parameters=_TOOL_PARAMETERS.get(
                 action, {"type": "object", "properties": {}}
             ),

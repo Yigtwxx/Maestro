@@ -37,7 +37,7 @@ from app.models.api_key import ApiKey
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ServiceCredentials", "load_service_credentials"]
+__all__ = ["ServiceCredentials", "connected_providers", "load_service_credentials"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,3 +113,29 @@ async def load_service_credentials(user_id: uuid.UUID) -> ServiceCredentials:
             # both narrow an attack on the master key.
             logger.warning("Skipping undecryptable %s service key", row.provider)
     return ServiceCredentials(secrets)
+
+
+async def connected_providers(user_id: uuid.UUID) -> frozenset[str]:
+    """Service providers this user holds an active key for. Never raises.
+
+    Answers "is a key present", which is all the UI needs to tell a connected
+    tool from one that is merely declarable. Deliberately selects the provider
+    column alone and **never decrypts**: handling plaintext to answer a
+    presence question would put secrets in memory for no reason (CLAUDE.md §9.1).
+    Use :func:`load_service_credentials` only where a secret is actually spent.
+    """
+    try:
+        async with SessionLocal() as db:
+            rows = (
+                await db.scalars(
+                    select(ApiKey.provider).where(
+                        ApiKey.user_id == user_id,
+                        ApiKey.provider.in_([p.value for p in SERVICE_PROVIDERS]),
+                        ApiKey.is_active.is_(True),
+                    )
+                )
+            ).all()
+    except Exception:  # noqa: BLE001 - a DB hiccup must not fail the catalog
+        logger.warning("Could not list connected providers", exc_info=True)
+        return frozenset()
+    return frozenset(rows)
