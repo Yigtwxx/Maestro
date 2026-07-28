@@ -256,8 +256,12 @@ async def _run_subtask(
         },
     )
 
+    # ``ctx.domain_info`` when the run carries one: it is the only place a
+    # custom agent's declared tools exist (a ``custom:{id}`` selector has no
+    # catalog entry, so resolving the string would fall back to ``general``).
+    domain_source = ctx.domain_info or domain
     enabled = await tool_directives.resolve_enabled_tools(
-        domain, credentials=ctx.service_credentials, assigned=assigned_tools
+        domain_source, credentials=ctx.service_credentials, assigned=assigned_tools
     )
     # Per-run directive registry: domain tools plus the built-in original-
     # request viewer (available whenever this run carries an objective, even
@@ -279,7 +283,7 @@ async def _run_subtask(
     # the member was unassigned (it already holds the whole domain set).
     grantable = (
         await tool_directives.resolve_enabled_tools(
-            domain, credentials=ctx.service_credentials, assigned=None
+            domain_source, credentials=ctx.service_credentials, assigned=None
         )
         - enabled
     )

@@ -462,7 +462,9 @@ async def _discover(ctx: AgentContext, domain: str, prompt: str) -> list[str]:
     # ever returned more, only the RAG tools can run in discovery.
     available = (
         await tool_directives.resolve_enabled_tools(
-            domain, credentials=ctx.service_credentials, assigned=RAG_TOOL_IDS
+            ctx.domain_info or domain,
+            credentials=ctx.service_credentials,
+            assigned=RAG_TOOL_IDS,
         )
     ) & RAG_TOOL_IDS
     if not available:

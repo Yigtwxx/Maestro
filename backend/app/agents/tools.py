@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from app.agents.registry import get_domain_info
+from app.agents.registry import DomainInfo, get_domain_info
 from app.core.config import settings
 from app.core.constants import (
     CODE_EXECUTION_ACTION,
@@ -557,7 +557,7 @@ def _connected_is_usable(action: str, credentials: ServiceCredentials) -> bool:
 
 
 async def resolve_enabled_tools(
-    domain: str,
+    domain: str | DomainInfo,
     *,
     credentials: ServiceCredentials | None = None,
     assigned: frozenset[str] | None = None,
@@ -570,8 +570,16 @@ async def resolve_enabled_tools(
     *before* the operator switch and credential gates below, so an assignment
     can only ever *narrow* the set: a member can never enable a tool the domain
     does not declare, the operator disabled, or the user has no key for.
+
+    ``domain`` accepts a resolved :class:`DomainInfo` as well as a selector
+    string, and callers holding one must pass it. A ``custom:{id}`` selector
+    has no catalog entry, so resolving it *here* falls back to ``general`` and
+    silently withholds the tools the custom agent actually declared — while the
+    planner, which reads the same run's ``ctx.domain_info``, advertises them.
+    Passing the object keeps the two tiers reading one source.
     """
-    declared = set(get_domain_info(domain).tools) & EXECUTABLE_TOOL_IDS
+    info = domain if isinstance(domain, DomainInfo) else get_domain_info(domain)
+    declared = set(info.tools) & EXECUTABLE_TOOL_IDS
     if assigned is not None:
         declared &= assigned
     if not settings.web_search_enabled:

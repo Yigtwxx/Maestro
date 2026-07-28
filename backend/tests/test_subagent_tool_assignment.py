@@ -12,9 +12,15 @@ import pytest
 
 from app.agents import tools as tool_directives
 from app.agents.main_agent import Assignment, _parse_assignments
-from app.agents.registry import get_domain_info
+from app.agents.registry import get_domain_info, to_domain_info
 from app.agents.schemas import PlanAssignment
-from app.core.constants import DATA_FETCH_ACTION, WEB_SEARCH_ACTION
+from app.core.constants import (
+    DATA_FETCH_ACTION,
+    DOCUMENT_SEARCH_ACTION,
+    MEMORY_RECALL_ACTION,
+    REPO_INTEL_ACTION,
+    WEB_SEARCH_ACTION,
+)
 
 # ``searching`` declares web_search + data_fetch (+ the native summarize, which
 # is not executable and so never reaches the enabled set).
@@ -95,3 +101,51 @@ def test_assignment_default_is_none() -> None:
     """A freshly constructed Assignment is unassigned by default."""
     member = get_domain_info(DOMAIN).team[0]
     assert Assignment(member=member, brief="b").assigned_tools is None
+
+
+# --- Custom agents: the resolved DomainInfo is the source of truth -----------
+
+
+def _custom_doc(tools: list[str]) -> dict:
+    """A stored custom-agent document declaring ``tools``."""
+    return {
+        "id": "abc123",
+        "name": "Repo Watcher",
+        "domain": "general",
+        "system_prompt": "Watch a repository.",
+        "tools": tools,
+    }
+
+
+async def test_custom_domain_info_keeps_its_declared_tools() -> None:
+    """A custom agent's declared tools survive to the runtime set.
+
+    Regression: ``resolve_enabled_tools`` used to take only the selector string.
+    A ``custom:{id}`` selector has no catalog entry, so it fell back to
+    ``general`` — whose tools are web_search/document_search/memory_recall — and
+    the repo_intel this agent declared was silently withheld at execution while
+    the planner (reading the same run's ``DomainInfo``) advertised it.
+    """
+    info = to_domain_info(_custom_doc([REPO_INTEL_ACTION]))
+    enabled = await tool_directives.resolve_enabled_tools(info)
+    # repo_intel is the keyless connected tool, so no credentials are needed.
+    assert REPO_INTEL_ACTION in enabled, enabled
+    # The ``general`` fallback's tools must not leak in: this agent declared none
+    # of them, and their presence is exactly what the bug looked like.
+    assert not enabled & {DOCUMENT_SEARCH_ACTION, MEMORY_RECALL_ACTION}, enabled
+
+
+async def test_custom_domain_info_still_narrows_by_assignment() -> None:
+    """The assignment gate applies to a DomainInfo exactly as to a selector."""
+    info = to_domain_info(_custom_doc([REPO_INTEL_ACTION, WEB_SEARCH_ACTION]))
+    enabled = await tool_directives.resolve_enabled_tools(
+        info, assigned=frozenset({WEB_SEARCH_ACTION})
+    )
+    assert enabled == frozenset({WEB_SEARCH_ACTION}), enabled
+
+
+async def test_domain_info_and_selector_agree_for_builtin_domains() -> None:
+    """Passing the object or the string is identical for a catalog domain."""
+    by_string = await tool_directives.resolve_enabled_tools(DOMAIN)
+    by_object = await tool_directives.resolve_enabled_tools(get_domain_info(DOMAIN))
+    assert by_object == by_string, (by_object, by_string)
