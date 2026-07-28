@@ -298,21 +298,22 @@ Widening this to a general "follow redirects" flag
 would reintroduce the SSRF surface the paragraph above says these tools do not have.
 
 **Custom API tools (`custom_api__{slug}`).** The one exception to everything above: a user
-registers their own endpoint under Settings > API Tools, so the *host is user-supplied* and
-none of the "it's a constant" reasoning applies. Safety comes from `url_guard` instead, run
-**twice** — at registration (`schemas/custom_api_tool` for the shape, the route for the DNS
-resolution) and again inside `custom_api_service.call`, because a record outlives its
-validation and the DNS for a host the user owns is theirs to change. Path parameters are
-percent-encoded with an empty safe set (`urljoin` is deliberately not used — an
-absolute-looking value would replace the base), query values go through httpx `params=`,
-static headers cannot be `Authorization`/`Cookie`/`Host`, responses are byte-capped while
-streaming, and the tool's own `name`/`description` pass `prompt_guard` at write time
-because they are interpolated into the subagent's system prompt. The stored credential is
-AES-256-GCM in Mongo — the first ciphertext in that datastore — kept out of every response
-by both a query projection and an explicit `CustomApiToolPublic` field list. The residual
-risk is DNS rebinding, which `url_guard` already documents as unclosed — and which is why
-`CUSTOM_API_TOOLS_ENABLED` defaults to `false` rather than shipping on. A per-user action
-id never enters `TOOL_CATALOG`/`TOOL_IDS`: those are process-wide constants that
+registers their own endpoint from the agent wizard's Capabilities step, so the *host is
+user-supplied* and none of the "it's a constant" reasoning applies. Safety comes from
+`url_guard` instead, run **twice** — at registration (`schemas/custom_api_tool` for the
+shape, the route for the DNS resolution) and again inside `custom_api_service.call`,
+because a record outlives its validation and the DNS for a host the user owns is theirs to
+change. Path parameters are percent-encoded with an empty safe set (`urljoin` is
+deliberately not used — an absolute-looking value would replace the base), query values go
+through httpx `params=`, static headers cannot be `Authorization`/`Cookie`/`Host`,
+responses are byte-capped while streaming, and the tool's own `name`/`description` pass
+`prompt_guard` at write time because they are interpolated into the subagent's system
+prompt. The stored credential is AES-256-GCM in Mongo — the first ciphertext in that
+datastore — kept out of every response by both a query projection and an explicit
+`CustomApiToolPublic` field list. The residual risk is DNS rebinding, which `url_guard`
+already documents as unclosed — and which is why `CUSTOM_API_TOOLS_ENABLED` defaults to
+`false` rather than shipping on. A per-user action id never enters
+`TOOL_CATALOG`/`TOOL_IDS`: those are process-wide constants that
 `agent_service._validate_tools`, the marketplace publish filter and the frontend parity
 tests all key off.
 

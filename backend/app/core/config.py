@@ -282,9 +282,9 @@ class Settings(BaseSettings):
     # --- Custom API tools (user-registered HTTP endpoints) ---
     # Unlike the connected tools above, nothing here is configured per provider:
     # the endpoint, the credential and the parameter schema are all the user's,
-    # stored under Settings > API Tools. This switch is the whole-feature
-    # rollback — off, every custom_api__* action is dropped from the enabled set
-    # and the executor refuses a second time.
+    # registered from the agent wizard's Capabilities step. This switch is the
+    # whole-feature rollback — off, every custom_api__* action is dropped from
+    # the enabled set and the executor refuses a second time.
     #
     # Off by default, for the same reason code_execution is: the guard in front
     # of it is real but incomplete. url_guard checks that a hostname resolves to
