@@ -71,6 +71,19 @@ services:
       - "6334:6334" # gRPC
     volumes:
       - ./.data/qdrant:/qdrant/storage
+    # The image ships no curl/wget and its /bin/sh is dash, so CMD-SHELL cannot
+    # probe anything — but bash *is* installed, and its /dev/tcp redirection
+    # speaks enough HTTP to read Qdrant's own /readyz. That endpoint answers
+    # without the API key, so the same probe works in docker-compose.prod.yml.
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
