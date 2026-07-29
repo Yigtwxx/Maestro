@@ -135,7 +135,21 @@ has to do the purging. Compose has no scheduler, so use the host's:
 The script takes a Postgres advisory lock and is idempotent, so an overlapping
 run is harmless.
 
-### 7. Schedule the backups
+### 7. Schedule the email-token sweep
+
+`email_tokens` rows are otherwise only removed by the account-deletion cascade,
+so verification and password-reset rows accumulate forever. This sweep deletes
+rows whose links died more than 30 days ago:
+
+```cron
+30 3 * * * cd /opt/maestro && docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm --no-deps backend python -m app.scripts.purge_email_tokens
+```
+
+Offset half an hour from the account purge so the two never contend. It takes
+its own advisory lock, deletes in batches, and accepts `--dry-run` to report
+what a run would remove without touching anything.
+
+### 8. Schedule the backups
 
 See [Backups](#backups) below for what gets backed up and how restore works;
 the cron line lives there next to the rest of the backup documentation.
