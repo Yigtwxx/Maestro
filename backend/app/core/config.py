@@ -154,9 +154,15 @@ class Settings(BaseSettings):
     # The frontend's SITE_URL is a separate, frontend-container-only variable;
     # the backend reads its own copy because emails are built server-side.
     site_url: str = "http://localhost:3000"
-    # Soft gate: unverified accounts get 403 on task start and API-key create.
-    # Self-hosters may disable it; verification emails still go out.
-    email_verification_required: bool = True
+    # Soft gate: unverified accounts get 403 on task start, API-key create and
+    # custom-API-tool writes. Ships *off* because email_provider defaults to
+    # "console", which only logs the message -- nothing reaches an inbox, so a
+    # gate nobody can pass would brick a fresh install rather than protect it.
+    # Turn it on only alongside a real sender (email_provider="resend" plus
+    # resend_api_key), and flip its frontend twin EMAIL_VERIFICATION_LIVE
+    # (frontend/src/lib/legal/config.ts) in the same change -- that process
+    # cannot read this setting. Verification emails go out either way.
+    email_verification_required: bool = False
 
     # --- Free / local model (Ollama, OpenAI-compatible) ---
     free_model_endpoint: str = "http://localhost:11434/v1"

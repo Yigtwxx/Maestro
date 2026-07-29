@@ -13,10 +13,15 @@ from app.core.constants import (
 )
 
 
-def test_settings_email_defaults_are_console_and_gated() -> None:
+def test_settings_email_defaults_are_console_and_ungated() -> None:
+    # The two defaults are one decision, not two: the console provider writes
+    # verification mail to the server log instead of an inbox, so shipping the
+    # gate on would 403 task start and API-key create for every account on a
+    # fresh install with no way through. Turn the gate on only together with a
+    # real sender -- and with EMAIL_VERIFICATION_LIVE on the frontend.
     fresh = Settings(_env_file=None)
     assert fresh.email_provider == EMAIL_PROVIDER_CONSOLE
-    assert fresh.email_verification_required is True
+    assert fresh.email_verification_required is False
     assert fresh.site_url.startswith("http")
 
 

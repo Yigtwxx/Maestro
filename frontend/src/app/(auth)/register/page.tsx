@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Card } from '@/components/ui/Card';
 import { api, ApiError } from '@/lib/api';
+import { EMAIL_VERIFICATION_LIVE } from '@/lib/legal';
 import { useAuthStore } from '@/stores/auth';
 import { toast } from '@/stores/toast';
 import { cn } from '@/lib/cn';
@@ -61,7 +62,12 @@ export default function RegisterPage() {
       setLoading(false);
       return;
     }
-    toast.info('We sent a verification link to your email.');
+    // A link does go out either way, but under the default `console` sender it
+    // only reaches the server log -- promising an email nobody receives is the
+    // one thing worse than saying nothing.
+    if (EMAIL_VERIFICATION_LIVE) {
+      toast.info('We sent a verification link to your email.');
+    }
     setGranted(true);
     window.setTimeout(() => router.replace('/architect'), GRANTED_SWEEP_MS);
   };

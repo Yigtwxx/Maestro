@@ -40,6 +40,23 @@ export const LEGAL_ENTITY = {
  */
 export const BILLING_LIVE = false;
 
+/**
+ * Whether the email-verification soft gate is enforced.
+ *
+ * While this is `false` an unverified account can do everything a verified one
+ * can, so the app must not nag anybody to verify: the reminder banner hides
+ * itself and registration stops claiming a link was sent. The `/verify-email`
+ * screen and the link/code endpoints keep working — nothing is disabled, it
+ * simply is not demanded.
+ *
+ * It ships off because the default sender is `console`, which writes the
+ * message to the server log instead of an inbox: a gate nobody can pass locks
+ * the product rather than protecting it. Its backend twin is the
+ * `EMAIL_VERIFICATION_REQUIRED` setting, which this process cannot read; flip
+ * both, and only alongside a real sender.
+ */
+export const EMAIL_VERIFICATION_LIVE = false;
+
 /** Shown wherever billing terms appear while `BILLING_LIVE` is false. */
 export const BILLING_PRERELEASE_NOTICE =
   'Paid plans are coming soon. Every account currently runs on the free plan ' +

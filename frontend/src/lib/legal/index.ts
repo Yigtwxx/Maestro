@@ -120,4 +120,9 @@ export function formatLegalDate(iso: string): string {
   });
 }
 
-export { BILLING_LIVE, BILLING_PRERELEASE_NOTICE, LEGAL_ENTITY } from './config';
+export {
+  BILLING_LIVE,
+  BILLING_PRERELEASE_NOTICE,
+  EMAIL_VERIFICATION_LIVE,
+  LEGAL_ENTITY,
+} from './config';
