@@ -157,7 +157,8 @@ maestro/
 
 ```
 users              id, email, hashed_password, display_name, role (user|admin),
-                   subscription_tier (starter|pro|scale|NULL — NULL means no subscription),
+                   subscription_tier (free|starter|pro|scale — every account is
+                   provisioned with an active free plan at registration),
                    email_verified, totp_secret (encrypted), model_preferences,
                    deletion_requested_at, suspended_at
 
@@ -577,7 +578,12 @@ Maestro is fair-code / open-core, following the n8n model.
 - **Not public:** the real payment processor adapter, cloud tenancy infrastructure, and
   operational deployment scripts. The `PaymentProvider` adapter seam already accommodates
   this split — only the mock lives here.
-- **Revenue:** hosted subscriptions (starter / pro / scale).
+- **Revenue:** hosted subscriptions (starter / pro / scale). Paid plans are currently
+  **parked**: `BILLING_ENABLED` (backend) and `BILLING_LIVE` (frontend) are both false while
+  no real processor is integrated, so `/billing/subscribe` and `/billing/cancel` answer 403
+  for everyone except admins — who keep the live flow so the operator can test it — and the
+  billing surfaces render "coming soon". Every account runs on the unlimited `free` plan
+  meanwhile. Flip both flags together.
 
 Contributions are inbound-licensed under the same terms; see `CONTRIBUTING.md`.
 

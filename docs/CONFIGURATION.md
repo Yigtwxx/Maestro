@@ -108,6 +108,8 @@ what could not be reached. A missing *brain* key stops the task and tells the us
 | Variable | Description | Default |
 |---|---|---|
 | `PAYMENT_PROVIDER` | Payment gateway; only `mock` is implemented (Luhn/BIN validation, moves no real money) | `mock` |
+| `BILLING_ENABLED` | Whether paid plans are reachable. `false` parks them: subscribe/cancel answer 403 for everyone but admins, and every account runs on the unlimited `free` plan. Flip together with `BILLING_LIVE` in `frontend/src/lib/legal/config.ts` | `false` |
+| `GRANT_ADMIN_EMAILS` | Comma-separated accounts `python -m app.scripts.grant_admin` promotes to admin | *(empty)* |
 
 Plan prices and quotas are product constants in `backend/app/core/constants.py`, not
 environment variables.
