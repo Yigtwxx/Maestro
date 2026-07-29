@@ -7,10 +7,10 @@ Run with ``python -m app.scripts.grant_admin --email you@example.com`` from
 For each target the script (idempotently):
 
 * sets ``role = 'admin'`` and ``email_verified = True``;
-* seeds an **active** ``scale`` subscription (the top plan) if the account has
-  no active one, so the billing UI reflects full access. Admins also run
-  unmetered (``quota_service.is_unmetered``), so this subscription is for
-  display/consistency — task start never depends on it.
+* seeds an **active** ``free`` subscription if the account has no active one,
+  via ``billing_service.ensure_free_subscription``. Admins run unmetered by role
+  (``quota_service.is_unmetered``), so this row is display-only — task start
+  never depends on it.
 
 No password is ever handled here (CLAUDE.md security rules): the account must be
 registered first through the normal ``/register`` flow, then promoted. If a
@@ -27,20 +27,15 @@ import argparse
 import asyncio
 import logging
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import (
-    BILLING_PERIOD_DAYS,
-    PAYMENT_PROVIDER_MOCK,
-    SubscriptionPlan,
-    SubscriptionStatus,
     UserRole,
 )
 from app.core.database import SessionLocal, close_connections
-from app.models.subscription import Subscription
 from app.models.user import User
 from app.services import billing_service
 
@@ -62,46 +57,11 @@ def _collect_emails(cli_emails: list[str]) -> list[str]:
     return list(seen)
 
 
-async def _seed_scale_subscription(
-    db: AsyncSession, user: User, *, now: datetime
-) -> str:
-    """Ensure the user holds an active scale subscription. Returns a status word."""
-    subscription = await billing_service.get_subscription(db, user.id)
-    plan = SubscriptionPlan.SCALE.value
-    if subscription is not None and billing_service.is_active(subscription):
-        # Already active — only ensure it is the top plan for full quota display.
-        if subscription.plan != plan:
-            subscription.plan = plan
-            user.subscription_tier = plan
-            return "upgraded to scale"
-        return "already active"
-
-    period_end = now + timedelta(days=BILLING_PERIOD_DAYS)
-    if subscription is None:
-        db.add(
-            Subscription(
-                user_id=user.id,
-                plan=plan,
-                status=SubscriptionStatus.ACTIVE.value,
-                provider=PAYMENT_PROVIDER_MOCK,
-                current_period_start=now,
-                current_period_end=period_end,
-                cancel_at_period_end=False,
-            )
-        )
-    else:
-        subscription.plan = plan
-        subscription.status = SubscriptionStatus.ACTIVE.value
-        subscription.provider = PAYMENT_PROVIDER_MOCK
-        subscription.current_period_start = now
-        subscription.current_period_end = period_end
-        subscription.cancel_at_period_end = False
-    user.subscription_tier = plan
-    return "activated scale plan"
-
-
 async def grant(db: AsyncSession, email: str) -> bool:
     """Promote one account. Returns whether the account existed."""
+    # No func.lower(): _collect_emails lowercases every input and the register
+    # handler stores lowercased, so both sides are lowercase by construction.
+    # Wrapping the column would drop the ix_users_email index for no gain.
     user = await db.scalar(sa.select(User).where(User.email == email))
     if user is None:
         logger.warning("No account for %s — register it first, then re-run.", email)
@@ -110,9 +70,9 @@ async def grant(db: AsyncSession, email: str) -> bool:
     now = datetime.now(UTC)
     user.role = UserRole.ADMIN.value
     user.email_verified = True
-    sub_status = await _seed_scale_subscription(db, user, now=now)
+    await billing_service.ensure_free_subscription(db, user, now=now)
     await db.commit()
-    logger.info("Promoted %s to admin (%s).", email, sub_status)
+    logger.info("Promoted %s to admin.", email)
     return True
 
 

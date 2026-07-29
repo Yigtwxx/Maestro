@@ -40,6 +40,7 @@ from app.schemas.auth import (
 )
 from app.services import (
     auth_service,
+    billing_service,
     email_service,
     two_factor_service,
 )
@@ -72,8 +73,8 @@ _auth_rate_limit = rate_limit(RATE_LIMIT_AUTH, scope="auth")
 async def register(payload: RegisterRequest, db: DbSession) -> DetailResponse:
     """Create a new user account.
 
-    There is no free plan and no trial: a fresh account holds no subscription
-    and must subscribe to a paid plan before it can start any task.
+    A fresh account is provisioned with an active FREE plan (unlimited tokens)
+    and can start tasks immediately.
 
     Always 202 with a fixed body: a taken address must be indistinguishable
     from a free one, the same rule /forgot-password and /resend-verification
@@ -112,6 +113,12 @@ async def register(payload: RegisterRequest, db: DbSession) -> DetailResponse:
         if existing is not None:
             await email_service.send_registration_attempt(existing.email)
         return DetailResponse(detail=_REGISTER_ACCEPTED)
+
+    # Every account starts on the active FREE plan, in the same transaction as
+    # the user row so the two can never diverge. This is also what keeps
+    # usage_records writable: record_task_usage drops the record when there is
+    # no subscription row to anchor period_start to.
+    await billing_service.ensure_free_subscription(db, user)
 
     # Issue the token inside the same transaction as the user row; send only
     # after commit so an email can never precede (or roll back with) the data.

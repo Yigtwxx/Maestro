@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
+from app.core.config import settings
 from app.core.constants import (
     BILLING_CURRENCY,
     PLAN_MONTHLY_TOKEN_QUOTA,
@@ -16,9 +17,11 @@ from app.core.constants import (
     RATE_LIMIT_PUBLIC,
     RATE_LIMIT_READ,
     SubscriptionPlan,
+    UserRole,
 )
 from app.core.deps import ActiveUser, DbSession
 from app.models.subscription import Subscription
+from app.models.user import User
 from app.schemas.billing import (
     PaymentMethodPublic,
     PlanPublic,
@@ -39,6 +42,29 @@ _payment_rate_limit = rate_limit(RATE_LIMIT_PAYMENT, scope="billing")
 _public_rate_limit = rate_limit(RATE_LIMIT_PUBLIC, scope="billing")
 
 NO_SUBSCRIPTION_DETAIL = "You do not have a subscription yet."
+BILLING_DISABLED_DETAIL = (
+    "Paid plans are coming soon. Every account currently runs on the free plan."
+)
+FREE_PLAN_NOT_CANCELABLE_DETAIL = (
+    "The free plan cannot be cancelled — it is what every account runs on."
+)
+
+
+def _require_billing_reachable(user: User) -> None:
+    """Refuse a paid-plan mutation unless billing is live or the caller is admin.
+
+    The UI cannot be the only guard: this endpoint is directly callable with a
+    bearer token and reaches the payment provider. The admin exemption is what
+    lets the operator exercise the real flow before it opens to everyone.
+
+    403, not 402 (which means "pay us" -- the opposite of what is happening) and
+    not 5xx (which would page ops for a deliberate product state).
+    """
+    if settings.billing_enabled or user.role == UserRole.ADMIN.value:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN, detail=BILLING_DISABLED_DETAIL
+    )
 
 
 async def _to_public(
@@ -65,7 +91,7 @@ async def _to_public(
 
 @router.get("/plans", response_model=list[PlanPublic], dependencies=[_read_rate_limit])
 async def list_plans(user: ActiveUser) -> list[PlanPublic]:
-    """The three paid plans at list price."""
+    """The free plan plus the three paid plans, at list price."""
     return [
         PlanPublic(
             plan=plan,
@@ -83,7 +109,7 @@ async def list_plans(user: ActiveUser) -> list[PlanPublic]:
     dependencies=[_public_rate_limit],
 )
 async def list_plans_public() -> list[PlanPublicListing]:
-    """The three paid plans at list price, for anonymous visitors."""
+    """The free plan plus the three paid plans, for anonymous visitors."""
     return [
         PlanPublicListing(
             plan=plan,
@@ -133,6 +159,8 @@ async def subscribe(
     payload: SubscribeRequest, user: ActiveUser, db: DbSession
 ) -> SubscriptionPublic:
     """Charge the first period and activate the plan."""
+    # Before CardDetails is built, so no PAN is handled for a refused call.
+    _require_billing_reachable(user)
     card = CardDetails(
         number=payload.card.number,
         exp_month=payload.card.exp_month,
@@ -157,6 +185,17 @@ async def subscribe(
 )
 async def cancel(user: ActiveUser, db: DbSession) -> SubscriptionPublic:
     """Stop renewal; the plan stays usable until the period ends."""
+    _require_billing_reachable(user)
+    # Unconditional, and deliberately not tied to the flag: cancelling sets
+    # status=canceled, which fails is_active, which makes enforce_can_start_task
+    # raise 402. A user could permanently lock themselves out of the product
+    # with a button that looks harmless, with no way back short of a DB edit.
+    existing = await billing_service.get_subscription(db, user.id)
+    if existing is not None and existing.plan == SubscriptionPlan.FREE.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=FREE_PLAN_NOT_CANCELABLE_DETAIL,
+        )
     subscription = await billing_service.cancel(db, user)
     if subscription is None:
         raise HTTPException(

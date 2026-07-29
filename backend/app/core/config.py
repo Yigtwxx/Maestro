@@ -128,6 +128,14 @@ class Settings(BaseSettings):
     # Prices, quotas and the trial length live in constants.py; they are product
     # decisions, not deployment config.
     payment_provider: str = "mock"
+    # Whether paid plans are reachable at all. False (the default while no real
+    # processor is integrated) makes POST /billing/subscribe and /billing/cancel
+    # refuse with 403 for everyone except admins, who keep the live flow so the
+    # operator can test it. Every account runs on the unlimited FREE plan.
+    # The frontend holds its own copy of this decision in
+    # frontend/src/lib/legal/config.ts (BILLING_LIVE) -- a TS constant this
+    # process cannot read. The two are flipped together.
+    billing_enabled: bool = False
 
     # --- Transactional email ---
     # "console" logs messages (dev/self-host default, zero dependencies);
