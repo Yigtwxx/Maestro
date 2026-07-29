@@ -25,9 +25,11 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
 from app.core.database import get_db  # noqa: E402
+from app.core.metrics import metrics  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base  # noqa: E402
 from app.services import (  # noqa: E402
+    alert_service,
     checkpoint_store,
     code_execution_service,
     community_read_service,
@@ -44,7 +46,9 @@ from app.services import (  # noqa: E402
     social_search_service,
     task_run_store,
     usage_service,
+    watchdog,
 )
+from app.services.alerts import get_alert_channels  # noqa: E402
 from app.services.email import EmailMessage  # noqa: E402
 from app.utils.rate_limiter import limiter  # noqa: E402
 
@@ -272,6 +276,34 @@ def sent_emails(monkeypatch):
     provider = RecordingEmailProvider()
     monkeypatch.setattr(email_service, "get_email_provider", lambda: provider)
     return provider.messages
+
+
+@pytest.fixture(autouse=True)
+def _no_alerting(monkeypatch):
+    """Operator alerting is opt-in per test (mirrors ``_no_rate_limit``).
+
+    The channel registry is ``lru_cache``d and the watchdog holds process-wide
+    state, so both are cleared here — otherwise one test's configuration serves
+    every test that runs after it, and a stale state machine makes the
+    transition assertions in ``test_watchdog.py`` order-dependent.
+    """
+    monkeypatch.setattr(settings, "alert_webhook_url", "")
+    monkeypatch.setattr(settings, "alert_email_to", "")
+    get_alert_channels.cache_clear()
+    alert_service.reset()
+    watchdog.watchdog.reset()
+    yield
+    get_alert_channels.cache_clear()
+    alert_service.reset()
+    watchdog.watchdog.reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_metrics():
+    """Counters are process-wide, like the rate limiter's buckets."""
+    metrics.reset()
+    yield
+    metrics.reset()
 
 
 # --- In-memory Mongo collection (custom API tools) --------------------------

@@ -10,9 +10,19 @@ from typing import NamedTuple
 
 API_V1_PREFIX = "/api/v1"
 
+# Advertised on the OpenAPI schema and on the `maestro_build_info` metric, so a
+# scrape can tell which build a worker is running.
+APP_VERSION = "0.1.2"
+
 # Header carrying HEALTH_DETAIL_TOKEN. `/health/ready` names the failing
 # dependency only for a caller presenting it; the status code alone is public.
 HEALTH_DETAIL_HEADER = "X-Health-Token"
+
+# Header carrying METRICS_TOKEN. A separate credential from the health token on
+# purpose: this one is pasted into a long-lived scraper config, that one into an
+# on-call runbook, and their rotations should not be coupled. `/metrics` also
+# exposes strictly more (traffic volume, latency distribution, error rate).
+METRICS_TOKEN_HEADER = "X-Metrics-Token"
 
 
 # --- User roles (authorization) ---
@@ -562,6 +572,40 @@ EMAIL_SEND_BACKOFF_BASE_SECONDS = 0.5
 EMAIL_SEND_TIMEOUT_SECONDS = 10.0
 
 
+# --- Operator alerting ---
+
+
+class AlertKind(StrEnum):
+    """What an operator alert is about. Also the `kind` label on the counters."""
+
+    READINESS = "readiness"
+    ERROR_RATE = "error_rate"
+
+
+class AlertSeverity(StrEnum):
+    """How an alert renders. `INFO` is used for recoveries, never for faults."""
+
+    CRITICAL = "critical"
+    INFO = "info"
+
+
+# Shorter ladder than the email one: a stale alert is worthless, so one retry
+# for a transient failure and then give up rather than deliver a minute late.
+ALERT_SEND_MAX_ATTEMPTS = 2
+ALERT_SEND_BACKOFF_BASE_SECONDS = 1.0
+ALERT_WEBHOOK_TIMEOUT_SECONDS = 10.0
+# Redis key namespaces. The claim key is what makes N workers page once.
+ALERT_CLAIM_KEY_PREFIX = "maestro:alert"
+METRICS_SNAPSHOT_KEY_PREFIX = "maestro:metrics"
+# A worker snapshot outlives this many watchdog intervals before it is treated
+# as stale and dropped from the /metrics union.
+METRICS_SNAPSHOT_TTL_INTERVALS = 3
+# Values shorter than this are not masked by the alert redactor: an 8-character
+# floor keeps a short or placeholder config value from blanking ordinary words.
+ALERT_REDACT_MIN_SECRET_LENGTH = 8
+ALERT_REDACTED_PLACEHOLDER = "[redacted]"
+
+
 # --- WebSocket event types (task/architect live stream) ---
 
 
@@ -759,6 +803,11 @@ RATE_LIMIT_UPLOAD = RateLimitTier("upload", 10, 60.0)
 RATE_LIMIT_OUTBOUND_PROBE = RateLimitTier("outbound_probe", 10, 60.0)
 # WebSocket *connection attempts*; an open socket costs nothing further.
 RATE_LIMIT_WEBSOCKET = RateLimitTier("websocket", 30, 60.0)
+# A Prometheus scrape runs every 15-60s: 4/min at the tightest sane interval.
+# The ceiling is set for a monitor, not a browser. A hit is cheap (in-process
+# counters, no I/O), but it is still free work an unauthenticated flood could
+# ask for -- the limiter runs before the token check for exactly that reason.
+RATE_LIMIT_METRICS = RateLimitTier("metrics", 12, 60.0)
 
 RATE_LIMIT_KEY_PREFIX = "rl"
 # After a Redis error, serve from the in-memory fallback for this long before

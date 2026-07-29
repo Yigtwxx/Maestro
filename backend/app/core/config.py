@@ -81,6 +81,48 @@ class Settings(BaseSettings):
     # creation (independent of task_retention_days: traces are heavier).
     trace_retention_days: int = Field(default=30, ge=1)
 
+    # --- Operator alerting (self-contained; no external monitoring service) ---
+    # Both channels default to empty, which makes alerting a silent no-op with
+    # zero egress -- the SENTRY_DSN contract. There is deliberately no
+    # ALERTING_ENABLED switch: configuring a channel *is* the enable, so there
+    # is no second thing to forget. ALERT_WEBHOOK_URL is Slack/Discord-compatible
+    # (one body carries both keys). It is an *operator* constant, not a user- or
+    # model-supplied host, so url_guard is deliberately not applied to it --
+    # doing so would reject the common self-hosted case of an internal notifier
+    # on the compose network, while defending only against an attacker who can
+    # already rewrite .env (at which point the master key is theirs). See
+    # CLAUDE.md §8.
+    alert_webhook_url: str = ""
+    alert_email_to: str = ""
+    # Seconds between readiness/error-rate evaluations. 0 stops the loop
+    # entirely; it is also what keeps the /metrics dependency gauges fresh, so
+    # turning it off costs more than alerting.
+    alert_watchdog_interval_seconds: float = Field(default=60.0, ge=0)
+    # Consecutive failing ticks before "degraded" is declared. 2 at 60s means a
+    # dependency must be unreachable for a full minute; a restarting Postgres
+    # recovers well inside that. Recovery is declared after a single good tick:
+    # page slowly, recover fast.
+    alert_readiness_failures: int = Field(default=2, ge=1)
+    # Minimum seconds between two alerts sharing a dedupe key. Claimed in Redis
+    # when configured, so N workers page once rather than N times.
+    alert_cooldown_seconds: float = Field(default=900.0, ge=0)
+    # 5xx alerting. The threshold is a *ratio* on purpose: each worker serves
+    # roughly 1/N of the traffic, so a raw count would silently become N times
+    # stricter per worker while a ratio is topology-invariant. The floor keeps
+    # one error in three requests at 04:00 from paging anyone.
+    alert_error_rate_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
+    alert_error_rate_window_seconds: float = Field(default=300.0, ge=60.0)
+    alert_error_rate_min_requests: int = Field(default=20, ge=1)
+
+    # --- Metrics (/metrics, Prometheus text exposition) ---
+    # Empty (the default) makes GET /metrics answer 404, so a deployment that
+    # never configured it does not advertise the surface at all. Separate from
+    # HEALTH_DETAIL_TOKEN by design (see METRICS_TOKEN_HEADER). The Caddyfile
+    # deliberately does not route /metrics either -- it is reachable from the
+    # compose network or an SSH tunnel only, and the token is defence in depth
+    # rather than the primary boundary.
+    metrics_token: str = ""
+
     # --- Databases ---
     # Both defaults point at the shifted host ports docker-compose.yml publishes,
     # not the stock 5432/27017: a natively-installed PostgreSQL or MongoDB binds
@@ -409,6 +451,22 @@ class Settings(BaseSettings):
             allowed = ", ".join(sorted(DATA_FETCH_ENGINES))
             raise ValueError(f"DATA_FETCH_ENGINE must be one of: {allowed}")
         return normalized
+
+    @field_validator("alert_webhook_url")
+    @classmethod
+    def _check_alert_webhook_url(cls, value: str) -> str:
+        """Reject a typo'd webhook scheme at boot rather than at the first fault.
+
+        Shape only. This is deliberately *not* ``url_guard``: the host is an
+        operator constant and may legitimately be an internal one, so resolving
+        it and demanding a globally-routable address would break the common
+        self-hosted notifier (CLAUDE.md §8). The error never echoes the value --
+        a Slack/Discord webhook URL is itself the credential.
+        """
+        stripped = value.strip()
+        if stripped and not stripped.startswith(("http://", "https://")):
+            raise ValueError("ALERT_WEBHOOK_URL must start with http:// or https://")
+        return stripped
 
     @model_validator(mode="after")
     def _guard_production_secrets(self) -> Settings:
