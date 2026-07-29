@@ -73,7 +73,7 @@ async def test_get_me_returns_profile(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["email"] == _EMAIL
-    assert body["subscription_tier"] is None, "fresh accounts hold no subscription"
+    assert body["subscription_tier"] == "free", "fresh accounts start on free"
     assert body["default_provider"] is None
     assert "hashed_password" not in body
     # New personalization/preference fields are present with safe defaults.
@@ -468,15 +468,14 @@ async def test_delete_me_cancels_a_paid_subscription(client, db_session):
     assert subscription.cancel_at_period_end is True
 
 
-async def test_delete_me_with_no_subscription_is_fine(client, db_session):
-    """A fresh account holds no subscription; deletion has nothing to cancel."""
+async def test_delete_me_on_the_free_plan_is_fine(client, db_session):
+    """Deletion has no paid plan to cancel; the free row is left as it is."""
     headers = await _register_and_login(client)
     await _request_deletion(client, headers)
 
     subscription = await _subscription_of(db_session, _EMAIL)
-    assert subscription is None, (
-        f"A fresh account should have no subscription, got {subscription}"
-    )
+    assert subscription is not None, "registration provisions a free plan"
+    assert subscription.plan == "free", f"Got {subscription.plan}"
 
 
 async def test_locked_account_can_export_its_data(client, monkeypatch):

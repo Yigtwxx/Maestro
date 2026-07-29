@@ -14,7 +14,20 @@ export function formatPrice(cents: number, currency: string): string {
   }).format(amount);
 }
 
+/**
+ * Mirrors the backend UNLIMITED_TOKEN_QUOTA sentinel (core/constants.py).
+ *
+ * The free plan reports a negative allowance rather than a huge number, so
+ * every consumer must branch on this before doing arithmetic with
+ * `quota_tokens` — otherwise a meter renders a nonsense bar and `formatQuota`
+ * prints `-0.001K tokens / mo`.
+ */
+export function isUnlimitedQuota(tokens: number): boolean {
+  return tokens < 0;
+}
+
 export function formatQuota(tokens: number): string {
+  if (isUnlimitedQuota(tokens)) return 'Unlimited tokens';
   if (tokens >= MILLION) return `${tokens / MILLION}M tokens / mo`;
   return `${tokens / THOUSAND}K tokens / mo`;
 }

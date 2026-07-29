@@ -249,6 +249,23 @@ def email_gate(monkeypatch):
     monkeypatch.setattr(settings, "email_verification_required", True)
 
 
+@pytest.fixture(autouse=True)
+def _billing_on(monkeypatch):
+    """Paid plans are reachable by default, so the flow stays under test.
+
+    Shipping config parks them behind ``BILLING_ENABLED=false`` while no real
+    processor exists, but the subscribe/cancel machinery still has to work the
+    day it is switched on. Tests of the parked state request ``billing_off``.
+    """
+    monkeypatch.setattr(settings, "billing_enabled", True)
+
+
+@pytest.fixture
+def billing_off(monkeypatch):
+    """Park paid plans for one test (the shipping default)."""
+    monkeypatch.setattr(settings, "billing_enabled", False)
+
+
 @pytest.fixture
 def sent_emails(monkeypatch):
     """Swap the provider for a recorder; returns the captured message list."""

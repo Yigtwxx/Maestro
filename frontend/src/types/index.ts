@@ -74,9 +74,10 @@ export type LLMProvider =
   | 'coingecko'
   | 'openweather';
 
-// There is no free plan and no trial; an account must subscribe to a paid plan
-// before it can run any task.
-export type SubscriptionPlan = 'starter' | 'pro' | 'scale';
+// Every account is provisioned with an active 'free' plan (unlimited tokens)
+// at registration. The paid plans exist but are parked until a real payment
+// processor is integrated.
+export type SubscriptionPlan = 'free' | 'starter' | 'pro' | 'scale';
 
 export type SubscriptionStatus =
   'active' | 'past_due' | 'canceled' | 'inactive';

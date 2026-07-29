@@ -44,13 +44,20 @@ async def _subscribe(client, headers, plan: str = "starter", number: str = _VISA
     )
 
 
-async def test_register_creates_no_subscription(client) -> None:
+async def test_register_provisions_an_active_free_plan(client) -> None:
+    """A fresh account is usable immediately, and has a row to bill usage to.
+
+    The row is not cosmetic: usage_service.record_task_usage drops the record
+    without a subscription to anchor period_start to.
+    """
     headers = await _register_and_login(client)
     resp = await client.get("/api/v1/billing/subscription", headers=headers)
 
-    assert resp.status_code == 404, (
-        f"A fresh account must hold no subscription, got {resp.status_code}"
-    )
+    assert resp.status_code == 200, f"Got {resp.text}"
+    body = resp.json()
+    assert body["plan"] == "free", f"Got {body['plan']}"
+    assert body["status"] == "active", f"Got {body['status']}"
+    assert body["quota_tokens"] < 0, "free carries the unlimited sentinel"
 
 
 async def test_billing_endpoints_require_auth(client) -> None:
@@ -63,7 +70,9 @@ async def test_plans_are_listed_at_full_price(client) -> None:
 
     assert resp.status_code == 200, f"Got {resp.text}"
     plans = {p["plan"]: p for p in resp.json()}
-    assert len(plans) == 3, f"Expected 3 plans, got {list(plans)}"
+    assert len(plans) == 4, f"Expected free + 3 paid plans, got {list(plans)}"
+    assert plans["free"]["price_cents"] == 0
+    assert plans["free"]["quota_tokens"] < 0, "free carries the unlimited sentinel"
     starter = plans["starter"]
     assert starter["price_cents"] == _STARTER_PRICE, f"Got {starter['price_cents']}"
     assert "discounted_price_cents" not in starter, "No discount field should remain"

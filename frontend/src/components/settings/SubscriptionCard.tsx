@@ -5,11 +5,13 @@ import { CreditCard } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { canReachBilling } from '@/lib/billing-access';
 import { useAuthStore } from '@/stores/auth';
 
 /** Read-only plan snapshot with a link to the billing screen. */
 export function SubscriptionCard() {
   const user = useAuthStore((s) => s.user);
+  const billingOpen = canReachBilling(user);
 
   return (
     <Card module="profile">
@@ -26,11 +28,20 @@ export function SubscriptionCard() {
               <span className="text-sm text-muted">none</span>
             ))}
         </div>
-        <Link href="/settings/billing">
-          <Button variant="outline" module="profile">
-            Manage billing
-          </Button>
-        </Link>
+        {billingOpen ? (
+          <Link href="/settings/billing">
+            <Button variant="outline" module="profile">
+              Manage billing
+            </Button>
+          </Link>
+        ) : (
+          <div className="flex items-center gap-2">
+            <Badge tone="gray">Coming soon</Badge>
+            <Button variant="outline" module="profile" disabled>
+              Manage billing
+            </Button>
+          </div>
+        )}
       </div>
     </Card>
   );

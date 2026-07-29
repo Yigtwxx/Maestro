@@ -60,7 +60,7 @@ export default async function PricingPage() {
           &gt; Live pricing is unreachable right now. Please try again shortly.
         </p>
       ) : (
-        <div className="mt-12 grid gap-4 sm:grid-cols-3">
+        <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {SUBSCRIPTION_PLANS.map((copy, i) => {
             const pricing = priced.get(copy.plan);
             if (!pricing) return undefined;

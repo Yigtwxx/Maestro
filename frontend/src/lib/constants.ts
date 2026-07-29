@@ -78,14 +78,21 @@ export {
   BRAIN_CHAT_PROVIDERS,
 } from '@/lib/providers';
 
-// Copy for the three paid plans. Prices and quotas come from the backend
-// (GET /billing/plans) so they can never drift from what is actually charged.
+// Copy for the free plan plus the three paid ones. Prices and quotas come from
+// the backend (GET /billing/plans) so they can never drift from what is charged;
+// a plan the backend does not price is skipped by both grids.
 export const SUBSCRIPTION_PLANS: {
   plan: SubscriptionPlan;
   name: string;
   tagline: string;
   features: string[];
 }[] = [
+  {
+    plan: 'free',
+    name: 'Free',
+    tagline: 'Everything, unmetered, while the paid plans are in the works.',
+    features: ['Unlimited tokens', 'BYOK API keys', 'Local LLM (Ollama)'],
+  },
   {
     plan: 'starter',
     name: 'Starter',
@@ -96,11 +103,7 @@ export const SUBSCRIPTION_PLANS: {
     plan: 'pro',
     name: 'Pro',
     tagline: 'For teams shipping agents every day.',
-    features: [
-      'Priority task queue',
-      'Advanced metrics',
-      'Marketplace publishing',
-    ],
+    features: ['Priority task queue', 'Advanced metrics', 'Priority support'],
   },
   {
     plan: 'scale',
@@ -114,8 +117,9 @@ export const SUBSCRIPTION_PLANS: {
   },
 ];
 
-// The plan card that gets the featured border. One per page.
-export const RECOMMENDED_PLAN: SubscriptionPlan = 'pro';
+// The plan card that gets the featured border. One per page. Points at the
+// plan a visitor can actually take today; revisit when paid plans open.
+export const RECOMMENDED_PLAN: SubscriptionPlan = 'free';
 
 // Cards the mock payment provider recognizes, surfaced as form hints.
 export const TEST_CARDS = [

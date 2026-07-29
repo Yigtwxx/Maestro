@@ -18,12 +18,21 @@ import {
 } from 'lucide-react';
 import { BrandMark } from '@/components/brand/BrandMark';
 import { Avatar } from '@/components/ui/Avatar';
+import { Badge } from '@/components/ui/Badge';
+import { canReachBilling } from '@/lib/billing-access';
 import { cn } from '@/lib/cn';
 import { MODULE_COLOR, type ModuleKey } from '@/lib/module-colors';
 import { SPRING, useReducedMotion } from '@/lib/motion';
 import { useAuthStore } from '@/stores/auth';
 
-export const NAV: { href: string; label: string; icon: typeof Workflow; module: ModuleKey }[] = [
+export const NAV: {
+  href: string;
+  label: string;
+  icon: typeof Workflow;
+  module: ModuleKey;
+  /** Rendered as a non-clickable "Soon" row instead of a link. */
+  comingSoon?: boolean;
+}[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, module: 'dashboard' },
   { href: '/marketplace', label: 'Marketplace', icon: Store, module: 'marketplace' },
   { href: '/architect', label: 'Architect', icon: Workflow, module: 'architect' },
@@ -51,7 +60,15 @@ export function Sidebar() {
   const user = useAuthStore((s) => s.user);
   const reduced = useReducedMotion();
 
-  const nav = user?.role === 'admin' ? [...NAV, ADMIN_LINK] : NAV;
+  // Paid billing is parked for ordinary accounts; admins keep it live so the
+  // operator can test the real flow. Same predicate the backend enforces.
+  const billingOpen = canReachBilling(user);
+  const withBilling = NAV.map((item) =>
+    item.href === '/settings/billing' && !billingOpen
+      ? { ...item, comingSoon: true }
+      : item,
+  );
+  const nav = user?.role === 'admin' ? [...withBilling, ADMIN_LINK] : withBilling;
 
   const onLogout = () => {
     logout();
@@ -80,6 +97,22 @@ export function Sidebar() {
           const active = pathname.startsWith(item.href);
           const Icon = item.icon;
           const mc = MODULE_COLOR[item.module];
+
+          if (item.comingSoon) {
+            return (
+              <div
+                key={item.href}
+                aria-disabled="true"
+                title={`${item.label} — coming soon`}
+                className="flex cursor-not-allowed items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-muted/60"
+              >
+                <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                <span className="flex-1">{item.label}</span>
+                <Badge tone="gray">Soon</Badge>
+              </div>
+            );
+          }
+
           return (
             <Link
               key={item.href}

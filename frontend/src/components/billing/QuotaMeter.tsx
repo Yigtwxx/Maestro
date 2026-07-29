@@ -2,6 +2,7 @@ import { Gauge } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ProgressBar } from '@/components/ui/ProgressBar';
+import { isUnlimitedQuota } from '@/lib/billing-format';
 import { formatDate, useTimeZone } from '@/lib/date';
 import { MODULE_COLOR } from '@/lib/module-colors';
 import type { SubscriptionPublic } from '@/types';
@@ -36,8 +37,11 @@ interface QuotaMeterProps {
 export function QuotaMeter({ subscription }: QuotaMeterProps) {
   const tz = useTimeZone();
   const { used_tokens, quota_tokens, status, current_period_end } = subscription;
+  const unlimited = isUnlimitedQuota(quota_tokens);
   const fraction = quota_tokens > 0 ? used_tokens / quota_tokens : 0;
-  const exhausted = used_tokens >= quota_tokens;
+  // Never "exhausted" without a ceiling -- the sentinel is negative, so the
+  // raw comparison would be true for every free account.
+  const exhausted = !unlimited && used_tokens >= quota_tokens;
 
   return (
     <Card module="billing">
@@ -47,14 +51,23 @@ export function QuotaMeter({ subscription }: QuotaMeterProps) {
 
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <p className={`font-mono text-sm ${mc.text}`}>
-          {formatTokens(used_tokens)} / {formatTokens(quota_tokens)}
+          {formatTokens(used_tokens)} / {unlimited ? '∞' : formatTokens(quota_tokens)}
         </p>
         <Badge module={status === 'active' ? 'billing' : undefined}>
           {STATUS_LABEL[status]}
         </Badge>
       </div>
 
-      <ProgressBar value={Math.min(fraction * 100, 100)} color={barColor(fraction)} />
+      {unlimited ? (
+        <p className="font-mono text-xs text-muted">
+          &gt; Unlimited tokens on the free plan.
+        </p>
+      ) : (
+        <ProgressBar
+          value={Math.min(fraction * 100, 100)}
+          color={barColor(fraction)}
+        />
+      )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <p className="font-mono text-xs text-muted">
@@ -63,7 +76,7 @@ export function QuotaMeter({ subscription }: QuotaMeterProps) {
         </p>
         {exhausted && (
           <p className="font-mono text-xs text-danger">
-            &gt; Quota exhausted. Upgrade to start new tasks.
+            &gt; Quota exhausted. It resets when the period renews.
           </p>
         )}
       </div>

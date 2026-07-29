@@ -20,7 +20,7 @@ export function PlanGrid({ plans, currentPlan, selectedPlan, onSelect }: PlanGri
   const priced = new Map(plans.map((p) => [p.plan, p]));
 
   return (
-    <div className="grid gap-3 sm:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
       {SUBSCRIPTION_PLANS.map((copy) => {
         const pricing = priced.get(copy.plan);
         if (!pricing) return undefined;

@@ -30,15 +30,17 @@ export const LEGAL_ENTITY = {
 /**
  * Whether a real, PCI-scoped payment processor is live.
  *
- * While this is `false` the platform runs on a mock provider: no card is
- * charged and no real payment is processed. The legal pages surface a
- * pre-release notice so the billing terms below can never be read as a claim
- * that money is actually changing hands. Flip to `true` — and only then —
- * once a real processor is integrated.
+ * While this is `false` the paid plans are parked: their CTAs read "coming
+ * soon" and the billing surfaces are not reachable, except for admins, who keep
+ * the live flow so the operator can test it. Every account runs on the free
+ * plan instead. The legal pages surface a notice so the billing terms below can
+ * never be read as a claim that money is changing hands. Flip to `true` — and
+ * only then — once a real processor is integrated. Its backend twin is the
+ * `BILLING_ENABLED` setting, which this process cannot read; flip both.
  */
 export const BILLING_LIVE = false;
 
 /** Shown wherever billing terms appear while `BILLING_LIVE` is false. */
 export const BILLING_PRERELEASE_NOTICE =
-  'Billing is in pre-release. No real payments are processed and no cards are charged. ' +
-  'Do not enter real card details.';
+  'Paid plans are coming soon. Every account currently runs on the free plan ' +
+  'with unlimited tokens — no card is collected and no payment is processed.';
