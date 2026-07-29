@@ -20,15 +20,25 @@ async def test_register_login_flow(client):
         "/api/v1/auth/register",
         json={"email": "new@user.com", "password": "supersecret"},
     )
-    assert resp.status_code == 201
-    assert resp.json()["email"] == "new@user.com"
-    assert "hashed_password" not in resp.json()
+    assert resp.status_code == 202
+    # The body describes the next step, never the account: it has to read the
+    # same for an address that was already taken.
+    assert resp.json()["detail"]
+    assert "email" not in resp.json()
 
 
-async def test_duplicate_email_rejected(client):
+async def test_duplicate_email_is_indistinguishable_from_a_new_one(client, sent_emails):
+    """A taken address must not be detectable from the response."""
     payload = {"email": "dup@user.com", "password": "supersecret"}
-    assert (await client.post("/api/v1/auth/register", json=payload)).status_code == 201
-    assert (await client.post("/api/v1/auth/register", json=payload)).status_code == 409
+    first = await client.post("/api/v1/auth/register", json=payload)
+    sent_emails.clear()
+    second = await client.post("/api/v1/auth/register", json=payload)
+
+    assert first.status_code == second.status_code == 202
+    assert first.json() == second.json(), "responses must be byte-identical"
+    assert len(sent_emails) == 1, "the real owner is told instead"
+    assert sent_emails[0].to == "dup@user.com"
+    assert "token=" not in sent_emails[0].text, "the notice carries no action token"
 
 
 async def test_login_wrong_password(client):

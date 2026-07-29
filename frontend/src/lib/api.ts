@@ -253,8 +253,15 @@ async function uploadFile<T>(path: string, file: File): Promise<T> {
 // --- Endpoints ---
 
 export const api = {
+  /**
+   * Create an account.
+   *
+   * Resolves 202 with the same body whether the address was free or already
+   * registered — the endpoint deliberately reveals nothing — so this response
+   * must never be branched on to infer whether an account was created.
+   */
   register(email: string, password: string, display_name?: string) {
-    return request<UserPublic>('/api/v1/auth/register', {
+    return request<{ detail: string }>('/api/v1/auth/register', {
       method: 'POST',
       body: { email, password, display_name },
       auth: false,

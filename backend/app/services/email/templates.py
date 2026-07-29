@@ -108,6 +108,41 @@ def password_reset_email(link: str) -> tuple[str, str, str]:
     )
 
 
+def registration_attempt_email(
+    login_link: str, reset_link: str
+) -> tuple[str, str, str]:
+    """Sent to an existing account when someone tries to register its address.
+
+    /register answers a taken address and a free one identically, so this is
+    the only signal the real owner gets. It must never imply the attempt
+    succeeded, and must not carry an action token -- the person who triggered
+    it is not necessarily the owner.
+    """
+    subject = "Someone tried to sign up with your Maestro address"
+    paragraphs = [
+        "Someone just tried to create a Maestro account with this email "
+        "address. It already has an account, so nothing was created and "
+        "nothing about your account changed.",
+        "If that was you, sign in instead. If you have forgotten your "
+        f"password, you can reset it here: {reset_link}",
+        "If it wasn't you, you can safely ignore this email.",
+    ]
+    text = (
+        "Someone just tried to create a Maestro account with this email "
+        "address.\n\n"
+        "It already has an account, so nothing was created and nothing about "
+        "your account changed.\n\n"
+        f"If that was you, sign in instead:\n{login_link}\n\n"
+        f"Forgotten your password? Reset it here:\n{reset_link}\n\n"
+        "If it wasn't you, you can safely ignore this email."
+    )
+    return (
+        subject,
+        _html("Sign-in attempt on your address", paragraphs, ("Sign in", login_link)),
+        text,
+    )
+
+
 def email_change_verification(
     link: str, code: str | None = None
 ) -> tuple[str, str, str]:

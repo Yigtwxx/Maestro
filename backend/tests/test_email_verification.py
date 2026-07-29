@@ -28,14 +28,13 @@ async def test_register_sends_verification_email_with_link(client, sent_emails) 
         "/api/v1/auth/register",
         json={"email": "new@example.com", "password": "password123"},
     )
-    assert resp.status_code == 201
-    assert resp.json()["email_verified"] is False
+    assert resp.status_code == 202
     assert len(sent_emails) == 1
     assert sent_emails[0].to == "new@example.com"
     assert "/verify-email?token=" in sent_emails[0].text
 
 
-async def test_register_email_provider_failure_still_returns_201(
+async def test_register_email_provider_failure_still_returns_202(
     client, monkeypatch
 ) -> None:
     from app.services import email_service
@@ -53,7 +52,7 @@ async def test_register_email_provider_failure_still_returns_201(
         "/api/v1/auth/register",
         json={"email": "unlucky@example.com", "password": "password123"},
     )
-    assert resp.status_code == 201, "email outage must not block registration"
+    assert resp.status_code == 202, "email outage must not block registration"
 
 
 async def test_verify_email_valid_token_marks_user_verified(

@@ -526,6 +526,9 @@ EMAIL_CODE_MAX_ATTEMPTS = 5
 VERIFY_EMAIL_PATH = "/verify-email"
 RESET_PASSWORD_PATH = "/reset-password"
 CHANGE_EMAIL_PATH = "/change-email"
+# Plain destinations (no token) for the "someone tried to sign up" notice.
+LOGIN_PATH = "/login"
+FORGOT_PASSWORD_PATH = "/forgot-password"
 
 # How long a dead token row is kept before the retention sweep removes it.
 # expires_at is set on every row, so this single predicate covers used,

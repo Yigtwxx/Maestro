@@ -15,12 +15,15 @@ GET    /health/ready                        # Postgres / Mongo / Qdrant / Redis 
                                             # only with X-Health-Token
 
 # Authentication
-POST   /api/v1/auth/register
+POST   /api/v1/auth/register                # always 202; never reveals if the address exists
 POST   /api/v1/auth/login
 POST   /api/v1/auth/login/totp              # second step when 2FA is enabled
 POST   /api/v1/auth/refresh                 # rotating refresh tokens (reuse detection)
 POST   /api/v1/auth/logout
 POST   /api/v1/auth/verify-email
+POST   /api/v1/auth/verify-email/code       # 6-digit code path (needs a session)
+POST   /api/v1/auth/change-email            # confirm a new address by link
+POST   /api/v1/auth/change-email/code       # ...or by code (needs a session)
 POST   /api/v1/auth/resend-verification
 POST   /api/v1/auth/forgot-password
 POST   /api/v1/auth/reset-password
@@ -29,6 +32,7 @@ POST   /api/v1/auth/reset-password
 GET    /api/v1/users/me
 PATCH  /api/v1/users/me                     # profile + model preferences
 POST   /api/v1/users/me/password
+POST   /api/v1/users/me/email               # request an address change (re-verifies)
 GET    /api/v1/users/me/sessions
 DELETE /api/v1/users/me/sessions/{family_id}
 POST   /api/v1/users/me/sessions/revoke-others

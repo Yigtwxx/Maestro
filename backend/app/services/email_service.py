@@ -28,6 +28,8 @@ from app.core.constants import (
     EMAIL_CODE_TTL_MINUTES,
     EMAIL_TOKEN_BYTES,
     EMAIL_VERIFY_TOKEN_TTL_HOURS,
+    FORGOT_PASSWORD_PATH,
+    LOGIN_PATH,
     PASSWORD_RESET_TOKEN_TTL_MINUTES,
     RESET_PASSWORD_PATH,
     VERIFY_EMAIL_PATH,
@@ -251,8 +253,12 @@ async def consume_email_change(
     return claimed
 
 
+def _site_link(path: str) -> str:
+    return f"{settings.site_url.rstrip('/')}{path}"
+
+
 def _action_link(path: str, raw_token: str) -> str:
-    return f"{settings.site_url.rstrip('/')}{path}?token={raw_token}"
+    return f"{_site_link(path)}?token={raw_token}"
 
 
 async def _send_safely(to: str, subject: str, html: str, text: str) -> None:
@@ -275,6 +281,18 @@ async def send_verification(
 ) -> None:
     subject, html, text = templates.verification_email(
         _action_link(VERIFY_EMAIL_PATH, raw_token), raw_code
+    )
+    await _send_safely(to, subject, html, text)
+
+
+async def send_registration_attempt(to: str) -> None:
+    """Tell an existing account that someone tried to register its address.
+
+    Carries no token and no code: whoever triggered this is not necessarily
+    the owner, so the mail must be informational only.
+    """
+    subject, html, text = templates.registration_attempt_email(
+        _site_link(LOGIN_PATH), _site_link(FORGOT_PASSWORD_PATH)
     )
     await _send_safely(to, subject, html, text)
 

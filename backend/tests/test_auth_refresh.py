@@ -13,7 +13,7 @@ async def _register(client, email: str = "u@ex.com") -> None:  # noqa: ANN001
     resp = await client.post(
         "/api/v1/auth/register", json={"email": email, "password": "supersecret"}
     )
-    assert resp.status_code == 201, resp.text
+    assert resp.status_code == 202, resp.text
 
 
 async def _login(client, email: str = "u@ex.com") -> dict:  # noqa: ANN001

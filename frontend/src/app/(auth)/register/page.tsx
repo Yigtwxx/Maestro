@@ -27,6 +27,9 @@ export default function RegisterPage() {
   // Remounts the card per failure so the shake replays on repeated errors.
   const [shakeNonce, setShakeNonce] = useState(0);
   const [granted, setGranted] = useState(false);
+  // Shown when auto-login did not go through. Says nothing about whether
+  // the address was already registered — that is the whole point.
+  const [pending, setPending] = useState(false);
 
   const fail = (message: string) => {
     setError(message);
@@ -43,14 +46,24 @@ export default function RegisterPage() {
     setLoading(true);
     try {
       await api.register(email, password, displayName || undefined);
-      await login(email, password);
-      toast.info('We sent a verification link to your email.');
-      setGranted(true);
-      window.setTimeout(() => router.replace('/architect'), GRANTED_SWEEP_MS);
     } catch (err) {
       fail(err instanceof ApiError ? err.message : 'Registration failed.');
       setLoading(false);
+      return;
     }
+    try {
+      await login(email, password);
+    } catch {
+      // Register answers identically for a free and an already-taken address,
+      // so a failure here means "already registered" — which is exactly what
+      // we must not say. Show the same neutral screen either way.
+      setPending(true);
+      setLoading(false);
+      return;
+    }
+    toast.info('We sent a verification link to your email.');
+    setGranted(true);
+    window.setTimeout(() => router.replace('/architect'), GRANTED_SWEEP_MS);
   };
 
   return (
@@ -70,6 +83,21 @@ export default function RegisterPage() {
           <span className="text-primary">&gt;</span> Create Account
         </h2>
         <p className="text-micro mt-2 text-muted">[ CREATE YOUR ACCOUNT ]</p>
+        {pending ? (
+          <>
+            <p className="mt-6 text-sm text-muted">
+              Check your inbox — we&apos;ve sent you an email with the next step.
+              Open it to finish setting up, or to sign in if this address already
+              has an account.
+            </p>
+            <p className="mt-6 text-center text-sm text-muted">
+              <Link href="/login" className="text-primary hover:underline">
+                Go to sign in
+              </Link>
+            </p>
+          </>
+        ) : (
+        <>
         <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4">
           <Input
             label="Display name (optional)"
@@ -103,6 +131,8 @@ export default function RegisterPage() {
             Sign in
           </Link>
         </p>
+        </>
+        )}
       </Card>
     </div>
   );

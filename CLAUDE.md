@@ -117,7 +117,7 @@ maestro/
 │   │                     memory_service.py  RAG / vectors
 │   │                     payment/           PaymentProvider protocol + mock
 │   │                     email/             EmailProvider protocol + console/resend
-│   ├── scripts/        Operational one-shots (purge, grant_admin)
+│   ├── scripts/        Operational one-shots (purge, email-token sweep, grant_admin)
 │   └── utils/          prompt_guard, rate_limiter, tracing
 │
 ├── docker-compose.yml / docker-compose.prod.yml / Caddyfile
@@ -316,6 +316,34 @@ already documents as unclosed — and which is why `CUSTOM_API_TOOLS_ENABLED` de
 `TOOL_CATALOG`/`TOOL_IDS`: those are process-wide constants that
 `agent_service._validate_tools`, the marketplace publish filter and the frontend parity
 tests all key off.
+
+**Email ownership.** An account's address is only ever set by proving the inbox is
+reachable. `PATCH /users/me` cannot touch `email` at all; the change goes through
+`POST /users/me/email`, which requires the current password, leaves the account on its old
+address, mails a link plus code to the new one and an actionable-nothing notice to the old
+one, and revokes other sessions when it lands. The pending address rides on the token row,
+never on `users`, so it expires and rotates with the token and a stale link can never
+apply an older address. Single-use tokens are claimed with one conditional
+`UPDATE … RETURNING`, never a read-then-write: two concurrent redemptions of the same link
+cannot both succeed.
+
+**Verification codes.** Every verification and email-change mail carries a 6-digit code
+beside the link. The two are not interchangeable security-wise and must not be conflated:
+a 256-bit token is globally unique, which is what lets the link endpoints stay
+unauthenticated, while 10⁶ is guessable — so a code carries a short TTL
+(`EMAIL_CODE_TTL_MINUTES`), an attempt cap that burns the row
+(`EMAIL_CODE_MAX_ATTEMPTS`), and a lookup scoped to one `user_id`, which is why the code
+endpoints require a session. Password reset deliberately has no code: it grants account
+takeover and must not gain a guessable second credential.
+
+**Account existence.** `/register`, `/forgot-password` and `/resend-verification` all
+answer with a fixed body whether or not the address is known; a duplicate registration
+creates nothing, leaves the existing account's credentials untouched, and notifies the
+real owner instead. `POST /users/me/email` likewise never reports that a target address is
+taken — a collision surfaces only at confirm time, once the caller has proven they can
+read that inbox. The residual is `/login`: registering a *free* address sets a password
+the caller knows, so a follow-up login still distinguishes the two cases. Closing that
+would mean gating login on verification, which the soft gate deliberately does not do.
 
 **General.** JWT on every non-public endpoint, including WebSockets. Rate limiting on
 every route. Pydantic validation on every input. In the single-origin production topology

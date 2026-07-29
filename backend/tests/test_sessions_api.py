@@ -12,7 +12,7 @@ async def _register(client, email: str) -> None:  # noqa: ANN001
         "/api/v1/auth/register",
         json={"email": email, "password": _PASSWORD, "display_name": "S"},
     )
-    assert resp.status_code == 201, resp.text
+    assert resp.status_code == 202, resp.text
 
 
 async def _login(client, email: str, user_agent: str = "TestBrowser/1.0") -> str:  # noqa: ANN001

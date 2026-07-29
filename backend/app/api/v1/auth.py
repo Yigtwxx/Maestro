@@ -35,7 +35,6 @@ from app.schemas.auth import (
     ResetPasswordRequest,
     TokenPair,
     TotpVerifyRequest,
-    UserPublic,
     VerifyEmailCodeRequest,
     VerifyEmailRequest,
 )
@@ -54,6 +53,10 @@ _INVALID_MFA = HTTPException(
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# One fixed message for both registration outcomes. A taken address and a free
+# one must produce byte-identical responses, or the endpoint is an oracle.
+_REGISTER_ACCEPTED = "Check your email — we've sent you the next step."
+
 # Tighter limit on auth endpoints to slow credential stuffing and email
 # bombing. Mostly unauthenticated (keyed by client IP); resend-verification
 # carries a token and is keyed by user.
@@ -62,18 +65,37 @@ _auth_rate_limit = rate_limit(RATE_LIMIT_AUTH, scope="auth")
 
 @router.post(
     "/register",
-    response_model=UserPublic,
-    status_code=status.HTTP_201_CREATED,
+    response_model=DetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     dependencies=[_auth_rate_limit],
 )
-async def register(payload: RegisterRequest, db: DbSession) -> User:
+async def register(payload: RegisterRequest, db: DbSession) -> DetailResponse:
     """Create a new user account.
 
     There is no free plan and no trial: a fresh account holds no subscription
     and must subscribe to a paid plan before it can start any task.
+
+    Always 202 with a fixed body: a taken address must be indistinguishable
+    from a free one, the same rule /forgot-password and /resend-verification
+    already follow. A duplicate creates nothing and notifies the real owner
+    instead.
+
+    Known residual: an attacker can still probe by following this with a
+    /login attempt, because registering a *free* address sets a password they
+    know. Closing that needs login gated on verification, which the soft-gate
+    design deliberately does not do.
+
+    This does mean /register can mail a victim repeatedly. The bound is the
+    per-IP _auth_rate_limit -- the same exposure /forgot-password carries by
+    design.
     """
+    email = payload.email.lower()
+    # Build the user -- and so hash the password -- before the branch, so
+    # Argon2 dominates both paths and the duplicate case is not measurably
+    # faster. A pre-SELECT existence check would introduce exactly the timing
+    # oracle this endpoint is closing.
     user = User(
-        email=payload.email.lower(),
+        email=email,
         hashed_password=hash_password(payload.password),
         display_name=payload.display_name,
     )
@@ -82,12 +104,14 @@ async def register(payload: RegisterRequest, db: DbSession) -> User:
         # Flush to surface a duplicate email and to assign user.id before any
         # dependent row references it.
         await db.flush()
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
-        ) from exc
+        # Re-read rather than trusting the payload: guards the narrow race
+        # where the row vanished between the violation and here.
+        existing = await db.scalar(select(User).where(User.email == email))
+        if existing is not None:
+            await email_service.send_registration_attempt(existing.email)
+        return DetailResponse(detail=_REGISTER_ACCEPTED)
 
     # Issue the token inside the same transaction as the user row; send only
     # after commit so an email can never precede (or roll back with) the data.
@@ -95,9 +119,8 @@ async def register(payload: RegisterRequest, db: DbSession) -> User:
         db, user.id, EmailTokenPurpose.VERIFY_EMAIL, with_code=True
     )
     await db.commit()
-    await db.refresh(user)
-    await email_service.send_verification(user.email, raw_token, raw_code)
-    return user
+    await email_service.send_verification(email, raw_token, raw_code)
+    return DetailResponse(detail=_REGISTER_ACCEPTED)
 
 
 @router.post("/login", response_model=LoginResult, dependencies=[_auth_rate_limit])
