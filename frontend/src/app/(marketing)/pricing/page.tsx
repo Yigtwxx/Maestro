@@ -108,17 +108,32 @@ export default async function PricingPage() {
                     ))}
                   </ul>
 
-                  <Link
-                    href="/register"
-                    className={cn(
-                      buttonVariants({
-                        variant: recommended ? 'lime' : 'lime-outline',
-                      }),
-                      'w-full justify-center',
-                    )}
-                  >
-                    Get started
-                  </Link>
+                  {/* Public page, so no admin exemption here: paid plans stay
+                      parked for every visitor until BILLING_LIVE flips. Free
+                      keeps a live CTA so the page always has one real action. */}
+                  {copy.plan === 'free' || BILLING_LIVE ? (
+                    <Link
+                      href="/register"
+                      className={cn(
+                        buttonVariants({
+                          variant: recommended ? 'lime' : 'lime-outline',
+                        }),
+                        'w-full justify-center',
+                      )}
+                    >
+                      {copy.plan === 'free' ? 'Start free' : 'Get started'}
+                    </Link>
+                  ) : (
+                    <span
+                      aria-disabled="true"
+                      className={cn(
+                        buttonVariants({ variant: 'lime-outline' }),
+                        'w-full cursor-not-allowed justify-center opacity-50',
+                      )}
+                    >
+                      Coming soon
+                    </span>
+                  )}
                 </div>
               </Reveal>
             );

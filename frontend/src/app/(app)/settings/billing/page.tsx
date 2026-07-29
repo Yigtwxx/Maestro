@@ -11,6 +11,9 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { PageShell } from '@/components/layout/PageShell';
 import { api, ApiError } from '@/lib/api';
+import { canReachBilling } from '@/lib/billing-access';
+import { Badge } from '@/components/ui/Badge';
+import { BILLING_PRERELEASE_NOTICE } from '@/lib/legal';
 import { MODULE_COLOR } from '@/lib/module-colors';
 import { useAuthStore } from '@/stores/auth';
 import type { CardInput, PlanPublic, SubscriptionPlan, SubscriptionPublic } from '@/types';
@@ -19,6 +22,7 @@ const mc = MODULE_COLOR.billing;
 
 export default function BillingPage() {
   const refreshUser = useAuthStore((s) => s.refreshUser);
+  const user = useAuthStore((s) => s.user);
 
   const [subscription, setSubscription] = useState<SubscriptionPublic | undefined>();
   const [plans, setPlans] = useState<PlanPublic[]>([]);
@@ -30,9 +34,8 @@ export default function BillingPage() {
 
   const load = useCallback(async () => {
     try {
-      // A fresh account holds no subscription (there is no trial): the endpoint
-      // 404s, which is a normal "not subscribed yet" state, not an error. The
-      // plan grid below is exactly how the user subscribes.
+      // Registration provisions an active free plan, so the 404 branch is now
+      // only for accounts created before that; treat it as "not subscribed".
       const [nextSubscription, nextPlans] = await Promise.all([
         api.getSubscription().catch((err) => {
           if (err instanceof ApiError && err.status === 404) return undefined;
@@ -81,6 +84,23 @@ export default function BillingPage() {
     }
   };
 
+  // Paid billing is parked for ordinary accounts. A panel rather than a
+  // redirect: the page must stay visible to the operator who will flip the
+  // flag, and this also makes onSubscribe/onCancel unreachable from the UI.
+  if (!canReachBilling(user)) {
+    return (
+      <PageShell>
+        <Card module="billing">
+          <CardHeader icon={<Receipt className="h-5 w-5" />} module="billing">
+            <CardTitle>Billing</CardTitle>
+          </CardHeader>
+          <Badge tone="gray">Coming soon</Badge>
+          <p className="mt-3 text-sm text-muted">{BILLING_PRERELEASE_NOTICE}</p>
+        </Card>
+      </PageShell>
+    );
+  }
+
   if (loading) {
     return (
       <PageShell className="space-y-6">
@@ -105,11 +125,6 @@ export default function BillingPage() {
           <CardHeader icon={<Receipt className="h-5 w-5" />} module="billing">
             <CardTitle>Plans</CardTitle>
           </CardHeader>
-          {!subscription && (
-            <p className={`text-micro mb-4 ${mc.text}`}>
-              [ SUBSCRIBE TO A PLAN TO START RUNNING TASKS ]
-            </p>
-          )}
           <PlanGrid
             plans={plans}
             currentPlan={subscription?.plan}

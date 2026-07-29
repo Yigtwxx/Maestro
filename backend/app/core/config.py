@@ -137,6 +137,12 @@ class Settings(BaseSettings):
     # process cannot read. The two are flipped together.
     billing_enabled: bool = False
 
+    # Accounts app.scripts.grant_admin promotes to admin (comma-separated).
+    # Read here rather than straight from os.environ so the script picks it up
+    # from .env like every other setting; the script still merges an inline
+    # GRANT_ADMIN_EMAILS=... and any --email flags on top.
+    grant_admin_emails: str = ""
+
     # --- Transactional email ---
     # "console" logs messages (dev/self-host default, zero dependencies);
     # "resend" sends through the Resend HTTP API. Send failures never fail the

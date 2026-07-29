@@ -32,6 +32,7 @@ from datetime import UTC, datetime
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.constants import (
     UserRole,
 )
@@ -45,10 +46,12 @@ _ENV_EMAILS = "GRANT_ADMIN_EMAILS"
 
 
 def _collect_emails(cli_emails: list[str]) -> list[str]:
-    """Merge --email flags with the GRANT_ADMIN_EMAILS env var, deduped."""
+    """Merge --email flags with GRANT_ADMIN_EMAILS (.env or inline), deduped."""
     raw = list(cli_emails)
-    env_value = os.environ.get(_ENV_EMAILS, "")
-    raw.extend(part for part in env_value.split(",") if part.strip())
+    # settings carries the .env value; os.environ catches an inline
+    # `GRANT_ADMIN_EMAILS=... python -m ...` that pydantic would not see.
+    for source in (settings.grant_admin_emails, os.environ.get(_ENV_EMAILS, "")):
+        raw.extend(part for part in source.split(",") if part.strip())
     seen: dict[str, None] = {}
     for email in raw:
         normalized = email.strip().lower()
