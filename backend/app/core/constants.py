@@ -497,6 +497,7 @@ class EmailTokenPurpose(StrEnum):
 
     VERIFY_EMAIL = "verify_email"
     RESET_PASSWORD = "reset_password"
+    CHANGE_EMAIL = "change_email"
 
 
 EMAIL_PROVIDER_CONSOLE = "console"
@@ -506,6 +507,9 @@ EMAIL_PROVIDER_RESEND = "resend"
 # window; a reset link grants account takeover and must stay short.
 EMAIL_VERIFY_TOKEN_TTL_HOURS = 24
 PASSWORD_RESET_TOKEN_TTL_MINUTES = 60
+# Same "prove you own this inbox" gate as first-time verification, so it gets
+# the same window.
+EMAIL_CHANGE_TOKEN_TTL_HOURS = 24
 # Entropy of the raw token (urlsafe-base64 encoded => ~43 chars).
 EMAIL_TOKEN_BYTES = 32
 
@@ -521,6 +525,7 @@ EMAIL_CODE_MAX_ATTEMPTS = 5
 # Frontend paths the email links land on (query param: ?token=...).
 VERIFY_EMAIL_PATH = "/verify-email"
 RESET_PASSWORD_PATH = "/reset-password"
+CHANGE_EMAIL_PATH = "/change-email"
 
 # How long a dead token row is kept before the retention sweep removes it.
 # expires_at is set on every row, so this single predicate covers used,

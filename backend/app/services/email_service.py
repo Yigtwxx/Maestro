@@ -14,12 +14,15 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import NamedTuple
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.constants import (
+    CHANGE_EMAIL_PATH,
+    EMAIL_CHANGE_TOKEN_TTL_HOURS,
     EMAIL_CODE_DIGITS,
     EMAIL_CODE_MAX_ATTEMPTS,
     EMAIL_CODE_TTL_MINUTES,
@@ -41,6 +44,7 @@ _TOKEN_TTLS: dict[EmailTokenPurpose, timedelta] = {
     EmailTokenPurpose.RESET_PASSWORD: timedelta(
         minutes=PASSWORD_RESET_TOKEN_TTL_MINUTES
     ),
+    EmailTokenPurpose.CHANGE_EMAIL: timedelta(hours=EMAIL_CHANGE_TOKEN_TTL_HOURS),
 }
 
 
@@ -59,6 +63,7 @@ async def issue_token(
     purpose: EmailTokenPurpose,
     *,
     with_code: bool = False,
+    new_email: str | None = None,
 ) -> tuple[str, str | None]:
     """Create a fresh token and return its plaintext. Caller commits.
 
@@ -68,6 +73,9 @@ async def issue_token(
     ``with_code`` additionally mints a short numeric code for the same row,
     returned as the second element. The code expires far sooner than the link
     (see EMAIL_CODE_TTL_MINUTES) because six digits is a guessable keyspace.
+
+    ``new_email`` records the address a CHANGE_EMAIL token would move the
+    account to, binding the token to that address for its whole life.
     """
     now = datetime.now(UTC)
     await db.execute(
@@ -96,18 +104,23 @@ async def issue_token(
                 if raw_code is not None
                 else None
             ),
+            new_email=new_email,
         )
     )
     return raw, raw_code
 
 
-async def consume_token(
-    db: AsyncSession, raw_token: str, purpose: EmailTokenPurpose
-) -> User | None:
-    """Redeem a token: mark it used and return its owner. Caller commits.
+class ClaimedToken(NamedTuple):
+    """A redeemed row's payload: its owner, plus whatever it carried."""
 
-    Returns None for unknown, already-used, wrong-purpose or expired tokens --
-    indistinguishable on purpose, so responses cannot leak token state.
+    user: User
+    new_email: str | None
+
+
+async def _claim_by_token(
+    db: AsyncSession, raw_token: str, purpose: EmailTokenPurpose
+) -> ClaimedToken | None:
+    """Mark a token used and hand back its row. Caller commits.
 
     The claim is a single conditional UPDATE, never a read-then-write: two
     concurrent redemptions of the same link must not both succeed. Expiry is
@@ -116,57 +129,61 @@ async def consume_token(
     as well as against a PostgreSQL timestamptz.
     """
     now = datetime.now(UTC)
-    user_id = await db.scalar(
-        update(EmailToken)
-        .where(
-            EmailToken.token_hash == _hash_token(raw_token),
-            EmailToken.purpose == purpose.value,
-            EmailToken.used_at.is_(None),
-            EmailToken.expires_at > now,
+    row = (
+        await db.execute(
+            update(EmailToken)
+            .where(
+                EmailToken.token_hash == _hash_token(raw_token),
+                EmailToken.purpose == purpose.value,
+                EmailToken.used_at.is_(None),
+                EmailToken.expires_at > now,
+            )
+            .values(used_at=now)
+            .returning(EmailToken.user_id, EmailToken.new_email)
+            # Bulk DML: skip the ORM evaluate pass (naive-vs-aware compare on
+            # SQLite), same as issue_token above.
+            .execution_options(synchronize_session=False)
         )
-        .values(used_at=now)
-        .returning(EmailToken.user_id)
-        # Bulk DML: skip the ORM evaluate pass (naive-vs-aware compare on
-        # SQLite), same as issue_token above.
-        .execution_options(synchronize_session=False)
-    )
-    if user_id is None:
+    ).first()
+    if row is None:
         return None
-    return await db.get(User, user_id)
+    user = await db.get(User, row.user_id)
+    return None if user is None else ClaimedToken(user, row.new_email)
 
 
-async def consume_code(
+async def _claim_by_code(
     db: AsyncSession, user_id: uuid.UUID, raw_code: str, purpose: EmailTokenPurpose
-) -> User | None:
-    """Redeem a numeric code for one user. Caller commits.
+) -> ClaimedToken | None:
+    """Mark a code used and hand back its row. Caller commits.
 
     Scoped to ``user_id`` on purpose: six digits are nowhere near unique, so a
     code can only ever be looked up inside one account's rows. That is why the
     code endpoints require authentication while the link endpoint does not --
     a 256-bit token is globally unique on its own, a code is not.
 
-    Returns None for a wrong, expired, capped or missing code, all
-    indistinguishable, same rule as ``consume_token``. A failed attempt burns
-    one of EMAIL_CODE_MAX_ATTEMPTS; once they are gone the row can never be
-    claimed again and the user must request a new code.
+    A failed attempt burns one of EMAIL_CODE_MAX_ATTEMPTS; once they are gone
+    the row can never be claimed again and the user must request a new code.
     """
     now = datetime.now(UTC)
-    claimed = await db.scalar(
-        update(EmailToken)
-        .where(
-            EmailToken.user_id == user_id,
-            EmailToken.purpose == purpose.value,
-            EmailToken.used_at.is_(None),
-            EmailToken.code_hash == _hash_token(raw_code),
-            EmailToken.code_expires_at > now,
-            EmailToken.code_attempts < EMAIL_CODE_MAX_ATTEMPTS,
+    row = (
+        await db.execute(
+            update(EmailToken)
+            .where(
+                EmailToken.user_id == user_id,
+                EmailToken.purpose == purpose.value,
+                EmailToken.used_at.is_(None),
+                EmailToken.code_hash == _hash_token(raw_code),
+                EmailToken.code_expires_at > now,
+                EmailToken.code_attempts < EMAIL_CODE_MAX_ATTEMPTS,
+            )
+            .values(used_at=now)
+            .returning(EmailToken.user_id, EmailToken.new_email)
+            .execution_options(synchronize_session=False)
         )
-        .values(used_at=now)
-        .returning(EmailToken.user_id)
-        .execution_options(synchronize_session=False)
-    )
-    if claimed is not None:
-        return await db.get(User, claimed)
+    ).first()
+    if row is not None:
+        user = await db.get(User, row.user_id)
+        return None if user is None else ClaimedToken(user, row.new_email)
 
     # Wrong or unusable code: spend an attempt on whatever live row this user
     # has, so repeated guessing exhausts the cap instead of running forever.
@@ -182,6 +199,56 @@ async def consume_code(
         .execution_options(synchronize_session=False)
     )
     return None
+
+
+async def consume_token(
+    db: AsyncSession, raw_token: str, purpose: EmailTokenPurpose
+) -> User | None:
+    """Redeem a token: mark it used and return its owner. Caller commits.
+
+    Returns None for unknown, already-used, wrong-purpose or expired tokens --
+    indistinguishable on purpose, so responses cannot leak token state.
+    """
+    claimed = await _claim_by_token(db, raw_token, purpose)
+    return None if claimed is None else claimed.user
+
+
+async def consume_code(
+    db: AsyncSession, user_id: uuid.UUID, raw_code: str, purpose: EmailTokenPurpose
+) -> User | None:
+    """Redeem a numeric code for one user. Caller commits.
+
+    Returns None for a wrong, expired, capped or missing code, all
+    indistinguishable, same rule as ``consume_token``.
+    """
+    claimed = await _claim_by_code(db, user_id, raw_code, purpose)
+    return None if claimed is None else claimed.user
+
+
+async def consume_email_change(
+    db: AsyncSession,
+    *,
+    raw_token: str | None = None,
+    user_id: uuid.UUID | None = None,
+    raw_code: str | None = None,
+) -> ClaimedToken | None:
+    """Redeem an email-change token or code, keeping the pending address.
+
+    Returns None unless the claim succeeded *and* carried a ``new_email``: a
+    CHANGE_EMAIL row without one would be a bug, and applying an empty address
+    would lock the account out of its own recovery.
+    """
+    if raw_token is not None:
+        claimed = await _claim_by_token(db, raw_token, EmailTokenPurpose.CHANGE_EMAIL)
+    elif user_id is not None and raw_code is not None:
+        claimed = await _claim_by_code(
+            db, user_id, raw_code, EmailTokenPurpose.CHANGE_EMAIL
+        )
+    else:  # pragma: no cover - guarded by the two call sites
+        raise ValueError("consume_email_change needs a token or a user_id + code")
+    if claimed is None or not claimed.new_email:
+        return None
+    return claimed
 
 
 def _action_link(path: str, raw_token: str) -> str:
@@ -209,6 +276,22 @@ async def send_verification(
     subject, html, text = templates.verification_email(
         _action_link(VERIFY_EMAIL_PATH, raw_token), raw_code
     )
+    await _send_safely(to, subject, html, text)
+
+
+async def send_email_change_verification(
+    to: str, raw_token: str, raw_code: str | None = None
+) -> None:
+    """To the new address: the link (and code) that actually applies the change."""
+    subject, html, text = templates.email_change_verification(
+        _action_link(CHANGE_EMAIL_PATH, raw_token), raw_code
+    )
+    await _send_safely(to, subject, html, text)
+
+
+async def send_email_change_notice(to: str, new_email: str) -> None:
+    """To the old address: a heads-up carrying no token and no code."""
+    subject, html, text = templates.email_change_notice(new_email)
     await _send_safely(to, subject, html, text)
 
 

@@ -316,6 +316,37 @@ export const api = {
     });
   },
 
+  /**
+   * Ask to move the account to a new address.
+   *
+   * Nothing changes until the new inbox confirms. Always resolves 202 with the
+   * same body whether or not the target is already registered, so it must not
+   * be branched on.
+   */
+  requestEmailChange(new_email: string, current_password: string) {
+    return request<{ detail: string }>('/api/v1/users/me/email', {
+      method: 'POST',
+      body: { new_email, current_password },
+    });
+  },
+
+  /** Redeem an email-change link. Public (works signed out). */
+  confirmEmailChange(token: string) {
+    return request<{ detail: string }>('/api/v1/auth/change-email', {
+      method: 'POST',
+      body: { token },
+      auth: false,
+    });
+  },
+
+  /** Redeem the code from an email-change confirmation. Needs a session. */
+  confirmEmailChangeCode(code: string) {
+    return request<{ detail: string }>('/api/v1/auth/change-email/code', {
+      method: 'POST',
+      body: { code },
+    });
+  },
+
   /** Rotate the verification token and re-send the email. */
   resendVerification() {
     return request<{ detail: string }>('/api/v1/auth/resend-verification', {
@@ -349,7 +380,6 @@ export const api = {
 
   updateProfile(input: {
     display_name?: string;
-    email?: string;
     // null resets the default brain back to the local model.
     default_provider?: LLMProvider | null;
     // null clears the field. Avatar is a monogram (palette key + emoji), no blob.

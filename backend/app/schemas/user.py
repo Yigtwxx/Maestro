@@ -19,8 +19,25 @@ from app.core.constants import (
 )
 
 
+class EmailChangeRequest(BaseModel):
+    """Ask to move the account to a new address.
+
+    Separate from ``UserUpdate`` because changing the address must re-prove
+    ownership of the new inbox: a plain profile field could rewrite ``email``
+    while leaving ``email_verified`` true.
+    """
+
+    new_email: EmailStr
+    current_password: str = Field(min_length=1, max_length=128)
+
+
 class UserUpdate(BaseModel):
     """Partial profile update; absent fields are left untouched.
+
+    The email address is deliberately absent: changing it has to re-run
+    verification, which is what ``POST /users/me/email`` does. An unknown
+    ``email`` key here is ignored rather than rejected, so a cached frontend
+    bundle mid-deploy degrades to a no-op instead of failing every save.
 
     ``default_provider`` may be explicitly set to null to reset the default
     brain back to the local model (distinguish via ``model_fields_set``).
@@ -33,7 +50,6 @@ class UserUpdate(BaseModel):
     """
 
     display_name: str | None = Field(default=None, max_length=120)
-    email: EmailStr | None = None
     default_provider: LLMProvider | None = None
     bio: str | None = Field(default=None, max_length=BIO_MAX_LEN)
     avatar_color: str | None = Field(default=None, max_length=20)

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Textarea } from '@/components/ui/Textarea';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ChangeEmailDialog } from './ChangeEmailDialog';
 import { cn } from '@/lib/cn';
 import { api, ApiError } from '@/lib/api';
 import { AVATAR_COLOR_KEYS, AVATAR_PALETTE } from '@/lib/avatar';
@@ -33,6 +34,7 @@ export function IdentityCard() {
   const [error, setError] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
   const [savedNonce, setSavedNonce] = useState(0);
+  const [changingEmail, setChangingEmail] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -51,7 +53,6 @@ export function IdentityCard() {
     try {
       const updated = await api.updateProfile({
         display_name: displayName,
-        email,
         bio: bio.trim() || null,
         avatar_color: avatarColor,
         avatar_emoji: avatarEmoji.trim() || null,
@@ -59,11 +60,7 @@ export function IdentityCard() {
       setUser(updated);
       setSavedNonce((n) => n + 1);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        setError('This email is already in use.');
-      } else {
-        setError(err instanceof ApiError ? err.message : 'Profile could not be updated.');
-      }
+      setError(err instanceof ApiError ? err.message : 'Profile could not be updated.');
     } finally {
       setSaving(false);
     }
@@ -165,14 +162,30 @@ export function IdentityCard() {
             maxLength={120}
             module="profile"
           />
-          <Input
-            label="Email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            module="profile"
-          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-micro text-muted" htmlFor="identity-email">
+              Email
+            </label>
+            <input
+              id="identity-email"
+              type="email"
+              value={email}
+              readOnly
+              aria-describedby="identity-email-help"
+              className="cursor-not-allowed rounded-md border border-border bg-surface-1 px-3 py-2 font-mono text-sm text-muted"
+            />
+            <p id="identity-email-help" className="text-xs text-muted">
+              Your sign-in address.{' '}
+              <button
+                type="button"
+                onClick={() => setChangingEmail(true)}
+                className="text-primary hover:underline"
+              >
+                Change it
+              </button>{' '}
+              — we&apos;ll confirm the new one by email first.
+            </p>
+          </div>
         </div>
 
         <Textarea
@@ -199,6 +212,11 @@ export function IdentityCard() {
           Save
         </Button>
       </form>
+      <ChangeEmailDialog
+        open={changingEmail}
+        onClose={() => setChangingEmail(false)}
+        currentEmail={email}
+      />
     </Card>
   );
 }

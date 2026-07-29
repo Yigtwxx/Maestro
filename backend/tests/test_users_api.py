@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -29,6 +30,16 @@ async def _register_and_login(client, email: str = _EMAIL) -> dict[str, str]:  #
     )
     assert resp.status_code == 200, f"Login failed: {resp.text}"
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
+
+
+async def _verify_email(client, sent_emails) -> None:  # noqa: ANN001
+    """Redeem the link from the registration email."""
+    match = re.search(r"token=([A-Za-z0-9_\-]+)", sent_emails[0].text)
+    assert match is not None, "registration should have emailed a link"
+    resp = await client.post(
+        "/api/v1/auth/verify-email", json={"token": match.group(1)}
+    )
+    assert resp.status_code == 200, f"Verify failed: {resp.text}"
 
 
 async def _add_key(client, headers: dict[str, str], provider: str) -> None:  # noqa: ANN001
@@ -140,22 +151,22 @@ async def test_patch_me_updates_display_name(client):
     assert resp.json()["email"] == _EMAIL
 
 
-async def test_patch_me_updates_email_lowercased(client):
+async def test_patch_me_ignores_email_and_keeps_it_verified(client, sent_emails):
+    """The address is immutable here -- changing it must re-run verification.
+
+    An unknown key is ignored rather than 422'd, so a cached frontend bundle
+    still posting ``email`` mid-deploy degrades to a no-op.
+    """
     headers = await _register_and_login(client)
+    await _verify_email(client, sent_emails)
+
     resp = await client.patch(
-        "/api/v1/users/me", headers=headers, json={"email": "New@Mail.com"}
+        "/api/v1/users/me", headers=headers, json={"email": "attacker@evil.com"}
     )
+
     assert resp.status_code == 200
-    assert resp.json()["email"] == "new@mail.com"
-
-
-async def test_patch_me_duplicate_email_conflict(client):
-    await _register_and_login(client, email="other@user.com")
-    headers = await _register_and_login(client)
-    resp = await client.patch(
-        "/api/v1/users/me", headers=headers, json={"email": "other@user.com"}
-    )
-    assert resp.status_code == 409, f"Expected 409, got {resp.status_code}"
+    assert resp.json()["email"] == _EMAIL, "email must not be updatable here"
+    assert resp.json()["email_verified"] is True, "and must stay verified"
 
 
 async def test_patch_me_default_provider_without_key_rejected(client):

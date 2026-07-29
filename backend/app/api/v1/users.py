@@ -20,12 +20,12 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
 from app.core.constants import (
     ACCOUNT_DELETION_GRACE_DAYS,
     RATE_LIMIT_READ,
     RATE_LIMIT_WRITE,
+    EmailTokenPurpose,
     LLMProvider,
     SubscriptionStatus,
 )
@@ -33,10 +33,11 @@ from app.core.deps import ActiveUser, CurrentFamily, CurrentUser, DbSession
 from app.core.security import hash_password, verify_password
 from app.models.api_key import ApiKey
 from app.models.user import User
-from app.schemas.auth import UserPublic
+from app.schemas.auth import DetailResponse, UserPublic
 from app.schemas.user import (
     AccountDelete,
     AccountDeletionStatus,
+    EmailChangeRequest,
     PasswordChange,
     RecoveryCodes,
     SessionInfo,
@@ -56,6 +57,13 @@ from app.utils.rate_limiter import rate_limit
 from app.utils.request_context import summarize_user_agent
 
 _BAD_REQUEST = status.HTTP_400_BAD_REQUEST
+
+# One fixed message for every outcome of an email-change request, so the
+# response never reveals whether the target address is already registered.
+_EMAIL_CHANGE_ACCEPTED = (
+    "Check the new address for a confirmation link. Your current address "
+    "stays active until you use it."
+)
 
 # Session-management endpoints keep the *current* session and revoke the rest,
 # which requires knowing which family is current. A token minted before the
@@ -109,8 +117,6 @@ async def update_me(payload: UserUpdate, user: ActiveUser, db: DbSession) -> Use
     """
     if "display_name" in payload.model_fields_set:
         user.display_name = payload.display_name
-    if "email" in payload.model_fields_set and payload.email is not None:
-        user.email = payload.email.lower()
     if "bio" in payload.model_fields_set:
         user.bio = payload.bio
     if "avatar_color" in payload.model_fields_set:
@@ -148,16 +154,57 @@ async def update_me(payload: UserUpdate, user: ActiveUser, db: DbSession) -> Use
         # Whole-map replace; reassignment (never in-place mutation) so the
         # JSON column change is tracked by SQLAlchemy.
         user.model_preferences = payload.model_preferences
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email already exists.",
-        ) from exc
+    # No IntegrityError branch: `email` was the only unique column this handler
+    # could touch, and it now has its own endpoint (POST /me/email), so nothing
+    # left here can violate a constraint.
+    await db.commit()
     await db.refresh(user)
     return user
+
+
+@router.post(
+    "/me/email",
+    response_model=DetailResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[_write_rate_limit],
+)
+async def request_email_change(
+    payload: EmailChangeRequest, user: ActiveUser, db: DbSession
+) -> DetailResponse:
+    """Start moving the account to a new address.
+
+    Nothing changes here. The address only moves once the new inbox proves it
+    is reachable, which is the whole point: the previous behaviour let a
+    profile update rewrite `email` while leaving `email_verified` true, so a
+    verified account could be repointed at an address nobody had proven they
+    owned -- and password-reset mail would follow it.
+
+    Requires the current password, because an attacker holding a stolen access
+    token must not be able to silently redirect account recovery.
+    """
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+
+    new_email = payload.new_email.lower()
+    if new_email == user.email:
+        # A no-op, answered identically so the response says nothing about it.
+        return DetailResponse(detail=_EMAIL_CHANGE_ACCEPTED)
+
+    # Deliberately no uniqueness check: answering "that address is taken" here
+    # would turn this endpoint into an account-existence oracle. A collision
+    # surfaces at confirm time, by which point the caller has proven they can
+    # read that inbox anyway.
+    raw_token, raw_code = await email_service.issue_token(
+        db, user.id, EmailTokenPurpose.CHANGE_EMAIL, with_code=True, new_email=new_email
+    )
+    old_email = user.email
+    await db.commit()
+    await email_service.send_email_change_verification(new_email, raw_token, raw_code)
+    await email_service.send_email_change_notice(old_email, new_email)
+    return DetailResponse(detail=_EMAIL_CHANGE_ACCEPTED)
 
 
 @router.post(

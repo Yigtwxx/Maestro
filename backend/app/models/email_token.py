@@ -50,6 +50,11 @@ class EmailToken(Base, TimestampMixin):
         DateTime(timezone=True), nullable=True
     )
     code_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
+    # The address a CHANGE_EMAIL token would move the account to (NULL for
+    # every other purpose). Kept here rather than on ``users`` so it expires
+    # and rotates with the token itself, and so a token is bound to the address
+    # it was issued for -- an older link can never apply a newer address.
+    new_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
 
     user: Mapped[User] = relationship(foreign_keys=[user_id])
 

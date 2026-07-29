@@ -224,6 +224,77 @@ async def verify_email_code(
     return DetailResponse(detail="Email verified.")
 
 
+async def _apply_email_change(db: DbSession, claimed) -> DetailResponse:  # noqa: ANN001
+    """Move the account onto its confirmed address and lock out old sessions."""
+    user, new_email = claimed.user, claimed.new_email
+    user.email = new_email
+    # Stays verified: clicking this link is exactly the proof that the new
+    # inbox is reachable.
+    user.email_verified = True
+    try:
+        # Flush before anything else touches the session: revoking sessions
+        # issues a query, whose autoflush would raise this same IntegrityError
+        # from outside any handler. Surfacing it here keeps it catchable.
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        # The only place a collision can surface. By now the caller has proven
+        # they can read that inbox, so this leaks nothing they could not learn
+        # by trying to register it.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That address is already in use by another account.",
+        ) from exc
+    # A changed sign-in address should not leave stale refresh tokens alive.
+    await auth_service.revoke_other_families(db, user.id, keep_family=None)
+    await db.commit()
+    return DetailResponse(detail="Email address updated.")
+
+
+@router.post(
+    "/change-email",
+    response_model=DetailResponse,
+    dependencies=[_auth_rate_limit],
+)
+async def confirm_email_change(
+    payload: VerifyEmailRequest, db: DbSession
+) -> DetailResponse:
+    """Redeem an email-change link. Public, like /verify-email: the link lands
+    in a mail client that may not share the signed-in browser."""
+    claimed = await email_service.consume_email_change(db, raw_token=payload.token)
+    if claimed is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This confirmation link is invalid or has expired.",
+        )
+    return await _apply_email_change(db, claimed)
+
+
+@router.post(
+    "/change-email/code",
+    response_model=DetailResponse,
+    dependencies=[rate_limit(RATE_LIMIT_EMAIL_CODE, scope="email_code")],
+)
+async def confirm_email_change_code(
+    payload: VerifyEmailCodeRequest, user: CurrentUser, db: DbSession
+) -> DetailResponse:
+    """Redeem the numeric code from an email-change confirmation.
+
+    Authenticated for the same reason as /verify-email/code: six digits are
+    only unique within one account's rows.
+    """
+    claimed = await email_service.consume_email_change(
+        db, user_id=user.id, raw_code=payload.code
+    )
+    if claimed is None:
+        await db.commit()  # persist the spent attempt
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That code is invalid or has expired.",
+        )
+    return await _apply_email_change(db, claimed)
+
+
 @router.post(
     "/resend-verification",
     response_model=DetailResponse,

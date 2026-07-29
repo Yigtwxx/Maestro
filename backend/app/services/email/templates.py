@@ -8,6 +8,7 @@ absolute action links. Copy is English, matching the product UI.
 from __future__ import annotations
 
 from app.core.constants import (
+    EMAIL_CHANGE_TOKEN_TTL_HOURS,
     EMAIL_CODE_TTL_MINUTES,
     EMAIL_VERIFY_TOKEN_TTL_HOURS,
     PASSWORD_RESET_TOKEN_TTL_MINUTES,
@@ -105,6 +106,64 @@ def password_reset_email(link: str) -> tuple[str, str, str]:
         _html("Reset your password", paragraphs, ("Reset password", link)),
         text,
     )
+
+
+def email_change_verification(
+    link: str, code: str | None = None
+) -> tuple[str, str, str]:
+    """Sent to the *new* address when an email change is requested.
+
+    Nothing has moved yet -- this link is what moves it -- so the copy must not
+    read as a confirmation of something already done.
+    """
+    subject = "Confirm your new Maestro email address"
+    paragraphs = [
+        "You asked to use this address for your Maestro account. Confirm it "
+        "to finish the change.",
+        "Your account keeps its current address until you do. "
+        f"This link expires in {EMAIL_CHANGE_TOKEN_TTL_HOURS} hours.",
+    ]
+    text = (
+        "You asked to use this address for your Maestro account.\n\n"
+        f"Confirm it to finish the change:\n{link}\n\n"
+        "Your account keeps its current address until you do. "
+        f"This link expires in {EMAIL_CHANGE_TOKEN_TTL_HOURS} hours."
+    )
+    if code is not None:
+        text += (
+            f"\n\nOr enter this code: {code}\n"
+            f"The code expires in {EMAIL_CODE_TTL_MINUTES} minutes."
+        )
+    return (
+        subject,
+        _html("Confirm your new email", paragraphs, ("Confirm email", link), code),
+        text,
+    )
+
+
+def email_change_notice(new_email: str) -> tuple[str, str, str]:
+    """Sent to the *old* address when an email change is requested.
+
+    Deliberately carries no link and no code: this is the address that may no
+    longer be the owner's, so it must be informational only. Its whole job is
+    to give the real owner a chance to react.
+    """
+    subject = "Someone requested an email change on your Maestro account"
+    paragraphs = [
+        f"A request was made to move your Maestro account to {new_email}. "
+        "The change is not active yet -- it only takes effect once that "
+        "address is confirmed.",
+        "If this was not you, sign in now and change your password. Your "
+        "current address still works until the new one is confirmed.",
+    ]
+    text = (
+        f"A request was made to move your Maestro account to {new_email}.\n\n"
+        "The change is not active yet -- it only takes effect once that "
+        "address is confirmed.\n\n"
+        "If this was not you, sign in now and change your password. Your "
+        "current address still works until the new one is confirmed."
+    )
+    return subject, _html("Email change requested", paragraphs, None), text
 
 
 def deletion_requested_email(purge_date: str) -> tuple[str, str, str]:
