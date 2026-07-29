@@ -22,7 +22,10 @@ from app.services import billing_service, usage_service
 
 logger = logging.getLogger(__name__)
 
-INACTIVE_DETAIL = "Your plan is inactive. Subscribe to start tasks."
+# Unreachable for a normal account: registration provisions an active FREE plan
+# and /billing/cancel refuses to cancel it. It stays reachable for a lapsed
+# *paid* plan, so it must not tell that user to do something they cannot.
+INACTIVE_DETAIL = "Your plan is inactive. Contact support to restore access."
 QUOTA_EXHAUSTED_DETAIL = (
     "Monthly token quota exhausted. Upgrade your plan or wait for renewal."
 )
@@ -34,6 +37,11 @@ class QuotaSnapshot:
 
     used_tokens: int
     quota_tokens: int
+
+    @property
+    def unlimited(self) -> bool:
+        """Whether the plan has no ceiling (FREE). Guard before any arithmetic."""
+        return billing_service.is_unlimited_quota(self.quota_tokens)
 
 
 async def get_quota_snapshot(db: AsyncSession, user: User) -> QuotaSnapshot:
@@ -75,6 +83,10 @@ async def enforce_can_start_task(db: AsyncSession, user: User) -> None:
         )
 
     snapshot = await get_quota_snapshot(db, user)
+    # Must come before the comparison: the sentinel is negative, so
+    # `used >= quota` would be true for every free user and refuse them all.
+    if snapshot.unlimited:
+        return
     if snapshot.used_tokens >= snapshot.quota_tokens:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -99,6 +111,12 @@ async def resolve_task_token_budget(user_id: uuid.UUID) -> int:
             if is_unmetered(user):
                 return TASK_TOKEN_BUDGET_DEFAULT
             snapshot = await get_quota_snapshot(db, user)
+            # An unlimited plan is never throttled by "remaining". Without this
+            # the sentinel makes the subtraction clamp to 0, and a 0 budget
+            # makes the Main Agent skip every subagent -- silently, with no
+            # error anywhere. This guard is why the sentinel is safe.
+            if snapshot.unlimited:
+                return TASK_TOKEN_BUDGET_DEFAULT
             remaining = max(0, snapshot.quota_tokens - snapshot.used_tokens)
             return min(TASK_TOKEN_BUDGET_DEFAULT, remaining)
     except Exception:  # noqa: BLE001 - budget resolution is best-effort

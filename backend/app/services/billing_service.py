@@ -202,8 +202,17 @@ async def cost_summary(user_id: uuid.UUID) -> dict[str, Any]:
 
 
 def plan_quota(plan: str) -> int:
-    """Monthly token allowance for a plan."""
+    """Monthly token allowance for a plan (UNLIMITED_TOKEN_QUOTA = no ceiling)."""
     return PLAN_MONTHLY_TOKEN_QUOTA[plan]
+
+
+def is_unlimited_quota(quota_tokens: int) -> bool:
+    """Whether an allowance is the unlimited sentinel rather than a real cap.
+
+    One definition, shared by the quota checks and the API response, so a new
+    caller cannot invent its own idea of what a negative allowance means.
+    """
+    return quota_tokens < 0
 
 
 def resolve_effective_status(subscription: Subscription | None) -> SubscriptionStatus:
@@ -276,6 +285,44 @@ async def sync_billing_period(
 async def get_subscription(db: AsyncSession, user_id: uuid.UUID) -> Subscription | None:
     """The user's single subscription row, if any."""
     return await db.scalar(select(Subscription).where(Subscription.user_id == user_id))
+
+
+async def ensure_free_subscription(
+    db: AsyncSession, user: User, *, now: datetime | None = None
+) -> Subscription:
+    """Put the user on the active FREE plan unless they already hold an active one.
+
+    Two callers: registration and ``scripts.grant_admin``. Registration is the
+    load-bearing one -- ``usage_service.record_task_usage`` drops the record
+    when there is no subscription row to anchor ``period_start`` to, so without
+    this the dashboard's token and cost views would stay empty for everyone.
+
+    Idempotent, and never downgrades an account that already holds an active
+    plan. Does **not** commit: the caller owns the transaction, so the row lands
+    with the user row it belongs to and the two can never diverge.
+    """
+    moment = now or datetime.now(UTC)
+    subscription = await get_subscription(db, user.id)
+    if subscription is not None and is_active(subscription):
+        # Keep the display cache honest, but leave a paid plan alone.
+        user.subscription_tier = subscription.plan
+        return subscription
+
+    plan = SubscriptionPlan.FREE.value
+    if subscription is None:
+        subscription = Subscription(user_id=user.id)
+        db.add(subscription)
+    subscription.plan = plan
+    subscription.status = SubscriptionStatus.ACTIVE.value
+    subscription.provider = PAYMENT_PROVIDER_MOCK
+    subscription.provider_subscription_id = None
+    subscription.provider_customer_id = None
+    subscription.current_period_start = moment
+    subscription.current_period_end = moment + timedelta(days=BILLING_PERIOD_DAYS)
+    subscription.trial_end = None
+    subscription.cancel_at_period_end = False
+    user.subscription_tier = plan
+    return subscription
 
 
 async def get_payment_method(

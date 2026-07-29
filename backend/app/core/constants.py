@@ -387,8 +387,12 @@ SERVICE_PROVIDERS = frozenset(
 
 
 class SubscriptionPlan(StrEnum):
-    """Paid subscription plans. There is no free plan."""
+    """Subscription plans. FREE is what every account is provisioned with.
 
+    FREE is listed first so it leads on the pricing page and in the plan grid.
+    """
+
+    FREE = "free"
     STARTER = "starter"
     PRO = "pro"
     SCALE = "scale"
@@ -420,20 +424,31 @@ BILLING_CURRENCY = "usd"
 # Rolling billing window, anchored to the subscription's period start.
 BILLING_PERIOD_DAYS = 30
 
+# Sentinel monthly allowance meaning "no ceiling". Negative on purpose: any
+# arithmetic that reaches it produces a visibly wrong number rather than a
+# plausible one, so a missing guard fails loudly instead of quietly capping a
+# user at zero. Every consumer must branch on billing_service.is_unlimited_quota
+# (or QuotaSnapshot.unlimited) before doing arithmetic -- see
+# quota_service.resolve_task_token_budget for the trap this exists to close.
+UNLIMITED_TOKEN_QUOTA = -1
+
 PLAN_MONTHLY_TOKEN_QUOTA: dict[str, int] = {
+    SubscriptionPlan.FREE.value: UNLIMITED_TOKEN_QUOTA,
     SubscriptionPlan.STARTER.value: 500_000,
     SubscriptionPlan.PRO.value: 3_000_000,
     SubscriptionPlan.SCALE.value: 10_000_000,
 }
 
 PLAN_PRICE_USD_CENTS: dict[str, int] = {
+    SubscriptionPlan.FREE.value: 0,
     SubscriptionPlan.STARTER.value: 500,
     SubscriptionPlan.PRO.value: 1_500,
     SubscriptionPlan.SCALE.value: 5_000,
 }
 
-# Statuses that are allowed to consume quota. There is no trial: an account can
-# only run tasks once it holds an active, paid subscription.
+# Statuses that are allowed to consume quota. Every account is provisioned with
+# an active FREE subscription at registration, so this frozenset is what keeps a
+# lapsed *paid* plan from consuming quota -- not what gates the product.
 ACTIVE_SUBSCRIPTION_STATUSES: frozenset[SubscriptionStatus] = frozenset(
     {SubscriptionStatus.ACTIVE}
 )
