@@ -122,7 +122,7 @@ environment variables.
 | `RESEND_API_KEY` | Required when `EMAIL_PROVIDER=resend`; checked at boot in production | — |
 | `EMAIL_FROM` | From header for outgoing mail | `Maestro <noreply@maestro.example.com>` |
 | `SITE_URL` | Base URL the backend uses to build verification / reset links | `http://localhost:3000` |
-| `EMAIL_VERIFICATION_REQUIRED` | Soft-gates task start and API-key creation until the email is verified | `true` |
+| `EMAIL_VERIFICATION_REQUIRED` | Soft-gates task start, API-key creation and custom-API-tool writes until the email is verified. Ships off: the default `console` sender delivers nothing to an inbox, so an enforced gate would lock a fresh install rather than protect it. Enable it only alongside a real sender, and flip `EMAIL_VERIFICATION_LIVE` in `frontend/src/lib/legal/config.ts` with it | `false` |
 
 ## App & observability
 

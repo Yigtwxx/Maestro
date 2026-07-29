@@ -516,6 +516,16 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
 - `PAYMENT_PROVIDER` — only `mock` is implemented here. `BILLING_LIVE` gates the honesty
   banner shown on `/terms` and `/pricing`.
 - `EMAIL_PROVIDER` — `console` (default; links appear in logs) or `resend`.
+- `EMAIL_VERIFICATION_REQUIRED` — the soft gate behind `deps.get_verified_user`: task
+  start, API-key create and custom-API-tool writes answer 403 for an unverified account.
+  It ships **off**, and that is one decision with `EMAIL_PROVIDER=console`, not two — the
+  console sender writes verification mail to the server log, so an enforced gate would lock
+  every account on a fresh install with no way through. Enable it only alongside a real
+  sender. Its frontend twin is `EMAIL_VERIFICATION_LIVE` in `lib/legal/config.ts`, which
+  hides the reminder banner and the "we sent you a link" toast while the gate is off; the
+  backend cannot set a build-time constant, so the pair is flipped together, exactly like
+  `BILLING_ENABLED`/`BILLING_LIVE`. Nothing is removed meanwhile: `/verify-email`, the
+  6-digit code and the resend endpoint all keep working for anyone who wants them.
 - `SENTRY_DSN` / `FRONTEND_SENTRY_DSN` — two separate projects. Empty means fully off with
   zero egress; the frontend SDK chunk is never even downloaded.
 - `DATA_FETCH_ENGINE` — `scrapling` (default) or `httpx`. The httpx path is the

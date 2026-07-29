@@ -302,6 +302,11 @@ you are not running Redis.
   emails). The default `EMAIL_PROVIDER=console` only logs messages, so
   verification and password-reset links would never reach users. The backend
   reads these via `env_file: .env.prod`, so no compose change is needed.
+  `EMAIL_VERIFICATION_REQUIRED` ships `false` for exactly that reason — never
+  turn it on before a real sender works end to end, or every account is locked
+  out of task start and API-key creation with no way to verify. When you do,
+  flip `EMAIL_VERIFICATION_LIVE` in `frontend/src/lib/legal/config.ts` in the
+  same change: it is a build-time constant the backend cannot set.
 - FastAPI's Swagger UI, ReDoc and `/openapi.json` are disabled when
   `ENVIRONMENT=production`.
 - **Security headers come from Caddy** (`header` blocks in the `Caddyfile`),
