@@ -195,6 +195,19 @@ async def db_session():
 
 
 @pytest.fixture
+async def other_db_session():
+    """A second, independent session on the same in-memory database.
+
+    For exercising two callers racing over one row. StaticPool means both
+    sessions share a single SQLite connection, so this proves a claim is
+    issued as SQL immediately rather than deferred to pending ORM state --
+    it cannot reproduce real cross-connection locking (PostgreSQL only).
+    """
+    async with _TestSession() as session:
+        yield session
+
+
+@pytest.fixture
 async def client():
     async def _override_get_db():
         async with _TestSession() as session:

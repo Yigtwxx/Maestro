@@ -15,7 +15,7 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -30,7 +30,6 @@ from app.core.constants import (
 from app.models.email_token import EmailToken
 from app.models.user import User
 from app.services.email import EmailMessage, get_email_provider, templates
-from app.utils.timeseries import as_utc
 
 logger = logging.getLogger(__name__)
 
@@ -86,20 +85,31 @@ async def consume_token(
 
     Returns None for unknown, already-used, wrong-purpose or expired tokens --
     indistinguishable on purpose, so responses cannot leak token state.
+
+    The claim is a single conditional UPDATE, never a read-then-write: two
+    concurrent redemptions of the same link must not both succeed. Expiry is
+    part of the same predicate; SQLite stores DateTime(timezone=True) as UTC
+    wall-clock text, so the tz-aware bound parameter compares correctly there
+    as well as against a PostgreSQL timestamptz.
     """
-    result = await db.execute(
-        select(EmailToken).where(
+    now = datetime.now(UTC)
+    user_id = await db.scalar(
+        update(EmailToken)
+        .where(
             EmailToken.token_hash == _hash_token(raw_token),
             EmailToken.purpose == purpose.value,
             EmailToken.used_at.is_(None),
+            EmailToken.expires_at > now,
         )
+        .values(used_at=now)
+        .returning(EmailToken.user_id)
+        # Bulk DML: skip the ORM evaluate pass (naive-vs-aware compare on
+        # SQLite), same as issue_token above.
+        .execution_options(synchronize_session=False)
     )
-    token = result.scalar_one_or_none()
-    now = datetime.now(UTC)
-    if token is None or as_utc(token.expires_at) <= now:
+    if user_id is None:
         return None
-    token.used_at = now
-    return await db.get(User, token.user_id)
+    return await db.get(User, user_id)
 
 
 def _action_link(path: str, raw_token: str) -> str:

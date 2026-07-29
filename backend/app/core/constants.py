@@ -513,6 +513,16 @@ EMAIL_TOKEN_BYTES = 32
 VERIFY_EMAIL_PATH = "/verify-email"
 RESET_PASSWORD_PATH = "/reset-password"
 
+# How long a dead token row is kept before the retention sweep removes it.
+# expires_at is set on every row, so this single predicate covers used,
+# superseded and never-clicked tokens alike. 30 days matches
+# ACCOUNT_DELETION_GRACE_DAYS and is ~30x the longest TTL, so a paused sweep
+# can never delete a link that is still live.
+EMAIL_TOKEN_RETENTION_DAYS = 30
+# Rows deleted per transaction, so a first run over a large backlog does not
+# hold one long lock.
+EMAIL_TOKEN_PURGE_BATCH = 1_000
+
 RESEND_API_URL = "https://api.resend.com/emails"
 # Retry only transient failures (429/5xx/network), with exponential backoff.
 EMAIL_SEND_MAX_ATTEMPTS = 3

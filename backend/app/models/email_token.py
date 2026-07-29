@@ -34,7 +34,9 @@ class EmailToken(Base, TimestampMixin):
     # EmailTokenPurpose value ("verify_email" | "reset_password").
     purpose: Mapped[str] = mapped_column(String(20))
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Indexed for the retention sweep (app.scripts.purge_email_tokens), whose
+    # only predicate is expires_at < cutoff.
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     # NULL means unused; set when consumed or superseded by a newer token.
     used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

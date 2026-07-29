@@ -49,6 +49,34 @@ async def test_consume_token_valid_returns_user_and_marks_used(db_session) -> No
     assert replay is None, "a token must be single-use"
 
 
+async def test_consume_token_concurrent_claims_only_one_succeeds(
+    db_session, other_db_session
+) -> None:
+    """Two callers redeeming the same link: exactly one wins.
+
+    The read-then-write version passed both -- the claim only existed as
+    pending ORM state until commit, so the second SELECT still saw
+    ``used_at IS NULL``. Regression guard for that race.
+    """
+    user = await _user(db_session)
+    raw = await email_service.issue_token(
+        db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
+    )
+    await db_session.commit()
+
+    first = await email_service.consume_token(
+        db_session, raw, EmailTokenPurpose.VERIFY_EMAIL
+    )
+    second = await email_service.consume_token(
+        other_db_session, raw, EmailTokenPurpose.VERIFY_EMAIL
+    )
+
+    winners = [c for c in (first, second) if c is not None]
+    assert len(winners) == 1, (
+        f"exactly one claim must win, got first={first!r} second={second!r}"
+    )
+
+
 async def test_consume_token_expired_returns_none(db_session) -> None:
     user = await _user(db_session)
     raw = await email_service.issue_token(
