@@ -80,7 +80,7 @@ async def test_purge_removes_used_rows_once_expired(db_session) -> None:
 async def test_purge_never_deletes_a_live_token(db_session) -> None:
     """The safety property: a link in flight must survive the sweep."""
     user = await _user(db_session)
-    raw = await email_service.issue_token(
+    raw, _ = await email_service.issue_token(
         db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
     )
     await db_session.commit()

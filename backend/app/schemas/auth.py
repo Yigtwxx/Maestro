@@ -7,7 +7,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from app.core.constants import LLMProvider
+from app.core.constants import EMAIL_CODE_DIGITS, LLMProvider
 
 
 class RegisterRequest(BaseModel):
@@ -49,6 +49,16 @@ class VerifyEmailRequest(BaseModel):
     """Redeem an emailed verification link."""
 
     token: str = Field(min_length=1, max_length=128)
+
+
+class VerifyEmailCodeRequest(BaseModel):
+    """Redeem the numeric code from a verification email."""
+
+    code: str = Field(
+        min_length=EMAIL_CODE_DIGITS,
+        max_length=EMAIL_CODE_DIGITS,
+        pattern=r"^\d+$",
+    )
 
 
 class ForgotPasswordRequest(BaseModel):

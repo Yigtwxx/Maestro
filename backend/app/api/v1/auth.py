@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from app.core.constants import (
     MFA_TOKEN_EXPIRE_MINUTES,
     RATE_LIMIT_AUTH,
+    RATE_LIMIT_EMAIL_CODE,
     EmailTokenPurpose,
 )
 from app.core.deps import CurrentUser, DbSession
@@ -35,6 +36,7 @@ from app.schemas.auth import (
     TokenPair,
     TotpVerifyRequest,
     UserPublic,
+    VerifyEmailCodeRequest,
     VerifyEmailRequest,
 )
 from app.services import (
@@ -89,12 +91,12 @@ async def register(payload: RegisterRequest, db: DbSession) -> User:
 
     # Issue the token inside the same transaction as the user row; send only
     # after commit so an email can never precede (or roll back with) the data.
-    raw_token = await email_service.issue_token(
-        db, user.id, EmailTokenPurpose.VERIFY_EMAIL
+    raw_token, raw_code = await email_service.issue_token(
+        db, user.id, EmailTokenPurpose.VERIFY_EMAIL, with_code=True
     )
     await db.commit()
     await db.refresh(user)
-    await email_service.send_verification(user.email, raw_token)
+    await email_service.send_verification(user.email, raw_token, raw_code)
     return user
 
 
@@ -193,6 +195,36 @@ async def verify_email(payload: VerifyEmailRequest, db: DbSession) -> DetailResp
 
 
 @router.post(
+    "/verify-email/code",
+    response_model=DetailResponse,
+    dependencies=[rate_limit(RATE_LIMIT_EMAIL_CODE, scope="email_code")],
+)
+async def verify_email_code(
+    payload: VerifyEmailCodeRequest, user: CurrentUser, db: DbSession
+) -> DetailResponse:
+    """Redeem the numeric code from a verification email.
+
+    Authenticated, unlike the link route: six digits are not unique, so the
+    code can only be looked up within one account's rows. An already-verified
+    caller gets the same 200 without spending an attempt.
+    """
+    if user.email_verified:
+        return DetailResponse(detail="Email verified.")
+    verified = await email_service.consume_code(
+        db, user.id, payload.code, EmailTokenPurpose.VERIFY_EMAIL
+    )
+    await db.commit()
+    if verified is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That code is invalid or has expired.",
+        )
+    verified.email_verified = True
+    await db.commit()
+    return DetailResponse(detail="Email verified.")
+
+
+@router.post(
     "/resend-verification",
     response_model=DetailResponse,
     status_code=status.HTTP_202_ACCEPTED,
@@ -205,11 +237,11 @@ async def resend_verification(user: CurrentUser, db: DbSession) -> DetailRespons
     never reveals verification state.
     """
     if not user.email_verified:
-        raw_token = await email_service.issue_token(
-            db, user.id, EmailTokenPurpose.VERIFY_EMAIL
+        raw_token, raw_code = await email_service.issue_token(
+            db, user.id, EmailTokenPurpose.VERIFY_EMAIL, with_code=True
         )
         await db.commit()
-        await email_service.send_verification(user.email, raw_token)
+        await email_service.send_verification(user.email, raw_token, raw_code)
     return DetailResponse(
         detail="If your email is unverified, a new link is on its way."
     )
@@ -233,7 +265,10 @@ async def forgot_password(
     result = await db.execute(select(User).where(User.email == payload.email.lower()))
     user = result.scalar_one_or_none()
     if user is not None:
-        raw_token = await email_service.issue_token(
+        # Link only, no code: a reset grants account takeover, so it keeps the
+        # 256-bit token as its single credential rather than gaining a
+        # six-digit one.
+        raw_token, _ = await email_service.issue_token(
             db, user.id, EmailTokenPurpose.RESET_PASSWORD
         )
         await db.commit()

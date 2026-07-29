@@ -8,6 +8,7 @@ absolute action links. Copy is English, matching the product UI.
 from __future__ import annotations
 
 from app.core.constants import (
+    EMAIL_CODE_TTL_MINUTES,
     EMAIL_VERIFY_TOKEN_TTL_HOURS,
     PASSWORD_RESET_TOKEN_TTL_MINUTES,
 )
@@ -18,9 +19,19 @@ _STYLE_CTA = (
     "background:#111111;color:#ffffff;text-decoration:none;font-weight:bold"
 )
 _STYLE_FINE = "font-size:12px;color:#666666"
+_STYLE_CODE = (
+    "display:inline-block;padding:12px 20px;border:1px solid #dddddd;"
+    "border-radius:6px;background:#fafafa;font-family:monospace;"
+    "font-size:28px;font-weight:bold;letter-spacing:6px;color:#111111"
+)
 
 
-def _html(title: str, paragraphs: list[str], cta: tuple[str, str] | None) -> str:
+def _html(
+    title: str,
+    paragraphs: list[str],
+    cta: tuple[str, str] | None,
+    code: str | None = None,
+) -> str:
     """Assemble a minimal, client-safe HTML body (inline styles only)."""
     blocks = [f"<h2>{title}</h2>"]
     blocks += [f"<p>{p}</p>" for p in paragraphs]
@@ -31,12 +42,25 @@ def _html(title: str, paragraphs: list[str], cta: tuple[str, str] | None) -> str
             f'<p style="{_STYLE_FINE}">Or paste this link into your '
             f"browser:<br>{link}</p>"
         )
+    if code is not None:
+        blocks.append("<p>Or enter this code:</p>")
+        blocks.append(f'<p><span style="{_STYLE_CODE}">{code}</span></p>')
+        blocks.append(
+            f'<p style="{_STYLE_FINE}">The code expires in '
+            f"{EMAIL_CODE_TTL_MINUTES} minutes.</p>"
+        )
     blocks.append(f'<p style="{_STYLE_FINE}">&mdash; The Maestro team</p>')
     return f'<div style="{_STYLE_BODY}">' + "".join(blocks) + "</div>"
 
 
-def verification_email(link: str) -> tuple[str, str, str]:
-    """Sent on registration and on every "resend verification" request."""
+def verification_email(link: str, code: str | None = None) -> tuple[str, str, str]:
+    """Sent on registration and on every "resend verification" request.
+
+    Carries both a one-click link and, when given, a typeable code: the link
+    fails a user reading mail on another device or behind a client that
+    rewrites URLs. The two expire on different clocks, so say so separately --
+    one sentence each, or the copy misleads.
+    """
     subject = "Verify your Maestro email address"
     paragraphs = [
         "Welcome to Maestro. Confirm this email address to unlock task runs "
@@ -50,7 +74,16 @@ def verification_email(link: str) -> tuple[str, str, str]:
         f"{link}\n\n"
         f"This link expires in {EMAIL_VERIFY_TOKEN_TTL_HOURS} hours."
     )
-    return subject, _html("Verify your email", paragraphs, ("Verify email", link)), text
+    if code is not None:
+        text += (
+            f"\n\nOr enter this code: {code}\n"
+            f"The code expires in {EMAIL_CODE_TTL_MINUTES} minutes."
+        )
+    return (
+        subject,
+        _html("Verify your email", paragraphs, ("Verify email", link), code),
+        text,
+    )
 
 
 def password_reset_email(link: str) -> tuple[str, str, str]:

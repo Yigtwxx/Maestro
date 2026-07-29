@@ -509,6 +509,15 @@ PASSWORD_RESET_TOKEN_TTL_MINUTES = 60
 # Entropy of the raw token (urlsafe-base64 encoded => ~43 chars).
 EMAIL_TOKEN_BYTES = 32
 
+# Every verification email also carries a typeable code, for a user reading
+# mail on a different device or behind a client that mangles links.
+EMAIL_CODE_DIGITS = 6
+# A 6-digit code is only 10^6, so it gets its own short lifetime rather than
+# the link's 24 hours, and its own attempt cap. Both are load-bearing: without
+# them the code would be the weakest way into an account.
+EMAIL_CODE_TTL_MINUTES = 15
+EMAIL_CODE_MAX_ATTEMPTS = 5
+
 # Frontend paths the email links land on (query param: ?token=...).
 VERIFY_EMAIL_PATH = "/verify-email"
 RESET_PASSWORD_PATH = "/reset-password"
@@ -707,6 +716,11 @@ class RateLimitTier(NamedTuple):
 RATE_LIMIT_PUBLIC = RateLimitTier("public", 30, 60.0)
 # Credential endpoints: slow down stuffing without locking out a fumbling human.
 RATE_LIMIT_AUTH = RateLimitTier("auth", 20, 60.0)
+# Verification-code entry. The per-token attempt cap bounds guesses against one
+# code; this bounds how fast a caller can cycle resend-then-guess to get fresh
+# codes to guess against. Tighter than auth because a human types six digits
+# a handful of times, never twenty.
+RATE_LIMIT_EMAIL_CODE = RateLimitTier("email_code", 10, 60.0)
 RATE_LIMIT_READ = RateLimitTier("read", 60, 60.0)
 RATE_LIMIT_WRITE = RateLimitTier("write", 20, 60.0)
 # Payment mutations reach a provider; keep the blast radius small.

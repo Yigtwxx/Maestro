@@ -303,6 +303,19 @@ export const api = {
     });
   },
 
+  /**
+   * Redeem the numeric code from a verification email.
+   *
+   * Requires a session, unlike `verifyEmail`: six digits are not unique, so
+   * the backend can only look a code up within one account's rows.
+   */
+  verifyEmailCode(code: string) {
+    return request<{ detail: string }>('/api/v1/auth/verify-email/code', {
+      method: 'POST',
+      body: { code },
+    });
+  },
+
   /** Rotate the verification token and re-send the email. */
   resendVerification() {
     return request<{ detail: string }>('/api/v1/auth/resend-verification', {

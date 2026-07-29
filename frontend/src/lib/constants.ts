@@ -55,6 +55,14 @@ export const ACCOUNT_DELETION_GRACE_DAYS = 30;
 // Max length of the profile bio (mirrors backend BIO_MAX_LEN).
 export const BIO_MAX_LEN = 280;
 
+// Digits in an emailed verification code (mirrors backend EMAIL_CODE_DIGITS).
+// Drives the number of OTP boxes; the backend rejects any other length.
+export const EMAIL_CODE_DIGITS = 6;
+
+// How long that code stays valid (mirrors backend EMAIL_CODE_TTL_MINUTES).
+// Only used to seed the countdown before the server tells us the real expiry.
+export const EMAIL_CODE_TTL_MINUTES = 15;
+
 // Max upload size for RAG documents (mirrors backend DOCUMENT_MAX_BYTES).
 // Enforced client-side too so an oversize file is rejected before it is sent
 // and never wastes an upload round-trip on a guaranteed 413.

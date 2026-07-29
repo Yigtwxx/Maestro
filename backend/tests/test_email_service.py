@@ -20,7 +20,7 @@ async def _user(db_session, email="svc@example.com") -> User:
 
 async def test_issue_token_returns_raw_and_stores_only_hash(db_session) -> None:
     user = await _user(db_session)
-    raw = await email_service.issue_token(
+    raw, _ = await email_service.issue_token(
         db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
     )
     await db_session.commit()
@@ -32,7 +32,7 @@ async def test_issue_token_returns_raw_and_stores_only_hash(db_session) -> None:
 
 async def test_consume_token_valid_returns_user_and_marks_used(db_session) -> None:
     user = await _user(db_session)
-    raw = await email_service.issue_token(
+    raw, _ = await email_service.issue_token(
         db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
     )
     await db_session.commit()
@@ -59,7 +59,7 @@ async def test_consume_token_concurrent_claims_only_one_succeeds(
     ``used_at IS NULL``. Regression guard for that race.
     """
     user = await _user(db_session)
-    raw = await email_service.issue_token(
+    raw, _ = await email_service.issue_token(
         db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
     )
     await db_session.commit()
@@ -79,7 +79,7 @@ async def test_consume_token_concurrent_claims_only_one_succeeds(
 
 async def test_consume_token_expired_returns_none(db_session) -> None:
     user = await _user(db_session)
-    raw = await email_service.issue_token(
+    raw, _ = await email_service.issue_token(
         db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
     )
     row = (await db_session.execute(select(EmailToken))).scalar_one()
@@ -96,7 +96,7 @@ async def test_consume_token_expired_returns_none(db_session) -> None:
 
 async def test_consume_token_wrong_purpose_returns_none(db_session) -> None:
     user = await _user(db_session)
-    raw = await email_service.issue_token(
+    raw, _ = await email_service.issue_token(
         db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
     )
     await db_session.commit()
@@ -110,11 +110,11 @@ async def test_consume_token_wrong_purpose_returns_none(db_session) -> None:
 
 async def test_issue_token_rotation_invalidates_previous_token(db_session) -> None:
     user = await _user(db_session)
-    old_raw = await email_service.issue_token(
+    old_raw, _ = await email_service.issue_token(
         db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
     )
     await db_session.commit()
-    new_raw = await email_service.issue_token(
+    new_raw, _ = await email_service.issue_token(
         db_session, user.id, EmailTokenPurpose.VERIFY_EMAIL
     )
     await db_session.commit()

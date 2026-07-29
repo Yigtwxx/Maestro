@@ -20,6 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.constants import (
+    EMAIL_CODE_DIGITS,
+    EMAIL_CODE_MAX_ATTEMPTS,
+    EMAIL_CODE_TTL_MINUTES,
     EMAIL_TOKEN_BYTES,
     EMAIL_VERIFY_TOKEN_TTL_HOURS,
     PASSWORD_RESET_TOKEN_TTL_MINUTES,
@@ -45,13 +48,26 @@ def _hash_token(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _generate_code() -> str:
+    """A zero-padded numeric code. ``secrets``, never ``random``."""
+    return f"{secrets.randbelow(10**EMAIL_CODE_DIGITS):0{EMAIL_CODE_DIGITS}d}"
+
+
 async def issue_token(
-    db: AsyncSession, user_id: uuid.UUID, purpose: EmailTokenPurpose
-) -> str:
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    purpose: EmailTokenPurpose,
+    *,
+    with_code: bool = False,
+) -> tuple[str, str | None]:
     """Create a fresh token and return its plaintext. Caller commits.
 
     Prior unused tokens of the same purpose are invalidated so only the most
     recently emailed link works.
+
+    ``with_code`` additionally mints a short numeric code for the same row,
+    returned as the second element. The code expires far sooner than the link
+    (see EMAIL_CODE_TTL_MINUTES) because six digits is a guessable keyspace.
     """
     now = datetime.now(UTC)
     await db.execute(
@@ -67,15 +83,22 @@ async def issue_token(
         .execution_options(synchronize_session=False)
     )
     raw = secrets.token_urlsafe(EMAIL_TOKEN_BYTES)
+    raw_code = _generate_code() if with_code else None
     db.add(
         EmailToken(
             user_id=user_id,
             purpose=purpose.value,
             token_hash=_hash_token(raw),
             expires_at=now + _TOKEN_TTLS[purpose],
+            code_hash=_hash_token(raw_code) if raw_code is not None else None,
+            code_expires_at=(
+                now + timedelta(minutes=EMAIL_CODE_TTL_MINUTES)
+                if raw_code is not None
+                else None
+            ),
         )
     )
-    return raw
+    return raw, raw_code
 
 
 async def consume_token(
@@ -112,6 +135,55 @@ async def consume_token(
     return await db.get(User, user_id)
 
 
+async def consume_code(
+    db: AsyncSession, user_id: uuid.UUID, raw_code: str, purpose: EmailTokenPurpose
+) -> User | None:
+    """Redeem a numeric code for one user. Caller commits.
+
+    Scoped to ``user_id`` on purpose: six digits are nowhere near unique, so a
+    code can only ever be looked up inside one account's rows. That is why the
+    code endpoints require authentication while the link endpoint does not --
+    a 256-bit token is globally unique on its own, a code is not.
+
+    Returns None for a wrong, expired, capped or missing code, all
+    indistinguishable, same rule as ``consume_token``. A failed attempt burns
+    one of EMAIL_CODE_MAX_ATTEMPTS; once they are gone the row can never be
+    claimed again and the user must request a new code.
+    """
+    now = datetime.now(UTC)
+    claimed = await db.scalar(
+        update(EmailToken)
+        .where(
+            EmailToken.user_id == user_id,
+            EmailToken.purpose == purpose.value,
+            EmailToken.used_at.is_(None),
+            EmailToken.code_hash == _hash_token(raw_code),
+            EmailToken.code_expires_at > now,
+            EmailToken.code_attempts < EMAIL_CODE_MAX_ATTEMPTS,
+        )
+        .values(used_at=now)
+        .returning(EmailToken.user_id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed is not None:
+        return await db.get(User, claimed)
+
+    # Wrong or unusable code: spend an attempt on whatever live row this user
+    # has, so repeated guessing exhausts the cap instead of running forever.
+    await db.execute(
+        update(EmailToken)
+        .where(
+            EmailToken.user_id == user_id,
+            EmailToken.purpose == purpose.value,
+            EmailToken.used_at.is_(None),
+            EmailToken.code_hash.is_not(None),
+        )
+        .values(code_attempts=EmailToken.code_attempts + 1)
+        .execution_options(synchronize_session=False)
+    )
+    return None
+
+
 def _action_link(path: str, raw_token: str) -> str:
     return f"{settings.site_url.rstrip('/')}{path}?token={raw_token}"
 
@@ -131,9 +203,11 @@ async def _send_safely(to: str, subject: str, html: str, text: str) -> None:
         )
 
 
-async def send_verification(to: str, raw_token: str) -> None:
+async def send_verification(
+    to: str, raw_token: str, raw_code: str | None = None
+) -> None:
     subject, html, text = templates.verification_email(
-        _action_link(VERIFY_EMAIL_PATH, raw_token)
+        _action_link(VERIFY_EMAIL_PATH, raw_token), raw_code
     )
     await _send_safely(to, subject, html, text)
 

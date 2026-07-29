@@ -41,6 +41,15 @@ class EmailToken(Base, TimestampMixin):
     used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The typeable alternative to the link, for code-bearing purposes only
+    # (NULL elsewhere). Six digits is a small keyspace, so it carries its own
+    # short expiry and an attempt counter; ``used_at`` is shared with the token,
+    # which is what makes redeeming either one retire both.
+    code_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    code_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    code_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
 
     user: Mapped[User] = relationship(foreign_keys=[user_id])
 
