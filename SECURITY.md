@@ -107,10 +107,17 @@ the commit history can be trusted. Precisely this much:
   checks. **Commits dated before 2026-07-12 were made on an unprotected branch** — nothing
   attests that they were not rewritten before that date, so treat them as the maintainer's
   word rather than as evidence.
-- **Commits authored from 2026-07-28 onward are SSH-signed** and show as *Verified* on
-  GitHub; release tags from `v0.1.3` onward are signed too. **Everything before that date is
-  unsigned**, which means the author name on those commits is asserted, not proven. Verify
-  for yourself with `git log --show-signature`.
+- **The repository administrator can bypass every rule above.** The ruleset grants the
+  admin role an unconditional bypass, so a direct push, a force-push or a branch deletion
+  on `main` is technically possible for that one account — the rules bind contributors,
+  not the owner. This is the honest ceiling on everything in this section: what protects
+  the history against *the maintainer* is the signature chain below and GitHub's own audit
+  log, not the branch rules.
+- **Commits from `28e456c` (2026-07-29) onward are SSH-signed** and show as *Verified* on
+  GitHub; release tags from `v0.1.3` onward are signed too. **Everything before that commit
+  is unsigned** — including the commit that first added this section — which means the
+  author name on those commits is asserted, not proven. Verify for yourself with
+  `git log --show-signature`.
 - **Signatures are not yet enforced by a branch rule.** An unsigned commit on `main` is
   therefore still possible; check rather than assume. Requiring signatures is on the
   roadmap and will be announced here when it lands.
