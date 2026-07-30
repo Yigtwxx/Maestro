@@ -334,6 +334,29 @@ already documents as unclosed — and which is why `CUSTOM_API_TOOLS_ENABLED` de
 `agent_service._validate_tools`, the marketplace publish filter and the frontend parity
 tests all key off.
 
+**Token storage.** The refresh token lives in an httpOnly, `Secure`, `SameSite=Strict`
+cookie scoped to `/api/v1/auth`, set by `core/cookies.py` and absent from every response
+body; the access token lives in a module-level variable in `frontend/src/lib/api.ts` and
+is never persisted. Neither `localStorage` nor `sessionStorage` holds a credential, so an
+XSS foothold can spend the current access token for at most its 30-minute life and cannot
+exfiltrate a 7-day session — which is what rotation alone could never do, since a thief
+holding *both* halves just rotates like a normal user and trips no detection. `/refresh`
+and `/logout` are therefore cookie-authenticated and CSRF-reachable in principle;
+`SameSite` is the whole control, and it is sufficient because both are POST-only, so the
+cookie is simply not sent on a cross-site POST under either allowed value. CORS is a
+second layer, not the control — it blocks *reading* a response, not sending a request.
+`SameSite=None` is deliberately not offered: a deployment whose app and API sit on
+different registrable domains routes the API through the frontend's `BACKEND_ORIGIN`
+rewrite rather than deleting the control. If that ever changes, `/refresh` and `/logout`
+must first gain a required custom header, which forces a preflight a form POST cannot
+satisfy. Because memory starts empty, **every** document load spends one rotation, and
+several tabs restoring at once would replay one cookie into the reuse-detection at
+`auth_service.rotate_refresh_token` and burn the family; `navigator.locks`
+(`lib/refresh-lock.ts`) serializes rotation across the origin's documents, so a waiting
+tab presents the successor rather than a token already spent. That per-load rotation is
+also why `/refresh` carries its own rate-limit tier instead of the shared `auth` bucket:
+routine page loads must not be throttled alongside credential stuffing.
+
 **Email ownership.** An account's address is only ever set by proving the inbox is
 reachable. `PATCH /users/me` cannot touch `email` at all; the change goes through
 `POST /users/me/email`, which requires the current password, leaves the account on its old
@@ -402,6 +425,10 @@ CORS does not apply; in split deployments only known origins are allowed. Secret
 13. `TRUST_PROXY_HEADERS` must be `true` only behind a reverse proxy that sets
     `X-Forwarded-For`. Exposed directly, a client forges the header and opens a fresh
     bucket per request. Left `false` behind a proxy, every user shares the proxy's bucket.
+14. The refresh token never reaches JavaScript. It is set and read as an httpOnly cookie
+    only: no endpoint accepts one in a request body, none returns one in a response body,
+    and the frontend persists no credential. `tests/test_auth_cookie.py` fails on any of
+    the three.
 
 ---
 
@@ -511,6 +538,19 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
 - `REDIS_URL` — empty falls back to in-process rate-limit buckets and event bus. Boot is
   refused if `WEB_CONCURRENCY > 1` while this is empty.
 - `TRUST_PROXY_HEADERS` — see rule 13 above.
+- `REFRESH_COOKIE_SECURE` / `REFRESH_COOKIE_SAMESITE` / `REFRESH_COOKIE_DOMAIN` — the
+  refresh cookie's attributes (§8, "Token storage"). `SECURE` is deliberately *unset*
+  rather than `true`: Safari has historically refused a `Secure` cookie over
+  `http://localhost`, so a hard default would break `npm run dev` in one major browser.
+  Unset resolves to "on outside development", and the production guard refuses a boot
+  that turns it off. `SAMESITE` accepts only `strict` (default) and `lax` — `none` would
+  delete the only CSRF control on `/refresh` and `/logout`, so it is rejected at parse
+  time rather than documented as discouraged. `DOMAIN` empty means host-only and should
+  stay that way; naming a domain shares the session cookie with *every* subdomain, and is
+  only for an `app.` / `api.` split under one registrable domain. A plain-HTTP LAN install
+  can set `SECURE=false`, but such an origin is not a secure context, so `navigator.locks`
+  is unavailable and multi-tab reloads can trip reuse-detection — see
+  `docs/CONFIGURATION.md`.
 - `HEALTH_DETAIL_TOKEN` — unlocks the per-dependency `checks` map on
   `/health/ready` for callers sending it as `X-Health-Token`. Empty (the default)
   withholds the map from everyone. The probe has to stay publicly reachable for an

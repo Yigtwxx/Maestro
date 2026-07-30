@@ -52,8 +52,8 @@ export function CookieNotice({ analyticsAvailable }: { analyticsAvailable: boole
           {analyticsAvailable ? (
             <>
               <p className="font-mono text-xs leading-relaxed text-slate-200">
-                We store a sign-in token in your browser so you stay logged in.
-                On our public pages we would also like to count visits with
+                We set one cookie so you stay signed in. On our public pages we
+                would also like to count visits with
                 self-hosted, cookieless analytics — anonymous, first-party,
                 never sold. Your call.{' '}
                 <Link
@@ -75,8 +75,8 @@ export function CookieNotice({ analyticsAvailable }: { analyticsAvailable: boole
           ) : (
             <>
               <p className="font-mono text-xs leading-relaxed text-slate-200">
-                We store a sign-in token in your browser so you stay logged in.
-                No cookies, no analytics, no tracking.{' '}
+                We set one cookie, and it only keeps you signed in. No
+                analytics, no tracking.{' '}
                 <Link
                   href="/cookies"
                   className="text-accent underline underline-offset-2 hover:text-accent/80"

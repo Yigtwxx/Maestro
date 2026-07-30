@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.core.cookies import REFRESH_COOKIE_NAME
 from app.core.security import create_token, decode_token
 
 _PASSWORD = "supersecret"
@@ -104,12 +105,12 @@ async def test_cannot_revoke_another_users_session(client):
     assert resp.status_code == 404, "must not reveal or revoke another user's session"
 
 
-async def test_password_change_revokes_other_sessions(client):
+async def test_password_change_revokes_other_sessions(client, send_refresh_cookie):
     await _register(client, "pw@user.com")
     login1 = await client.post(
         "/api/v1/auth/login", json={"email": "pw@user.com", "password": _PASSWORD}
     )
-    refresh1 = login1.json()["refresh_token"]
+    refresh1 = login1.cookies[REFRESH_COOKIE_NAME]
     token2 = await _login(client, "pw@user.com")
 
     resp = await client.post(
@@ -124,9 +125,8 @@ async def test_password_change_revokes_other_sessions(client):
     assert resp.status_code == 204, resp.text
 
     # The other session's refresh token is now revoked.
-    refreshed = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": refresh1}
-    )
+    send_refresh_cookie(refresh1)
+    refreshed = await client.post("/api/v1/auth/refresh")
     assert refreshed.status_code == 401, "the old session must be signed out"
     # The current session survives.
     still_here = await client.get("/api/v1/users/me/sessions", headers=_auth(token2))
@@ -134,12 +134,12 @@ async def test_password_change_revokes_other_sessions(client):
     assert len(still_here.json()) == 1
 
 
-async def test_password_change_can_keep_other_sessions(client):
+async def test_password_change_can_keep_other_sessions(client, send_refresh_cookie):
     await _register(client, "pw2@user.com")
     login1 = await client.post(
         "/api/v1/auth/login", json={"email": "pw2@user.com", "password": _PASSWORD}
     )
-    refresh1 = login1.json()["refresh_token"]
+    refresh1 = login1.cookies[REFRESH_COOKIE_NAME]
     token2 = await _login(client, "pw2@user.com")
 
     resp = await client.post(
@@ -152,9 +152,8 @@ async def test_password_change_can_keep_other_sessions(client):
         },
     )
     assert resp.status_code == 204, resp.text
-    refreshed = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": refresh1}
-    )
+    send_refresh_cookie(refresh1)
+    refreshed = await client.post("/api/v1/auth/refresh")
     assert refreshed.status_code == 200, "opting out keeps the other session alive"
 
 

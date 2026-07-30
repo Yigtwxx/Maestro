@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { OtpInput } from '@/components/ui/OtpInput';
-import { api, ApiError, tokenStore } from '@/lib/api';
+import { api, ApiError, ensureFreshAccessToken } from '@/lib/api';
 import { EMAIL_CODE_DIGITS, EMAIL_CODE_TTL_MINUTES } from '@/lib/constants';
 import { useAuthStore } from '@/stores/auth';
 
@@ -27,7 +27,12 @@ function ConfirmByLink({ token }: { token: string }) {
       .confirmEmailChange(token)
       .then(() => {
         setStatus('success');
-        if (tokenStore.getAccess()) void refreshUser();
+        // Reached from an email link in a fresh tab, where the in-memory access
+        // token is empty; the refresh cookie is the only way to tell whether
+        // this browser holds a session. See verify-email/page.tsx.
+        void ensureFreshAccessToken().then((token) => {
+          if (token) void refreshUser();
+        });
       })
       .catch((err: unknown) => {
         setStatus('error');

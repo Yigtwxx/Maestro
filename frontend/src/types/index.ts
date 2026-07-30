@@ -95,9 +95,10 @@ export type TaskStatus =
   | 'cancelled'
   | 'timeout';
 
-export interface TokenPair {
+// The refresh half of the pair is never in a body — it arrives as an httpOnly
+// cookie the browser stores on its own (CLAUDE.md §9 rule 14).
+export interface AccessTokenResponse {
   access_token: string;
-  refresh_token: string;
   token_type: string;
 }
 

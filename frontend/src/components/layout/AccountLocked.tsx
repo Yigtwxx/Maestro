@@ -100,7 +100,7 @@ export function AccountLocked({ requestedAt }: AccountLockedProps) {
           <Button
             variant="ghost"
             className="gap-1.5 whitespace-nowrap sm:ml-auto"
-            onClick={logout}
+            onClick={() => void logout()}
             disabled={busy !== undefined}
           >
             <LogOut className="h-4 w-4 shrink-0" aria-hidden />

@@ -292,6 +292,23 @@ you are not running Redis.
   variable set), and the missing-daemon probe is a third, but it is an
   availability check rather than a security boundary — do not treat it as the
   gate. Leaving the tool off costs nothing but that one feature.
+- **The refresh cookie.** The three `REFRESH_COOKIE_*` variables default to the
+  secure setting and need no entry in `.env.prod`; the boot guard refuses
+  production if `REFRESH_COOKIE_SECURE` is turned off. Two things are worth
+  knowing on the release that introduces it. Everyone is signed out once, because
+  sessions predating it carried their refresh token in `localStorage` and nothing
+  reads that any more — say so in the release note. And those tokens stay valid
+  server-side for up to `REFRESH_TOKEN_EXPIRE_DAYS`; if you want them retired at
+  the same moment, run once after the deploy:
+
+  ```bash
+  docker compose -f docker-compose.prod.yml exec postgres \
+    psql -U maestro -d maestro \
+    -c "UPDATE refresh_tokens SET revoked_at = now() WHERE revoked_at IS NULL;"
+  ```
+
+  This is a one-off operational choice, not a schema change, which is why it is
+  not an Alembic migration — the cookie change itself needs none.
 - **`PAYMENT_PROVIDER=mock`.** No real money moves, and no real card should ever
   be entered: `payment_methods` would fall under PCI scope. Ship a real
   processor adapter before advertising billing.
@@ -832,6 +849,15 @@ without a rebuild. On Vercel (or any Node host), set:
 The backend then needs `CORS_ORIGINS` set to the app's origin, since the
 WebSocket handshake no longer shares it. The API itself still has to run as a
 long-lived container somewhere.
+
+`BACKEND_ORIGIN` is not optional in this topology, and the refresh cookie is why:
+it is `SameSite`, so it only travels on requests the browser considers same-site.
+Proxying `/api/*` through Next keeps them that way. Calling the API host directly
+from the browser would leave every sign-in unable to survive a reload. If app and
+API share one registrable domain (`app.example.com` / `api.example.com`), the
+alternative is `REFRESH_COOKIE_DOMAIN=.example.com` — at the cost of handing the
+session cookie to every subdomain. There is deliberately no `SameSite=None`
+option; see CLAUDE.md §8.
 
 `SITE_URL` is what keeps the image domain-agnostic despite SEO needing an
 absolute origin: it is read at request time, not baked in, so the same image

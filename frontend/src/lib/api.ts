@@ -1,13 +1,13 @@
 // Central API client. All backend calls go through here (project rule 5.2).
 
 import {
-  ACCESS_TOKEN_KEY,
   API_BASE_URL,
-  REFRESH_TOKEN_KEY,
   REVIEWS_PAGE_SIZE,
   TASK_HISTORY_PAGE_SIZE,
 } from '@/lib/constants';
+import { withRefreshLock } from '@/lib/refresh-lock';
 import type {
+  AccessTokenResponse,
   AccountDeletionStatus,
   AdminAuditEntry,
   AdminMarketplaceItem,
@@ -51,7 +51,6 @@ import type {
   TaskListResponse,
   TaskState,
   TaskTrace,
-  TokenPair,
   TokenUsage,
   TraceSummary,
   ToolCatalogItem,
@@ -86,26 +85,56 @@ function extractDetail(data: unknown, fallback: string): string {
   return fallback;
 }
 
-// --- Token storage (client-side only) ---
+// --- Token storage ---
 
-export const tokenStore = {
-  getAccess(): string | undefined {
-    if (typeof window === 'undefined') return undefined;
-    return window.localStorage.getItem(ACCESS_TOKEN_KEY) ?? undefined;
+/**
+ * The access token, held in this module for the lifetime of the document and
+ * persisted nowhere.
+ *
+ * Its other half, the refresh token, rides in an httpOnly cookie this code
+ * cannot read (backend `core/cookies.py`). Neither is in `localStorage`, so an
+ * XSS foothold can spend the current 30-minute access token and nothing more —
+ * it cannot walk off with a 7-day session (CLAUDE.md §8, "Token storage").
+ *
+ * The consequence to keep in mind everywhere else: a page load starts with no
+ * access token and has to ask `/auth/refresh` for one.
+ */
+let accessToken: string | undefined;
+
+export const accessTokenStore = {
+  get(): string | undefined {
+    return accessToken;
   },
-  getRefresh(): string | undefined {
-    if (typeof window === 'undefined') return undefined;
-    return window.localStorage.getItem(REFRESH_TOKEN_KEY) ?? undefined;
-  },
-  set(tokens: TokenPair): void {
-    window.localStorage.setItem(ACCESS_TOKEN_KEY, tokens.access_token);
-    window.localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
+  set(token: string): void {
+    accessToken = token;
   },
   clear(): void {
-    window.localStorage.removeItem(ACCESS_TOKEN_KEY);
-    window.localStorage.removeItem(REFRESH_TOKEN_KEY);
+    accessToken = undefined;
   },
 };
+
+/**
+ * Drop the tokens that sessions predating the cookie change left behind.
+ *
+ * Nothing reads them any more, so leaving them would mean a live refresh token
+ * sitting in a store any script on the origin can read — exactly what this
+ * change exists to end. The keys are inlined rather than re-exported as
+ * constants, which would keep the names alive as an API.
+ *
+ * Remove after the release following v0.3 (added 2026-07).
+ */
+function purgeLegacyTokenStorage(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem('maestro.access_token');
+    window.localStorage.removeItem('maestro.refresh_token');
+  } catch {
+    // Storage can be unavailable (private mode, blocked cookies). Nothing
+    // depends on the purge succeeding.
+  }
+}
+
+purgeLegacyTokenStorage();
 
 /**
  * Resolve the base every request is prefixed with.
@@ -128,14 +157,22 @@ interface RequestOptions {
   body?: unknown;
   auth?: boolean;
   retryOn401?: boolean;
+  /** Let the request outlive the page that started it (sign-out revocation). */
+  keepalive?: boolean;
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, auth = true, retryOn401 = true } = options;
+  const {
+    method = 'GET',
+    body,
+    auth = true,
+    retryOn401 = true,
+    keepalive,
+  } = options;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
   if (auth) {
-    const token = tokenStore.getAccess();
+    const token = accessTokenStore.get();
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
@@ -143,6 +180,12 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+    // Required, not cosmetic: the refresh cookie is what keeps a session alive
+    // across reloads, and development runs the app on :3000 against the API on
+    // :8000 — same site, but cross-origin, where the default `same-origin`
+    // credentials mode would silently drop it.
+    credentials: 'include',
+    keepalive,
   });
 
   // Transparent one-shot refresh on expired access token.
@@ -183,45 +226,52 @@ const TOKEN_EXPIRY_MARGIN_MS = 60_000;
 
 /**
  * Return an access token the backend will accept, refreshing it first when it
- * is missing, expired or about to expire. Returns undefined only when no
- * valid session remains (refresh failed or no refresh token).
+ * is missing, expired or about to expire. Returns undefined only when no valid
+ * session remains (the refresh cookie is gone, expired or revoked).
+ *
+ * "Missing" is the normal case on a fresh page load, not an edge case: the
+ * access token is held in memory, so a reload always starts without one.
  */
 export async function ensureFreshAccessToken(): Promise<string | undefined> {
-  const token = tokenStore.getAccess();
+  const token = accessTokenStore.get();
   if (token) {
     const exp = jwtExpiryMs(token);
     if (exp === undefined || exp - Date.now() > TOKEN_EXPIRY_MARGIN_MS) {
       return token;
     }
   }
-  return (await tryRefresh()) ? tokenStore.getAccess() : undefined;
+  return (await tryRefresh()) ? accessTokenStore.get() : undefined;
 }
 
-// Coalesce concurrent refreshes into one in-flight rotation. Without this, a
-// page that fires several requests at once (e.g. the dashboard's parallel
-// metric calls) would have each replay the SAME refresh token; the backend's
-// reuse-detection reads the second replay as token theft and revokes the whole
-// session family, logging the user out on a routine page load.
+// Coalesce concurrent refreshes *within this document* into one in-flight
+// rotation — the dashboard's parallel metric calls, React StrictMode's
+// double-invoked effect. Without it each would replay the same refresh cookie,
+// and the backend's reuse-detection reads a replay as token theft and revokes
+// the whole session family.
+//
+// This does not replace `withRefreshLock`, which handles the same hazard
+// *across* documents. Both are needed: neither one sees the other's tabs.
 let refreshInflight: Promise<boolean> | undefined;
 
 async function tryRefresh(): Promise<boolean> {
   if (refreshInflight) return refreshInflight;
-  refreshInflight = (async () => {
-    const refresh_token = tokenStore.getRefresh();
-    if (!refresh_token) return false;
+  refreshInflight = withRefreshLock(async () => {
     try {
-      const tokens = await request<TokenPair>('/api/v1/auth/refresh', {
+      // No body: the refresh token travels only as an httpOnly cookie, which
+      // `credentials: 'include'` attaches. `retryOn401` off because a 401 here
+      // *is* the failure — retrying would recurse.
+      const tokens = await request<AccessTokenResponse>('/api/v1/auth/refresh', {
         method: 'POST',
-        body: { refresh_token },
         auth: false,
+        retryOn401: false,
       });
-      tokenStore.set(tokens);
+      accessTokenStore.set(tokens.access_token);
       return true;
     } catch {
-      tokenStore.clear();
+      accessTokenStore.clear();
       return false;
     }
-  })();
+  });
   try {
     return await refreshInflight;
   } finally {
@@ -235,13 +285,14 @@ async function uploadFile<T>(path: string, file: File): Promise<T> {
   const form = new FormData();
   form.append('file', file);
   const headers: Record<string, string> = {};
-  const token = tokenStore.getAccess();
+  const token = accessTokenStore.get();
   if (token) headers.Authorization = `Bearer ${token}`;
 
   const response = await fetch(`${apiBase()}${path}`, {
     method: 'POST',
     headers,
     body: form,
+    credentials: 'include',
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -269,34 +320,57 @@ export const api = {
   },
 
   /**
-   * Log in. Returns a token pair (persisted) on success, or an MFA challenge
-   * when the account has 2FA enabled — in which case no tokens are stored and
-   * the caller must complete `loginVerifyTotp`.
+   * Log in. Returns an access token on success, or an MFA challenge when the
+   * account has 2FA enabled — in which case no tokens are issued and the caller
+   * must complete `loginVerifyTotp`. The refresh half arrives as an httpOnly
+   * cookie the browser stores on its own; this code never sees it.
    */
   async login(
     email: string,
     password: string,
-  ): Promise<TokenPair | MfaChallenge> {
-    const result = await request<TokenPair | MfaChallenge>('/api/v1/auth/login', {
-      method: 'POST',
-      body: { email, password },
-      auth: false,
-    });
+  ): Promise<AccessTokenResponse | MfaChallenge> {
+    const result = await request<AccessTokenResponse | MfaChallenge>(
+      '/api/v1/auth/login',
+      {
+        method: 'POST',
+        body: { email, password },
+        auth: false,
+      },
+    );
     if ('access_token' in result) {
-      tokenStore.set(result);
+      accessTokenStore.set(result.access_token);
     }
     return result;
   },
 
-  /** Complete a 2FA login with a TOTP or recovery code; persists the tokens. */
-  async loginVerifyTotp(mfa_token: string, code: string): Promise<TokenPair> {
-    const tokens = await request<TokenPair>('/api/v1/auth/login/totp', {
+  /** Complete a 2FA login with a TOTP or recovery code; holds the access token. */
+  async loginVerifyTotp(
+    mfa_token: string,
+    code: string,
+  ): Promise<AccessTokenResponse> {
+    const tokens = await request<AccessTokenResponse>('/api/v1/auth/login/totp', {
       method: 'POST',
       body: { mfa_token, code },
       auth: false,
     });
-    tokenStore.set(tokens);
+    accessTokenStore.set(tokens.access_token);
     return tokens;
+  },
+
+  /**
+   * Revoke this session's family server-side and expire the refresh cookie.
+   *
+   * `auth: false` because the cookie is what authenticates it — sending the
+   * access token would only arm the 401→refresh retry for no benefit.
+   * `keepalive` so the revocation survives the navigation that follows a
+   * sign-out click.
+   */
+  logout(): Promise<void> {
+    return request<void>('/api/v1/auth/logout', {
+      method: 'POST',
+      auth: false,
+      keepalive: true,
+    });
   },
 
   // --- Email verification & password reset ---
@@ -504,7 +578,7 @@ export const api = {
 
   /**
    * List prices for the public pricing page. Anonymous, so it never touches
-   * `tokenStore` and is safe to await in a server component.
+   * `accessTokenStore` and is safe to await in a server component.
    */
   getPublicPlans() {
     return request<PlanPublicListing[]>('/api/v1/billing/plans/public', {
@@ -709,7 +783,7 @@ export const api = {
 
   /**
    * Published teams for the public landing page, featured first. Anonymous, so
-   * it never touches `tokenStore` and is safe to await in a server component.
+   * it never touches `accessTokenStore` and is safe to await in a server component.
    */
   listShowcase() {
     return request<MarketplaceItemPreview[]>('/api/v1/marketplace/showcase', {

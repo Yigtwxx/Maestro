@@ -76,8 +76,11 @@ The short version:
   returned to the browser, never written to a log — not even at debug level — and never
   exposed to Marketplace agents.
 - **Passwords** are hashed with Argon2. Sessions use short-lived JWT access tokens with
-  separate refresh tokens. WebSocket connections require the same authentication as the
-  HTTP API.
+  separate refresh tokens. The refresh token is delivered as an `HttpOnly`, `Secure`,
+  `SameSite` cookie and never appears in a response body; the access token is held in
+  memory by the page and never persisted. Neither reaches `localStorage`, so an XSS
+  foothold cannot exfiltrate a durable session. WebSocket connections require the same
+  authentication as the HTTP API.
 - **User data is isolated by user id** at the query layer in all three stores: PostgreSQL,
   MongoDB, and Qdrant. A retrieval cannot surface another account's memories, by
   construction rather than by convention.

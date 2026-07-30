@@ -16,10 +16,10 @@ GET    /health/ready                        # Postgres / Mongo / Qdrant / Redis 
 
 # Authentication
 POST   /api/v1/auth/register                # always 202; never reveals if the address exists
-POST   /api/v1/auth/login
+POST   /api/v1/auth/login                   # returns access_token; sets the refresh cookie
 POST   /api/v1/auth/login/totp              # second step when 2FA is enabled
-POST   /api/v1/auth/refresh                 # rotating refresh tokens (reuse detection)
-POST   /api/v1/auth/logout
+POST   /api/v1/auth/refresh                 # cookie-only, no body; rotates (reuse detection)
+POST   /api/v1/auth/logout                  # cookie-only, no body; revokes the family
 POST   /api/v1/auth/verify-email
 POST   /api/v1/auth/verify-email/code       # 6-digit code path (needs a session)
 POST   /api/v1/auth/change-email            # confirm a new address by link

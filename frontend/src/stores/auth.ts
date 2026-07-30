@@ -1,8 +1,9 @@
-// Auth session store (Zustand). Tokens live in localStorage (see api.ts);
-// this store tracks derived auth state + the current user profile for the UI.
+// Auth session store (Zustand). The access token lives in memory and the
+// refresh token in an httpOnly cookie (see api.ts); this store tracks derived
+// auth state + the current user profile for the UI.
 
 import { create } from 'zustand';
-import { api, tokenStore } from '@/lib/api';
+import { accessTokenStore, api, ensureFreshAccessToken } from '@/lib/api';
 import { useTaskStore } from '@/stores/tasks';
 import type { MfaChallenge, UserPublic } from '@/types';
 
@@ -11,13 +12,13 @@ interface AuthState {
   hydrated: boolean;
   email: string | undefined;
   user: UserPublic | undefined;
-  hydrate: () => void;
+  hydrate: () => Promise<void>;
   refreshUser: () => Promise<void>;
   setUser: (user: UserPublic) => void;
   /** Resolves to an MFA challenge when 2FA is on (login not yet complete). */
   login: (email: string, password: string) => Promise<MfaChallenge | undefined>;
   completeMfa: (mfaToken: string, code: string, email: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -26,10 +27,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   email: undefined,
   user: undefined,
 
-  hydrate: () => {
-    const authenticated = Boolean(tokenStore.getAccess());
-    set({ isAuthenticated: authenticated, hydrated: true });
-    if (authenticated) void get().refreshUser();
+  // Asynchronous because the access token is held in memory: a reload starts
+  // with none, so the only way to learn whether a session survived is to spend
+  // the refresh cookie. Callers must keep rendering their loading state until
+  // `hydrated` flips — `(app)/layout.tsx` already does, so the login screen
+  // cannot flash in between. Guarded against re-entry for StrictMode's
+  // double-invoked effect and for remounts.
+  hydrate: async () => {
+    if (get().hydrated) return;
+    const token = await ensureFreshAccessToken();
+    set({ isAuthenticated: Boolean(token), hydrated: true });
+    if (token) void get().refreshUser();
   },
 
   refreshUser: async () => {
@@ -65,11 +73,20 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     void get().refreshUser();
   },
 
-  logout: () => {
-    tokenStore.clear();
+  logout: async () => {
+    // Fire the revocation first (it is `keepalive`, so a navigation cannot
+    // cancel it), then clear local state immediately so signing out feels
+    // instant. The ordering is not a security question — /auth/logout is
+    // authenticated by the cookie, which nothing here can clear, and the access
+    // token expires on its own in 30 minutes. What matters is that the
+    // server-side family revocation is attempted at all: before this, sign-out
+    // was purely local and left the session valid for a further seven days.
+    const revoked = api.logout().catch(() => undefined);
+    accessTokenStore.clear();
     // Drop the previous session's task view (and close its socket) so it never
     // shows up for whoever logs in next.
     useTaskStore.getState().reset();
     set({ isAuthenticated: false, email: undefined, user: undefined });
+    await revoked;
   },
 }));

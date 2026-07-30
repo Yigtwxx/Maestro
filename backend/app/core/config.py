@@ -9,7 +9,7 @@ from __future__ import annotations
 import base64
 import binascii
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -160,6 +160,22 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
     # 32-byte AES-256 master key, provided as base64 or 64-char hex.
     api_key_master_key: str = _DEV_MASTER_KEY
+
+    # --- Refresh-token cookie (CLAUDE.md §8, "Token storage") ---
+    # Unset rather than True: Safari has historically refused a `Secure` cookie
+    # over http://localhost, so a hard default would break `npm run dev` on one
+    # major browser. None resolves to "secure everywhere except development",
+    # and the production guard below refuses a deploy that turns it off.
+    refresh_cookie_secure: bool | None = None
+    # Both allowed values withhold the cookie from a cross-site POST, which is
+    # the entire CSRF control for /refresh and /logout. "none" is deliberately
+    # absent -- a split-origin deploy routes the API through the frontend's
+    # BACKEND_ORIGIN rewrite instead of deleting the control.
+    refresh_cookie_samesite: Literal["strict", "lax"] = "strict"
+    # Empty = host-only, the recommended setting. Naming a domain shares the
+    # cookie with *every* subdomain; only for an app./api. split under one
+    # registrable domain.
+    refresh_cookie_domain: str = ""
 
     # --- CORS (comma-separated in env; NoDecode lets our validator split it) ---
     cors_origins: Annotated[list[str], NoDecode] = Field(
@@ -495,6 +511,10 @@ class Settings(BaseSettings):
             )
         if self.email_provider == "resend" and not self.resend_api_key:
             problems.append("RESEND_API_KEY must be set when EMAIL_PROVIDER=resend")
+        if not self.refresh_cookie_is_secure:
+            # The cookie *is* the session. Without Secure it rides plain HTTP
+            # to any host that can be reached over the same origin name.
+            problems.append("REFRESH_COOKIE_SECURE must not be false in production")
         if problems:
             raise ValueError(
                 "Insecure production configuration: " + "; ".join(problems)
@@ -520,6 +540,18 @@ class Settings(BaseSettings):
                 "back to process-local state."
             )
         return self
+
+    @property
+    def refresh_cookie_is_secure(self) -> bool:
+        """Whether the refresh cookie carries the ``Secure`` attribute.
+
+        Unset means "on unless this is a development box", so nobody has to
+        remember the flag to get a secure default and nobody has to fight
+        Safari's refusal of a Secure cookie over http://localhost.
+        """
+        if self.refresh_cookie_secure is None:
+            return self.environment != "development"
+        return self.refresh_cookie_secure
 
 
 @lru_cache

@@ -7,8 +7,10 @@ export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
 
 export const WS_BASE_URL = process.env.NEXT_PUBLIC_WS_BASE_URL ?? '';
 
-export const ACCESS_TOKEN_KEY = 'maestro.access_token';
-export const REFRESH_TOKEN_KEY = 'maestro.refresh_token';
+// Names the Web Lock that serializes refresh-token rotation across this
+// origin's documents. Not a storage key — nothing is persisted; the access
+// token lives in memory and the refresh token in an httpOnly cookie.
+export const REFRESH_LOCK_NAME = 'maestro.refresh';
 // Survives navigation and reloads so the architect page can restore the task
 // the user was last watching. Events are refetched from the server, not stored.
 export const ACTIVE_TASK_KEY = 'maestro.active_task';

@@ -71,7 +71,10 @@ export function Sidebar() {
   const nav = user?.role === 'admin' ? [...withBilling, ADMIN_LINK] : withBilling;
 
   const onLogout = () => {
-    logout();
+    // Not awaited: local state is cleared synchronously inside `logout`, and
+    // the server-side revocation it fires is `keepalive`, so navigating away
+    // immediately cannot cancel it.
+    void logout();
     router.replace('/login');
   };
 

@@ -21,11 +21,24 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
-class RefreshRequest(BaseModel):
-    refresh_token: str
+class AccessTokenResponse(BaseModel):
+    """The only token that crosses the wire in a body.
+
+    The refresh half of the pair goes back as an httpOnly cookie and never
+    reaches JavaScript (CLAUDE.md §9 rule 14).
+    """
+
+    access_token: str
+    token_type: str = "bearer"
 
 
 class TokenPair(BaseModel):
+    """Service-internal: both halves, so the API layer can cookie one of them.
+
+    Never a ``response_model``. ``auth_service`` deals in tokens; deciding that
+    one of them travels as a cookie is a transport concern of the route.
+    """
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -78,8 +91,9 @@ class DetailResponse(BaseModel):
     detail: str
 
 
-# A login result is either a full token pair or an MFA challenge to complete.
-LoginResult = TokenPair | MfaChallenge
+# A login result is either an access token (with the refresh half set as a
+# cookie) or an MFA challenge to complete.
+LoginResult = AccessTokenResponse | MfaChallenge
 
 
 class UserPublic(BaseModel):

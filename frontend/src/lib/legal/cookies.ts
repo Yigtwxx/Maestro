@@ -5,20 +5,36 @@ const { brand, privacyEmail } = LEGAL_ENTITY;
 export const COOKIES = `
 ## The short version
 
-${brand} sets **no cookies at all**, and runs no advertising and no third-party
-tracking scripts.
+${brand} sets **one cookie**, and it is the one that keeps you signed in. No
+advertising, no third-party tracking scripts, and nothing that follows you
+anywhere else.
 
-We store a short list of things in your browser's local storage, almost all of
-them strictly necessary to do what you asked us to do. The one optional thing —
-anonymous, self-hosted visit counting on our public pages — never runs unless
-you say yes first, and not every deployment of ${brand} enables it at all.
+We store a short list of other things in your browser's local storage, almost
+all of them strictly necessary to do what you asked us to do. The one optional
+thing — anonymous, self-hosted visit counting on our public pages — never runs
+unless you say yes first, and not every deployment of ${brand} enables it at all.
 
-## What we actually store
+## The cookie
+
+| Name | What it is | Why | Lifetime |
+| --- | --- | --- | --- |
+| \`maestro_refresh\` | The token that renews your sign-in | Keeps you signed in across reloads without asking for your password again | 7 days, or until you sign out |
+
+It is set with \`HttpOnly\`, which means the code running on the page cannot read
+it — deliberately, so that a scripting flaw on our side could not be used to
+steal your session. It is also marked \`Secure\` (sent only over HTTPS) and
+\`SameSite\`, so your browser never attaches it to a request that started on
+someone else's website. It is sent only to our own sign-in endpoints, not to the
+rest of the site.
+
+The short-lived token that proves you are signed in during a visit is held in
+the page's memory only. It is not stored anywhere, and it disappears when you
+close the tab.
+
+## What we store in local storage
 
 | Key | What it is | Why | Lifetime |
 | --- | --- | --- | --- |
-| Access token | A short-lived signed token proving you are signed in | Without it every request would ask for your password again | Until it expires or you sign out |
-| Refresh token | A longer-lived token used to get a new access token | Keeps you signed in across reloads | Until you sign out |
 | Active task | The id of the task you were last watching | Restores the Architect view after a reload | Until you clear it |
 | Consent record | Your analytics choice, and that you answered the notice | So analytics respects your decision and we stop asking | Until you clear your browser storage |
 
@@ -31,9 +47,10 @@ before storing information on your device or tracking you — **unless** it is
 strictly necessary to provide a service you explicitly requested.
 
 Keeping you signed in is strictly necessary to provide the service you requested
-by signing in. So the exemption applies, and asking you to "accept" it would be
-theatre: there is no alternative, and refusing would simply mean you cannot use
-your account.
+by signing in. So the exemption applies — to the sign-in cookie above and to the
+local storage entries alike — and asking you to "accept" it would be theatre:
+there is no alternative, and refusing would simply mean you cannot use your
+account.
 
 Counting visits to our public pages is **not** necessary. So on deployments that
 enable it, the notice asks you a real question before anything runs, with
@@ -64,7 +81,8 @@ page. The change takes effect the moment you make it.
 
 ## Clearing it
 
-Signing out removes your tokens. Clearing site data in your browser removes
+Signing out expires the cookie in your browser and revokes the session on our
+servers, so it cannot be reused. Clearing site data in your browser removes
 everything listed above, including your consent record — after which you will
 see the notice once more.
 

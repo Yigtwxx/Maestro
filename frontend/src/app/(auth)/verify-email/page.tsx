@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { OtpInput } from '@/components/ui/OtpInput';
-import { api, ApiError, tokenStore } from '@/lib/api';
+import { api, ApiError, ensureFreshAccessToken } from '@/lib/api';
 import { EMAIL_CODE_DIGITS, EMAIL_CODE_TTL_MINUTES } from '@/lib/constants';
 import { formatCountdown, maskEmail } from '@/lib/mask';
 import { useAuthStore } from '@/stores/auth';
@@ -31,8 +31,15 @@ function VerifyByLink({ token }: { token: string }) {
       .verifyEmail(token)
       .then(() => {
         setStatus('success');
-        // Update the banner immediately when this browser is signed in.
-        if (tokenStore.getAccess()) void refreshUser();
+        // Update the banner immediately when this browser is signed in. The
+        // access token is held in memory and this page is usually opened from
+        // an email link in a fresh tab, so "am I signed in?" has to go through
+        // the refresh cookie rather than read a variable that is always empty
+        // here. The auth store is no help either: nothing hydrates it on the
+        // (auth) routes.
+        void ensureFreshAccessToken().then((token) => {
+          if (token) void refreshUser();
+        });
       })
       .catch((err: unknown) => {
         setStatus('error');

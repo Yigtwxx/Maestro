@@ -14,7 +14,14 @@ from app.core.constants import (
     MFA_TOKEN_EXPIRE_MINUTES,
     RATE_LIMIT_AUTH,
     RATE_LIMIT_EMAIL_CODE,
+    RATE_LIMIT_REFRESH,
     EmailTokenPurpose,
+)
+from app.core.cookies import (
+    REFRESH_COOKIE_NAME,
+    clear_refresh_cookie,
+    clearing_cookie_header,
+    set_refresh_cookie,
 )
 from app.core.deps import CurrentUser, DbSession
 from app.core.security import (
@@ -25,15 +32,14 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.schemas.auth import (
+    AccessTokenResponse,
     DetailResponse,
     ForgotPasswordRequest,
     LoginRequest,
     LoginResult,
     MfaChallenge,
-    RefreshRequest,
     RegisterRequest,
     ResetPasswordRequest,
-    TokenPair,
     TotpVerifyRequest,
     VerifyEmailCodeRequest,
     VerifyEmailRequest,
@@ -131,11 +137,14 @@ async def register(payload: RegisterRequest, db: DbSession) -> DetailResponse:
 
 
 @router.post("/login", response_model=LoginResult, dependencies=[_auth_rate_limit])
-async def login(payload: LoginRequest, request: Request, db: DbSession) -> LoginResult:
-    """Authenticate. Returns a token pair, or an MFA challenge when 2FA is on.
+async def login(
+    payload: LoginRequest, request: Request, response: Response, db: DbSession
+) -> LoginResult:
+    """Authenticate. Returns an access token, or an MFA challenge when 2FA is on.
 
-    Captures the User-Agent and client IP so the session shows up recognisably
-    under the profile's Active Sessions.
+    The refresh half of the pair leaves as an httpOnly cookie, never in the
+    body. Captures the User-Agent and client IP so the session shows up
+    recognisably under the profile's Active Sessions.
     """
     result = await db.execute(select(User).where(User.email == payload.email.lower()))
     user = result.scalar_one_or_none()
@@ -153,15 +162,19 @@ async def login(payload: LoginRequest, request: Request, db: DbSession) -> Login
             expires_delta=timedelta(minutes=MFA_TOKEN_EXPIRE_MINUTES),
         )
         return MfaChallenge(mfa_token=mfa_token)
-    return await auth_service.issue_token_pair(
+    pair = await auth_service.issue_token_pair(
         db, user, user_agent=user_agent(request), ip_address=client_ip(request)
     )
+    set_refresh_cookie(response, pair.refresh_token)
+    return AccessTokenResponse(access_token=pair.access_token)
 
 
-@router.post("/login/totp", response_model=TokenPair, dependencies=[_auth_rate_limit])
+@router.post(
+    "/login/totp", response_model=AccessTokenResponse, dependencies=[_auth_rate_limit]
+)
 async def login_totp(
-    payload: TotpVerifyRequest, request: Request, db: DbSession
-) -> TokenPair:
+    payload: TotpVerifyRequest, request: Request, response: Response, db: DbSession
+) -> AccessTokenResponse:
     """Complete a 2FA login: verify a TOTP (or recovery) code, issue tokens."""
     try:
         claims = decode_token(payload.mfa_token, expected_type="mfa")
@@ -177,19 +190,53 @@ async def login_totp(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid authentication code.",
         )
-    return await auth_service.issue_token_pair(
+    pair = await auth_service.issue_token_pair(
         db, user, user_agent=user_agent(request), ip_address=client_ip(request)
     )
+    set_refresh_cookie(response, pair.refresh_token)
+    return AccessTokenResponse(access_token=pair.access_token)
 
 
-@router.post("/refresh", response_model=TokenPair, dependencies=[_auth_rate_limit])
-async def refresh(payload: RefreshRequest, db: DbSession) -> TokenPair:
-    """Exchange a refresh token for a new pair, rotating (invalidating) the old.
+@router.post(
+    "/refresh",
+    response_model=AccessTokenResponse,
+    dependencies=[rate_limit(RATE_LIMIT_REFRESH, scope="refresh")],
+)
+async def refresh(
+    request: Request, response: Response, db: DbSession
+) -> AccessTokenResponse:
+    """Exchange the refresh cookie for a new pair, rotating (invalidating) the old.
+
+    Cookie-only, with no body fallback: an endpoint that accepts a refresh
+    token from JavaScript is exactly what the cookie exists to remove, and
+    keeping one would make "the refresh token never reaches JS" untestable.
 
     Replaying an already-rotated token revokes the whole session family — the
-    reuse-detection defence against a stolen refresh token.
+    reuse-detection defence against a stolen refresh token. Both failure paths
+    expire the cookie, so a burned family does not leave a dead credential in
+    the browser 401-ing for the remaining seven days.
+
+    Its own rate-limit scope, not the shared `auth` one: with the access token
+    held only in memory, every document load spends one rotation, so this is
+    routine traffic that must not be throttled alongside credential stuffing.
     """
-    return await auth_service.rotate_refresh_token(db, payload.refresh_token)
+    token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token.",
+            headers=clearing_cookie_header(),
+        )
+    try:
+        pair = await auth_service.rotate_refresh_token(db, token)
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail=exc.detail,
+            headers={**(exc.headers or {}), **clearing_cookie_header()},
+        ) from exc
+    set_refresh_cookie(response, pair.refresh_token)
+    return AccessTokenResponse(access_token=pair.access_token)
 
 
 @router.post(
@@ -197,10 +244,18 @@ async def refresh(payload: RefreshRequest, db: DbSession) -> TokenPair:
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[_auth_rate_limit],
 )
-async def logout(payload: RefreshRequest, db: DbSession) -> Response:
-    """Revoke the session family behind a refresh token. Idempotent."""
-    await auth_service.logout(db, payload.refresh_token)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+async def logout(request: Request, db: DbSession) -> Response:
+    """Revoke the session family behind the refresh cookie. Idempotent.
+
+    Always 204 and always clears the cookie, whether or not one was presented
+    and whether or not it was valid: logout must not leak token validity.
+    """
+    token = request.cookies.get(REFRESH_COOKIE_NAME)
+    if token:
+        await auth_service.logout(db, token)
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    clear_refresh_cookie(response)
+    return response
 
 
 @router.post(

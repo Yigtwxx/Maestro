@@ -223,7 +223,7 @@ contracts are in [`docs/API.md`](./docs/API.md#agent-contracts).
 
 | Module | Description | Status |
 |---|---|---|
-| Auth | Register / login / logout, JWT access tokens + rotating refresh tokens | Live |
+| Auth | Register / login / logout, in-memory JWT access tokens + rotating refresh tokens in an httpOnly cookie | Live |
 | Email verification | Verify / resend / forgot / reset flows via pluggable email providers (console, Resend); soft-gates task start and key creation | Live |
 | Two-factor auth | TOTP with QR provisioning and single-use recovery codes | Live |
 | Session management | List active sessions, revoke one or all others | Live |
@@ -416,7 +416,9 @@ gateway** that validates card numbers (Luhn + BIN) but moves no real money.
   default.
 - **Account security:** optional TOTP two-factor auth (encrypted secret, Argon2-hashed
   single-use recovery codes) and rotating refresh tokens with reuse detection — replaying a
-  rotated token revokes the entire session family.
+  rotated token revokes the entire session family. The refresh token is delivered as an
+  `HttpOnly` cookie and the access token is held in page memory, so no credential is
+  written to browser storage where a scripting flaw could read it.
 - **Isolation:** RAG memory and all user data are partitioned per user. Every WebSocket
   connection is authenticated before `accept()` and rate-limited like HTTP routes.
 - **Right to erasure / portability:** `DELETE /users/me` locks the account and schedules a

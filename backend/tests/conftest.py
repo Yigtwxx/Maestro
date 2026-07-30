@@ -29,6 +29,10 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.core import database  # noqa: E402
 from app.core.config import settings  # noqa: E402
+from app.core.cookies import (  # noqa: E402
+    REFRESH_COOKIE_NAME,
+    REFRESH_COOKIE_PATH,
+)
 from app.core.database import get_db  # noqa: E402
 from app.core.metrics import metrics  # noqa: E402
 from app.main import app  # noqa: E402
@@ -228,6 +232,24 @@ async def client():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def send_refresh_cookie(client):
+    """Pin a specific refresh token into the client's jar for the next request.
+
+    The refresh token only travels as an httpOnly cookie now, and ``client`` is
+    one AsyncClient with one shared jar: a second login overwrites the first,
+    and rotation evicts the value a replay test needs. Capturing
+    ``resp.cookies[REFRESH_COOKIE_NAME]`` and putting it back explicitly is how
+    a test controls *which* token it presents. Setting it on the client rather
+    than per-request because httpx deprecated the latter.
+    """
+
+    def _set(token: str) -> None:
+        client.cookies.set(REFRESH_COOKIE_NAME, token, path=REFRESH_COOKIE_PATH)
+
+    return _set
 
 
 class RecordingEmailProvider:

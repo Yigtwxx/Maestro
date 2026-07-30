@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+from app.core.cookies import REFRESH_COOKIE_NAME
+
 EMAIL = "reset@example.com"
 OLD_PASSWORD = "password123"
 NEW_PASSWORD = "newpassword456"
@@ -69,12 +71,14 @@ async def test_reset_password_valid_token_changes_the_password(
     assert new_login.status_code == 200
 
 
-async def test_reset_password_revokes_existing_sessions(client, sent_emails) -> None:
+async def test_reset_password_revokes_existing_sessions(
+    client, sent_emails, send_refresh_cookie
+) -> None:
     await _register(client)
     login = await client.post(
         "/api/v1/auth/login", json={"email": EMAIL, "password": OLD_PASSWORD}
     )
-    stolen_refresh = login.json()["refresh_token"]
+    stolen_refresh = login.cookies[REFRESH_COOKIE_NAME]
 
     token = await _request_reset_token(client, sent_emails)
     await client.post(
@@ -82,9 +86,8 @@ async def test_reset_password_revokes_existing_sessions(client, sent_emails) -> 
         json={"token": token, "new_password": NEW_PASSWORD},
     )
 
-    resp = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": stolen_refresh}
-    )
+    send_refresh_cookie(stolen_refresh)
+    resp = await client.post("/api/v1/auth/refresh")
     assert resp.status_code == 401, "pre-reset sessions must be revoked"
 
 

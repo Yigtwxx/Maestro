@@ -95,7 +95,10 @@ application host. Output is truncated before it re-enters the model's context.
 
 Passwords are hashed with **Argon2**, the current password-hashing standard, and
 are never stored or transmitted in a recoverable form. Sessions use short-lived
-JWT access tokens with separate refresh tokens.
+JWT access tokens with separate refresh tokens. The refresh token is held in an
+\`HttpOnly\` cookie that page scripts cannot read, and the access token lives only
+in the page's memory — neither is written to browser storage, so a scripting flaw
+cannot be turned into a stolen session.
 
 WebSocket connections — the live task and Architect streams — require the same
 authentication as the HTTP API. There is no anonymous socket, and you can only

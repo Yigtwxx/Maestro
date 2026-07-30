@@ -70,6 +70,38 @@ def test_production_accepts_strong_secrets() -> None:
     assert settings.environment == "production"
 
 
+def test_production_rejects_an_insecure_refresh_cookie() -> None:
+    # The cookie *is* the session; over plain HTTP it is readable in transit.
+    with pytest.raises(ValidationError):
+        _make(
+            environment="production",
+            jwt_secret=_STRONG_JWT_SECRET,
+            api_key_master_key=_VALID_MASTER_KEY,
+            refresh_cookie_secure=False,
+        )
+
+
+def test_refresh_cookie_is_secure_by_default_outside_development() -> None:
+    """Unset means "on unless this is a dev box", so nobody has to remember it."""
+    assert (
+        _make(
+            environment="production",
+            jwt_secret=_STRONG_JWT_SECRET,
+            api_key_master_key=_VALID_MASTER_KEY,
+        ).refresh_cookie_is_secure
+        is True
+    )
+    # Development opts out on its own: Safari refuses a Secure cookie over
+    # http://localhost, which would break `npm run dev` in one major browser.
+    assert _make(environment="development").refresh_cookie_is_secure is False
+
+
+def test_refresh_cookie_samesite_rejects_none() -> None:
+    """SameSite=none would delete the only CSRF control on /refresh + /logout."""
+    with pytest.raises(ValidationError):
+        _make(refresh_cookie_samesite="none")
+
+
 def test_development_allows_defaults() -> None:
     settings = _make(
         environment="development",

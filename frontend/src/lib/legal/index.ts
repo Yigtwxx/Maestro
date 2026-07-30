@@ -89,8 +89,8 @@ export const LEGAL_DOCS: readonly LegalDoc[] = [
     slug: 'cookies',
     title: 'Cookie Policy',
     description:
-      'We set no cookies. Analytics is optional, self-hosted, and asks first. The full list of what we store, and why.',
-    updated: '2026-07-12',
+      'One cookie, and it only keeps you signed in. Analytics is optional, self-hosted, and asks first. The full list of what we store, and why.',
+    updated: '2026-07-29',
     locale: 'en',
     content: COOKIES,
   },

@@ -11,6 +11,7 @@ import re
 
 from sqlalchemy import select
 
+from app.core.cookies import REFRESH_COOKIE_NAME
 from app.models import User
 
 _REQUEST = "/api/v1/users/me/email"
@@ -234,13 +235,15 @@ async def test_request_does_not_reveal_whether_the_target_exists(
     assert taken.json() == free.json(), "responses must be indistinguishable"
 
 
-async def test_confirming_revokes_other_sessions(client, sent_emails) -> None:
+async def test_confirming_revokes_other_sessions(
+    client, sent_emails, send_refresh_cookie
+) -> None:
     """A changed sign-in address should not leave stale refresh tokens alive."""
     await _register_and_login(client)
     stale = await client.post(
         "/api/v1/auth/login", json={"email": _OLD, "password": _PASSWORD}
     )
-    stale_refresh = stale.json()["refresh_token"]
+    stale_refresh = stale.cookies[REFRESH_COOKIE_NAME]
 
     headers = await _register_and_login(client)
     sent_emails.clear()
@@ -252,9 +255,8 @@ async def test_confirming_revokes_other_sessions(client, sent_emails) -> None:
     token = _token(next(m for m in sent_emails if m.to == _NEW))
     await client.post(_CONFIRM, json={"token": token})
 
-    resp = await client.post(
-        "/api/v1/auth/refresh", json={"refresh_token": stale_refresh}
-    )
+    send_refresh_cookie(stale_refresh)
+    resp = await client.post("/api/v1/auth/refresh")
     assert resp.status_code == 401, "old sessions must not survive the change"
 
 

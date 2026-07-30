@@ -788,6 +788,12 @@ RATE_LIMIT_AUTH = RateLimitTier("auth", 20, 60.0)
 # codes to guess against. Tighter than auth because a human types six digits
 # a handful of times, never twenty.
 RATE_LIMIT_EMAIL_CODE = RateLimitTier("email_code", 10, 60.0)
+# Refresh rotation, deliberately *not* sharing the `auth` bucket. The access
+# token lives only in the tab's memory, so every document load spends one
+# rotation -- a user with four tabs open reloads into four of them, all keyed by
+# one NAT'd IP. Counted against credential stuffing that would throttle routine
+# page loads, and the frontend reads a throttled refresh as "signed out".
+RATE_LIMIT_REFRESH = RateLimitTier("refresh", 30, 60.0)
 RATE_LIMIT_READ = RateLimitTier("read", 60, 60.0)
 RATE_LIMIT_WRITE = RateLimitTier("write", 20, 60.0)
 # Payment mutations reach a provider; keep the blast radius small.

@@ -31,6 +31,9 @@ variant. The tables below group the settings by concern.
 | `JWT_ALGORITHM` | JWT signing algorithm | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token lifetime | `30` |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token lifetime | `7` |
+| `REFRESH_COOKIE_SECURE` | `Secure` on the refresh cookie. Unset means "on outside development" — Safari refuses a Secure cookie over `http://localhost`, so a hard `true` would break `npm run dev`. Production refuses to boot with it off. | unset |
+| `REFRESH_COOKIE_SAMESITE` | `strict` or `lax`. The only CSRF control on `/auth/refresh` and `/auth/logout`; `none` is rejected at boot. | `strict` |
+| `REFRESH_COOKIE_DOMAIN` | Empty = host-only. Naming a domain shares the session cookie with every subdomain; only for an `app.` / `api.` split under one registrable domain. | — |
 | `API_KEY_MASTER_KEY` | AES-256-GCM master key for encrypting BYOK keys (32 bytes, base64 or hex) | — |
 | `CORS_ORIGINS` | Allowed frontend origins (comma-separated) | `http://localhost:3000` |
 | `LLM_SSRF_GUARD_ENABLED` | Validate custom provider endpoints (http(s), credential-free, public addresses only); disable only on a fully self-hosted stack | `true` |
