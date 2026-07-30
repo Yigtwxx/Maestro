@@ -136,6 +136,27 @@ environment variables.
 | `SENTRY_ENVIRONMENT` | Sentry environment tag; falls back to `ENVIRONMENT` | — |
 | `TRACING_ENABLED` | Per-task span tracing (Mongo `trace_spans`); disabled = zero overhead | `false` |
 | `TRACE_RETENTION_DAYS` | TTL on stored trace spans | `30` |
+| `HEALTH_DETAIL_TOKEN` | Unlocks the per-dependency `checks` map on `/health/ready` for callers sending it as `X-Health-Token`; empty withholds it from everyone. Grants nothing else | — |
+
+## Operator alerting & metrics
+
+Self-contained: no monitoring service to run. Both alert channels empty means
+alerting is a silent no-op with zero egress — configuring a channel *is* the
+enable. See [`DEPLOYMENT.md`](./DEPLOYMENT.md) "Monitoring" for what fires and why.
+
+| Variable | Description | Default |
+|---|---|---|
+| `ALERT_WEBHOOK_URL` | Slack/Discord-compatible incoming webhook (one payload serves both). This URL is a credential — never logged or echoed in an error | — |
+| `ALERT_EMAIL_TO` | Operator address for the same alerts, delivered via `EMAIL_PROVIDER` | — |
+| `ALERT_WATCHDOG_INTERVAL_SECONDS` | Seconds between readiness/error-rate evaluations; `0` stops the loop, which also freezes the `/metrics` dependency gauges | `60` |
+| `ALERT_READINESS_FAILURES` | Consecutive failing ticks before "degraded" is declared. Recovery takes one good tick | `2` |
+| `ALERT_COOLDOWN_SECONDS` | Minimum gap between two alerts sharing a dedupe key; claimed in Redis so N workers page once | `900` |
+| `ALERT_ERROR_RATE_THRESHOLD` | 5xx share that triggers an alert. A *ratio*, so it means the same at any `WEB_CONCURRENCY` | `0.05` |
+| `ALERT_ERROR_RATE_WINDOW_SECONDS` | Rolling window the ratio is measured over | `300` |
+| `ALERT_ERROR_RATE_MIN_REQUESTS` | Volume floor below which the ratio is ignored | `20` |
+| `METRICS_TOKEN` | Unlocks `GET /metrics` (Prometheus text format) for callers sending it as `X-Metrics-Token`; empty makes the route answer 404. Deliberately separate from `HEALTH_DETAIL_TOKEN` | — |
+| `UPTIME_INTERVAL_SECONDS` | Poll interval for the optional `uptime` compose profile | `60` |
+| `UPTIME_FAILURES_BEFORE_ALERT` | Consecutive failures before the sidecar alerts | `2` |
 
 ---
 

@@ -102,7 +102,7 @@ maestro/
 │
 ├── backend/app/
 │   ├── main.py         App entrypoint, middleware, exception handlers
-│   ├── core/           config, security (crypto), database, observability
+│   ├── core/           config, security (crypto), database, observability, metrics
 │   ├── api/v1/         auth, users, api_keys, tasks, agents, documents,
 │   │                   marketplace, billing, dashboard, admin
 │   ├── api/websocket.py
@@ -117,6 +117,9 @@ maestro/
 │   │                     memory_service.py  RAG / vectors
 │   │                     payment/           PaymentProvider protocol + mock
 │   │                     email/             EmailProvider protocol + console/resend
+│   │                     alerts/            AlertChannel protocol + webhook/email
+│   │                     alert_service.py   redaction, dedupe, fan-out
+│   │                     watchdog.py        readiness/5xx alerting, metrics publish
 │   ├── scripts/        Operational one-shots (purge, email-token sweep, grant_admin)
 │   └── utils/          prompt_guard, rate_limiter, tracing
 │
@@ -297,6 +300,19 @@ from ever reaching another origin. `custom_api` never opts in: a 3xx from a user
 is reported as a failure, because there is no hard-coded host to bound the hop to.
 Widening this to a general "follow redirects" flag
 would reintroduce the SSRF surface the paragraph above says these tools do not have.
+
+The **alert webhook** (`ALERT_WEBHOOK_URL`) is the one outbound URL that is neither a
+constant of ours nor guarded, and deliberately so: it is an *operator* value from
+`.env.prod`, written by the same person who writes `POSTGRES_URL` and
+`API_KEY_MASTER_KEY` — neither of which is guarded either. Running `url_guard` over it
+would actively break the common self-hosted case, because `resolve_is_public` rejects a
+non-globally-routable address and an internal notifier on the compose network is exactly
+that; in exchange it would defend only against an attacker who can already rewrite the
+env file, at which point the master key is theirs. What *is* enforced: scheme validation
+at boot, `follow_redirects=False` so the POST cannot be bounced to another origin, a hard
+timeout, and the URL never reaching a log line or an exception message — a Slack/Discord
+webhook URL is itself the credential. This is not a precedent for user-supplied hosts;
+that case is `custom_api` below.
 
 **Custom API tools (`custom_api__{slug}`).** The one exception to everything above: a user
 registers their own endpoint from the agent wizard's Capabilities step, so the *host is
@@ -502,6 +518,39 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
   degraded Redis, for instance, announces that rate-limit buckets just fell back
   to process-local counters. The 200/503 status code carries the alertable signal
   without the token, so monitoring needs no credential.
+- `ALERT_WEBHOOK_URL` / `ALERT_EMAIL_TO` — the operator alert channels, and the reason a
+  default deploy is no longer silent when it breaks. Both empty makes alerting a no-op
+  with zero egress (the `SENTRY_DSN` contract), and there is deliberately **no**
+  `ALERTING_ENABLED` switch: configuring a channel *is* the enable, so there is no second
+  thing to forget. The webhook body carries `text` and `content` in one payload, which is
+  what makes a single URL work for both Slack and Discord with no per-platform setting.
+  `url_guard` is deliberately not applied — see §8. The channels sit behind the same
+  adapter seam as `EmailProvider`/`PaymentProvider`, so a pager integration is one module.
+- `ALERT_ERROR_RATE_THRESHOLD` — a *ratio*, not a count, and that is the whole point:
+  each uvicorn worker serves roughly 1/N of the traffic, so a raw count threshold would
+  silently become N times stricter per worker while a ratio is topology-invariant.
+  `ALERT_ERROR_RATE_MIN_REQUESTS` floors it so a handful of overnight requests cannot
+  page anyone. Probe traffic is excluded from the counters because `/health/ready` answers
+  503 while degraded — counting it would make every dependency outage also trip this
+  alert, double-paging for one fault.
+- `ALERT_READINESS_FAILURES` — alerts fire on a **state transition**, never on a tick, so
+  a dependency that stays down pages once. Two failing ticks to declare degraded (a
+  restarting Postgres finishes well inside 120s, and a backend that boots ahead of its
+  dependencies must not wake anyone), one good tick to declare recovery. Degraded and
+  recovered carry different dedupe keys, so a recovery is never swallowed by the outage's
+  cooldown. With Redis configured the send right is claimed with `SET NX EX` so N workers
+  page once; on a Redis *error* the claim falls back to process-local, deliberately —
+  N workers each reporting a Redis outage beats an outage that silences its own alert.
+- `METRICS_TOKEN` — unlocks `GET /metrics` (Prometheus text exposition, hand-rolled over
+  in-process counters, no new dependency). Empty answers **404 rather than 401**, so an
+  install that never configured it is indistinguishable from one where the route does not
+  exist. A *separate* token from `HEALTH_DETAIL_TOKEN` on purpose: this one lives in a
+  long-lived scraper config and exposes traffic volume, latency distribution and error
+  rate, so their rotations should not be coupled. The `Caddyfile` deliberately does not
+  route `/metrics` — reachable from the compose network or an SSH tunnel only, with the
+  token as defence in depth rather than the boundary. No `path` label is ever emitted:
+  path cardinality is unbounded, and label-exploding a hand-rolled registry is how
+  "lightweight" becomes an OOM.
 - `EMBEDDING_ENDPOINT` — separate from `FREE_MODEL_ENDPOINT`; falls back to it when empty.
 - `OLLAMA_NATIVE_API` — the Ollama adapter drives Ollama's own `/api/chat` rather than its
   OpenAI-compatible `/v1` shim, because three controls exist only there. Set `false` to

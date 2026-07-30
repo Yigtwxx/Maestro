@@ -331,6 +331,77 @@ services:
         limits:
           memory: 512m
 
+  # External uptime probe, off unless COMPOSE_PROFILES includes "uptime".
+  #
+  # The backend runs its own readiness watchdog, but that watchdog cannot report
+  # a backend which is itself wedged, OOM-killed or deadlocked — the one failure
+  # an operator most needs to hear about. This container closes exactly that
+  # blind spot by polling from outside the process, and it POSTs to the webhook
+  # itself rather than asking the backend to deliver anything.
+  #
+  # It probes `backend:8000` directly rather than through Caddy, so a failure
+  # here means the app is down, not the proxy. It is NOT a substitute for a free
+  # external monitor (UptimeRobot, Better Stack) on https://<domain>/health:
+  # this shares the host it watches, so it cannot report the host being gone.
+  #
+  # curl-on-Alpine rather than a dashboard: this sits at 3-6 MB RSS, where
+  # Uptime Kuma (Node + SQLite + socket.io) needs 150-250 MB, a volume and an
+  # interactive first run. Spending that on two URLs is the wrong trade for the
+  # single small box this file targets — install Kuma separately if you want a
+  # dashboard and have the memory.
+  uptime:
+    image: curlimages/curl:8.11.1
+    restart: unless-stopped
+    logging: *default-logging
+    profiles: ["uptime"]
+    environment:
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:?set ALERT_WEBHOOK_URL to use the uptime profile}
+      UPTIME_INTERVAL_SECONDS: ${UPTIME_INTERVAL_SECONDS:-60}
+      UPTIME_FAILURES_BEFORE_ALERT: ${UPTIME_FAILURES_BEFORE_ALERT:-2}
+    depends_on:
+      - backend
+    # Alerts on a state transition, never on a tick — the same discipline as the
+    # in-process watchdog, so a sustained outage pages once. `curl` runs without
+    # -L: the repo follows no redirects anywhere but repo_intel.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        fails=0
+        state=up
+        notify() {
+          body="$$(printf '%s' "$$1" | sed 's/"/\\"/g')"
+          curl -sS -m 10 -X POST -H 'Content-Type: application/json' \
+            -d "{\"text\":\"$$body\",\"content\":\"$$body\"}" \
+            "$$ALERT_WEBHOOK_URL" >/dev/null 2>&1 || true
+        }
+        echo "uptime probe watching backend:8000 every $${UPTIME_INTERVAL_SECONDS}s"
+        while true; do
+          sleep "$$UPTIME_INTERVAL_SECONDS"
+          if curl -sf -m 10 -o /dev/null http://backend:8000/health \
+             && curl -s -m 10 -o /dev/null -w '%{http_code}' \
+                  http://backend:8000/health/ready | grep -q '^200$$'; then
+            if [ "$$state" = down ]; then
+              notify "Maestro backend is reachable again (external probe)."
+              state=up
+            fi
+            fails=0
+          else
+            fails=$$((fails + 1))
+            if [ "$$fails" -ge "$$UPTIME_FAILURES_BEFORE_ALERT" ] \
+               && [ "$$state" = up ]; then
+              notify "Maestro backend is NOT responding from outside the process. \
+        The in-process watchdog cannot report this. Checked http://backend:8000/health \
+        and /health/ready, $$fails consecutive failures."
+              state=down
+            fi
+          fi
+        done
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

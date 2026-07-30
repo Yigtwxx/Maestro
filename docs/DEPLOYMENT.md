@@ -331,8 +331,15 @@ you are not running Redis.
 ## Monitoring
 
 The stack ships a lightweight observability setup: dependency health probes,
-structured logs, and optional error tracking. No metrics stack (Prometheus /
-Grafana) runs on the host — deliberately, to keep RAM free on a single small box.
+self-contained operator alerting, Prometheus-format metrics, structured logs, and
+optional error tracking. No metrics *scraper* (Prometheus / Grafana) runs on the
+host — deliberately, to keep RAM free on a single small box. The app exposes the
+metrics; point your own scraper at them if you want a time series.
+
+**Set `ALERT_WEBHOOK_URL` or `ALERT_EMAIL_TO`.** Without one of them nothing tells
+you the site is down or erroring — the health probes are pull-based, and Sentry
+alert rules are configured in Sentry's own UI, not here. The alerting below costs
+nothing and needs no extra service.
 
 ### Health probes
 
@@ -369,6 +376,135 @@ curl -H "X-Health-Token: $HEALTH_DETAIL_TOKEN" https://<your-domain>/health/read
 Leave it unset and the map is withheld from everyone; the status code an uptime
 monitor alerts on is unaffected either way. `redis: "skipped"` means no
 `REDIS_URL` is configured, which is a supported topology, not a failure.
+
+### Operator alerts
+
+The backend watches itself and pushes an alert when something breaks. Two
+channels, either or both:
+
+```bash
+ALERT_WEBHOOK_URL=https://hooks.slack.com/services/…   # or a Discord webhook
+ALERT_EMAIL_TO=ops@example.com                          # via EMAIL_PROVIDER
+```
+
+One payload serves Slack and Discord (Slack reads `text`, Discord reads
+`content`), so there is no per-platform setting — paste an incoming-webhook URL
+from either. Anything that accepts a JSON POST works, including an internal
+notifier on the compose network. **With both empty, alerting is a silent no-op
+that makes no network call at all**, exactly like an empty `SENTRY_DSN`.
+Configuring a channel *is* the enable; there is no separate switch.
+
+Two things fire:
+
+| Alert | Fires when | Recovers |
+|---|---|---|
+| **Readiness** | `check_readiness()` fails `ALERT_READINESS_FAILURES` ticks in a row (2 × 60s by default) | One good tick, with the downtime |
+| **Error rate** | 5xx share of served requests exceeds `ALERT_ERROR_RATE_THRESHOLD` (5%) over `ALERT_ERROR_RATE_WINDOW_SECONDS` (300s), given at least `ALERT_ERROR_RATE_MIN_REQUESTS` (20) requests | — |
+
+Alerts fire on a **state transition**, never on a tick: a dependency that stays
+down pages once and then goes quiet until it recovers. `ALERT_COOLDOWN_SECONDS`
+(900) is a second line of defence, not the first. Degraded and recovered carry
+different dedupe keys, so a recovery is never swallowed by the outage's cooldown.
+
+Two defaults that look arbitrary and are not:
+
+- **Two failing ticks, one recovering tick.** A restarting Postgres finishes well
+  inside 120s, and a backend that boots before its dependencies pass their own
+  healthchecks must not wake anyone. Recovery is immediate because there is no
+  cost to being told early that things are fine.
+- **The 5xx threshold is a ratio, not a count.** Each uvicorn worker serves
+  roughly 1/N of the traffic, so a raw count would silently become N times
+  stricter per worker; a ratio means the same thing at any `WEB_CONCURRENCY`.
+
+With `REDIS_URL` set, the "send this alert" right is claimed with `SET NX EX`, so
+N workers page once rather than N times. If Redis is itself the dead dependency
+the claim falls back to process-local — each worker then reports the Redis
+outage, which is the right failure mode for an outage that would otherwise
+silence its own alert.
+
+The alert body **names the failing dependency**, which `/health/ready`
+deliberately withholds from an anonymous caller. That is not an inconsistency:
+the recipient here is the operator who has to go fix it. Everything on its way
+out passes a redactor that rewrites URL credentials (`postgres://user:pw@host`)
+and masks the exact value of every configured secret, so a body cannot carry a
+key even if a future code path interpolates one.
+
+**Known limit:** this runs inside the backend it watches. It reports a dead
+*dependency*, not a dead *backend*. See the uptime sidecar below.
+
+### Metrics
+
+`GET /metrics` serves the Prometheus text exposition format from in-process
+counters — no scraper, no extra dependency, no `path` label (unbounded
+cardinality is how a hand-rolled registry becomes an OOM).
+
+```bash
+METRICS_TOKEN=$(openssl rand -hex 16)   # in .env.prod, then restart the backend
+curl -H "X-Metrics-Token: $METRICS_TOKEN" http://localhost:8000/metrics
+```
+
+| Metric | Type | Labels |
+|---|---|---|
+| `maestro_build_info` | gauge | `version`, `environment` |
+| `maestro_process_start_time_seconds` / `_uptime_seconds` | gauge | — |
+| `maestro_http_requests_total` | counter | `status_class` (`1xx`…`5xx`) |
+| `maestro_http_request_duration_seconds` | histogram | `le` (+ `_sum`, `_count`) |
+| `maestro_dependency_up` | gauge | `dependency` |
+| `maestro_readiness_up` | gauge | — |
+| `maestro_alerts_sent_total` / `_suppressed_total` | counter | `kind` |
+
+Every series carries a `worker` label. Each worker keeps its own counters and
+publishes a snapshot to Redis; `/metrics` returns its own plus every peer's, so
+`sum(rate(maestro_http_requests_total[5m]))` is correct and a worker restart
+resets one series instead of making a summed counter run backwards.
+
+Health-probe and `/metrics` traffic is excluded from the counters. That is
+load-bearing: `/health/ready` answers 503 while degraded, so counting it would
+make every dependency outage also trip the 5xx alert.
+
+Three deliberate choices worth not "fixing":
+
+- **Empty `METRICS_TOKEN` → 404, not 401.** An install that never configured it
+  is indistinguishable from one where the route does not exist.
+- **A separate token from `HEALTH_DETAIL_TOKEN`.** This one is pasted into a
+  long-lived scraper config and exposes far more; their rotations should not be
+  coupled.
+- **The `Caddyfile` does not route `/metrics`.** Its `@api path /api/* /health*`
+  matcher does not match it, so the endpoint is reachable only from the compose
+  network or an SSH tunnel — the same posture as the Umami dashboard. The token
+  is defence in depth, not the boundary. Scrape it over a tunnel:
+
+```bash
+ssh -L 9090:localhost:8000 user@host    # then scrape localhost:9090/metrics
+```
+
+### Uptime sidecar (optional)
+
+The in-process watchdog cannot report a backend that is itself wedged,
+OOM-killed or deadlocked — the failure you most need to hear about. The `uptime`
+profile adds a container that probes from outside the process and POSTs to the
+webhook itself:
+
+```bash
+# .env.prod
+COMPOSE_PROFILES=uptime          # or analytics,uptime
+ALERT_WEBHOOK_URL=https://…      # required by this profile
+
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+```
+
+It polls `backend:8000` directly rather than through Caddy, so a failure means
+the app is down and not the proxy, and it alerts on a transition with the same
+two-failure discipline. It is `curlimages/curl` running a shell loop: 3–6 MB RSS,
+capped at 64 MB. Uptime Kuma would give you a dashboard for 150–250 MB plus a
+volume and an interactive first run — install it separately if you want that and
+have the memory; it is the wrong default for the single small box this compose
+file targets.
+
+**It shares the host it watches**, so it closes the "backend is wedged" blind
+spot and not the "host is gone" one. Keep a free external monitor
+(UptimeRobot, Better Stack) on `https://<your-domain>/health` — that is the only
+thing that can tell you the machine itself disappeared.
 
 ### Error tracking (Sentry)
 

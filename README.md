@@ -251,7 +251,8 @@ contracts are in [`docs/API.md`](./docs/API.md#agent-contracts).
 | Subscriptions & quota | Starter / Pro / Scale plans, per-period token quota, usage ledger; **mock payment gateway** | Live |
 | Legal & GDPR | Terms / privacy / security / acceptable-use / cookies pages; account deletion + data export | Live |
 | Admin & moderation | Role-gated admin surface: user suspension, marketplace / review moderation, report queue, audit log | Live |
-| Observability | Optional Sentry error tracking (backend + frontend), structured JSON logging, request IDs | Live |
+| Observability | Structured JSON logging, request IDs, Prometheus-format `/metrics`, optional Sentry error tracking (backend + frontend) | Live |
+| Operator alerting | Self-contained readiness + 5xx-rate watchdog paging a Slack/Discord webhook or email; optional external uptime sidecar. No monitoring service to run | Live |
 | Tracing & costs | Optional per-task span tracing with waterfall + cost breakdowns by day / model / domain | Live |
 | Deployment | Single Docker Compose stack, Caddy single-origin TLS, GHCR images, SSH rollout, off-site backups | Live |
 | Real payment processor | Swap the mock gateway for iyzico / PayTR / Adyen / Stripe via one adapter | Planned |

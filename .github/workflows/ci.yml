@@ -264,6 +264,7 @@ jobs:
           EMAIL_PROVIDER=console
           PAYMENT_PROVIDER=mock
           HEALTH_DETAIL_TOKEN=smoke-detail-token
+          METRICS_TOKEN=smoke-metrics-token
           EOF
 
       # Runs the real migration chain from an empty database — the same check
@@ -315,6 +316,35 @@ jobs:
             cat /tmp/plans.json
             exit 1
           fi
+
+      # pytest drives the app over an ASGI transport, which never runs lifespan
+      # events — so a watchdog task that raises at startup, or an exposition
+      # body malformed only once the real gauges are populated, passes every
+      # other gate and surfaces first on deploy. This is the only place both
+      # actually run. The 404 check comes first: an unset METRICS_TOKEN must
+      # hide the route, and asserting that here keeps the default honest.
+      - name: Check the metrics endpoint
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/metrics)
+          if [ "$code" != "404" ]; then
+            echo "::error::GET /metrics without a token returned $code, expected 404"
+            exit 1
+          fi
+          code=$(curl -s -o /tmp/metrics.txt -w '%{http_code}' \
+            -H 'X-Metrics-Token: smoke-metrics-token' http://localhost:8000/metrics)
+          if [ "$code" != "200" ]; then
+            echo "::error::GET /metrics with the token returned $code"
+            cat /tmp/metrics.txt
+            exit 1
+          fi
+          for metric in maestro_build_info maestro_http_requests_total \
+                        maestro_http_request_duration_seconds_bucket; do
+            grep -q "^${metric}" /tmp/metrics.txt || {
+              echo "::error::${metric} missing from the exposition body"
+              cat /tmp/metrics.txt
+              exit 1
+            }
+          done
 
       # Runs even when an earlier step failed — without the container log a
       # failure here is undiagnosable from the job summary alone.
