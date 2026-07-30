@@ -5,7 +5,7 @@ import { Card, CardTitle } from '@/components/ui/Card';
 import { StatBlock } from '@/components/ui/StatBlock';
 import CountUp from '@/components/CountUp';
 import { Sparkline } from '@/components/ui/Sparkline';
-import { BarList, type BarRow } from '@/components/ui/BarList';
+import { BarList } from '@/components/ui/BarList';
 import { SkeletonCard } from '@/components/ui/Skeleton';
 import { Select } from '@/components/ui/Select';
 import { api, ApiError } from '@/lib/api';

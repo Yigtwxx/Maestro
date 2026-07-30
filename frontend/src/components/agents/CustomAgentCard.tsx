@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/Button';
 import { StatBlock } from '@/components/ui/StatBlock';
 import { cn } from '@/lib/cn';
 import { domainColor } from '@/lib/agent-colors';
-import type { AgentConfig, ToolCatalogItem } from '@/types';
+import type { AgentConfig } from '@/types';
 
 interface CustomAgentCardProps {
   agent: AgentConfig;

@@ -1,7 +1,15 @@
 import nextVitals from 'eslint-config-next/core-web-vitals'
+import nextTypescript from 'eslint-config-next/typescript'
 
 const eslintConfig = [
   ...nextVitals,
+  // typescript-eslint's `recommended` set. This is what makes
+  // `@typescript-eslint/no-explicit-any` an *error*, and it is the only gate
+  // that catches an `any`: `tsc --noEmit` accepts one by definition, so
+  // without this config a hand-written `any` passed every check silently.
+  // `recommended` needs no type information, so it does not pull in the
+  // type-checked mode the policy note below rules out.
+  ...nextTypescript,
   {
     // Default ignores of eslint-config-next.
     ignores: ['.next/**', 'out/**', 'build/**', 'next-env.d.ts'],
@@ -21,6 +29,8 @@ const eslintConfig = [
     // `next build` also treats warnings as non-fatal. Type-aware linting is
     // intentionally NOT enabled; `tsc --noEmit` (the `type-check` gate) covers
     // type correctness deterministically without the flakiness of typed rules.
+    // This demotion applies only to these four rules — the typescript-eslint
+    // set spread in above stays at its own severities.
     rules: {
       'react-hooks/set-state-in-effect': 'warn',
       'react-hooks/refs': 'warn',

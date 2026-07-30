@@ -14,11 +14,8 @@ import { api, ApiError } from '@/lib/api';
 import { canReachBilling } from '@/lib/billing-access';
 import { Badge } from '@/components/ui/Badge';
 import { BILLING_PRERELEASE_NOTICE } from '@/lib/legal';
-import { MODULE_COLOR } from '@/lib/module-colors';
 import { useAuthStore } from '@/stores/auth';
 import type { CardInput, PlanPublic, SubscriptionPlan, SubscriptionPublic } from '@/types';
-
-const mc = MODULE_COLOR.billing;
 
 export default function BillingPage() {
   const refreshUser = useAuthStore((s) => s.refreshUser);

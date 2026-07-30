@@ -517,6 +517,13 @@ and `next build` treats warnings as non-fatal). Never add `--max-warnings=0` whi
 are demoted, and do not enable typescript-eslint's type-checked mode — `tsc --noEmit`
 covers type correctness deterministically, without the flakiness of typed lint rules.
 
+What *is* enabled is `eslint-config-next/typescript` (typescript-eslint's `recommended`
+set, which needs no type information and so does not cross the line above). It is the
+reason `@typescript-eslint/no-explicit-any` is an **error** and an `any` fails the PR.
+Keep it spread in: `tsc --noEmit` accepts `any` by definition, so lint is the *only*
+gate that sees one — before this config was added, four hand-written `any`s sat in the
+tree with every check green. `no-unused-vars` stays at `warn` (Next's own override).
+
 ### Dependency locking
 
 `requirements.in` / `requirements-dev.in` are hand-edited intent; the `.txt` files are
