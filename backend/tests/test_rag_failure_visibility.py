@@ -35,8 +35,21 @@ class FakeHit:
         self.payload = {"text": text}
 
 
+class FakeResponse:
+    """What ``query_points`` returns: hits live under ``.points``."""
+
+    def __init__(self, points: list[FakeHit]) -> None:
+        self.points = points
+
+
 class FakeQdrant:
-    """A reachable Qdrant. Each operation can be told to raise instead."""
+    """A reachable Qdrant. Each operation can be told to raise instead.
+
+    Mirrors the real client's method *names*: these tests assert that a failure
+    is logged, and a fake carrying a method the client no longer has would make
+    "the method is gone" indistinguishable from "the backend is down". The
+    round-trip coverage against a real client lives in test_qdrant_roundtrip.py.
+    """
 
     def __init__(self, *, hits: list[str] | None = None, fails: str = "") -> None:
         self._hits = hits or []
@@ -49,9 +62,9 @@ class FakeQdrant:
     async def collection_exists(self, name: str) -> bool:
         return True
 
-    async def search(self, **_: Any) -> list[FakeHit]:
+    async def query_points(self, **_: Any) -> FakeResponse:
         self._maybe_fail("search")
-        return [FakeHit(text) for text in self._hits]
+        return FakeResponse([FakeHit(text) for text in self._hits])
 
     async def scroll(self, **_: Any) -> tuple[list[Any], None]:
         self._maybe_fail("scroll")
@@ -62,14 +75,6 @@ class FakeQdrant:
 
     async def upsert(self, **_: Any) -> None:
         self._maybe_fail("upsert")
-
-
-@pytest.fixture(autouse=True)
-def _clear_collection_cache():
-    """``_known_collections`` is process-global; keep it out of other modules."""
-    memory_service._known_collections.clear()
-    yield
-    memory_service._known_collections.clear()
 
 
 @pytest.fixture

@@ -435,6 +435,20 @@ Two further blocking gates cover what those cannot:
   runtime dependency missing from `requirements.txt`, a broken migration chain, or a
   settings default that only fails at import time passes every other gate and surfaces
   first on deploy. Draft PRs skip it, like the image build.
+- **Integration (`ci.yml`, inside the `smoke` job).** `pytest -m integration` against the
+  real Mongo and Qdrant that job already starts. The unit suite replaces both with
+  in-memory doubles, and every double hand-defines the methods it answers to — so when
+  `qdrant-client` removed `AsyncQdrantClient.search`, the fakes kept replying while
+  `retrieve_memories` (which degrades to `[]` on any exception) returned "no results" for
+  every user in production, with every gate green. Nothing else runs the service code
+  against a real client. `REQUIRE_INTEGRATION_SERVERS=1` turns the fixtures' "no server,
+  skip" path into a failure, because a skip here is a green job that asserted nothing.
+  The marker is **deselected by default** via `-m 'not integration'` in `pyproject.toml`,
+  so a bare `pytest` never reaches for a server — which also means running one of those
+  files by path collects nothing unless you pass `-m integration`. The cheap half of the
+  same coverage runs in the default suite: `tests/test_qdrant_roundtrip.py` drives
+  `AsyncQdrantClient(":memory:")`, which is qdrant-client's own implementation, so filters
+  and vector dimensions are genuinely enforced without any infrastructure.
 - **Invariants (`security.yml`).** `semgrep --error` over `.semgrep/maestro.yml`:
   hand-written rules for the §9 invariants that no public ruleset knows — unscoped Qdrant
   queries, `follow_redirect_host` outside `repo_intel`, a redirect-following HTTP client

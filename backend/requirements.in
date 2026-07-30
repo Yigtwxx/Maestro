@@ -26,7 +26,10 @@ alembic>=1.14
 
 # --- NoSQL / Vector DB ---
 motor>=3.6
-qdrant-client>=1.12
+# >=1.15: memory_service calls `query_points`, which replaced the `search` this
+# floor used to allow. Resolving below it would compile a lock whose client has
+# no `query_points` at all, and RAG degrades silently rather than failing loudly.
+qdrant-client>=1.15
 
 # --- Rate limiting (shared buckets across workers/instances) ---
 redis>=5.2

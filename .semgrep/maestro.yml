@@ -39,8 +39,15 @@ rules:
       models.Filter with a user_id FieldCondition). An unscoped query reads or
       deletes another user's vectors — CLAUDE.md rule 4.
     patterns:
+      # `query_points` and its two siblings, not `search`: qdrant-client removed
+      # `search`, and a rule listing a method the client no longer has silently
+      # stops guarding the retrieval path — the single most important place a
+      # user scope can go missing. The siblings are listed pre-emptively so the
+      # next refactor that reaches for one is covered before it lands.
       - pattern-either:
-          - pattern: get_qdrant_client().search(...)
+          - pattern: get_qdrant_client().query_points(...)
+          - pattern: get_qdrant_client().query_batch_points(...)
+          - pattern: get_qdrant_client().query_points_groups(...)
           - pattern: get_qdrant_client().scroll(...)
           - pattern: get_qdrant_client().delete(...)
           - pattern: get_qdrant_client().count(...)

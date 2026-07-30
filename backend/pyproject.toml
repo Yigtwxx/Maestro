@@ -22,10 +22,19 @@ known-first-party = ["app"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "integration: needs a real MongoDB/Qdrant server (docker-compose). Deselected by default.",
+]
 # Fail on an unregistered marker (a typo'd @pytest.mark silently no-ops
 # otherwise) or an unknown config key. Cheap correctness guardrails that keep
-# the suite honest; no custom markers are declared, so nothing is exempted.
-addopts = "--strict-markers --strict-config"
+# the suite honest.
+#
+# `-m 'not integration'` keeps the default run infrastructure-free: a bare
+# `pytest` (and CI's `pytest --cov=app`) must never try to reach a real server,
+# or a developer without docker-compose up sees failures unrelated to their
+# change. A command-line `-m` overrides this one, so `pytest -m integration`
+# selects exactly the opposite set.
+addopts = "--strict-markers --strict-config -m 'not integration'"
 
 [tool.coverage.run]
 source = ["app"]

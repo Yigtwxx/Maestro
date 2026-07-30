@@ -115,9 +115,14 @@ async def retrieve_memories(
             return []
     try:
         await ensure_collection(collection)
-        hits = await get_qdrant_client().search(
+        # ``query_points``, not the older ``search``: qdrant-client removed the
+        # latter, and because this block degrades to [] on any exception, calling
+        # a method that no longer exists disabled RAG for every user with nothing
+        # but a WARNING to show for it. tests/test_qdrant_roundtrip.py runs this
+        # path against a real client so the next such removal fails instead.
+        response = await get_qdrant_client().query_points(
             collection_name=collection,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=_user_filter(user_id),
             limit=limit,
         )
@@ -128,7 +133,7 @@ async def retrieve_memories(
             extra={"user_id": str(user_id), "collection": collection},
         )
         return []
-    return [str(hit.payload.get("text", "")) for hit in hits if hit.payload]
+    return [str(hit.payload.get("text", "")) for hit in response.points if hit.payload]
 
 
 def format_rag_block(hits: list[str], *, open_tag: str, close_tag: str) -> str:

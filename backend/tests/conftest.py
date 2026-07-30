@@ -7,7 +7,9 @@ provides an httpx client wired to an in-memory database.
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
+import uuid
 from types import SimpleNamespace
 
 # Must be set before any `app.*` import (settings are cached at import time).
@@ -17,12 +19,15 @@ os.environ.setdefault("POSTGRES_URL", "sqlite+aiosqlite://")
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
+from motor.motor_asyncio import AsyncIOMotorClient  # noqa: E402
+from qdrant_client import AsyncQdrantClient  # noqa: E402
 from sqlalchemy.ext.asyncio import (  # noqa: E402
     async_sessionmaker,
     create_async_engine,
 )
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
+from app.core import database  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.core.database import get_db  # noqa: E402
 from app.core.metrics import metrics  # noqa: E402
@@ -37,6 +42,7 @@ from app.services import (  # noqa: E402
     custom_api_service,
     data_fetch_service,
     email_service,
+    memory_service,
     places_intel_service,
     question_store,
     quota_service,
@@ -404,3 +410,190 @@ def custom_api_db(monkeypatch) -> FakeMongoCollection:
     collection = FakeMongoCollection()
     monkeypatch.setattr(custom_api_service, "_collection", lambda: collection)
     return collection
+
+
+# --- Real Qdrant round-trips ------------------------------------------------
+#
+# Every Qdrant double in this suite used to hand-define the methods it needed,
+# so when qdrant-client removed `search` the fakes kept answering and
+# `retrieve_memories` — which degrades to [] on any exception — reported "no
+# results" for every user in production while CI stayed green. The fixtures
+# below run the real client instead: local mode is qdrant-client's own
+# implementation, so filters are genuinely evaluated and vector dimensions
+# genuinely validated, and a removed method fails loudly.
+
+# Small on purpose: nothing here depends on the real 768-wide model, and a
+# narrow vector keeps the local-mode collections cheap.
+TEST_EMBEDDING_DIM = 8
+
+
+def deterministic_vector(text: str) -> list[float]:
+    """A stable, non-zero vector derived from ``text``.
+
+    Deterministic rather than random so a failure reproduces exactly. The
+    ``1.0 +`` floor keeps every component positive: cosine distance is undefined
+    for a zero vector and Qdrant rejects one.
+    """
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return [1.0 + digest[i] / 255.0 for i in range(TEST_EMBEDDING_DIM)]
+
+
+@pytest.fixture(autouse=True)
+def _clear_qdrant_collection_cache():
+    """``memory_service._known_collections`` is process-wide.
+
+    ``ensure_collection`` short-circuits on it, so a collection registered by
+    one test would make the call a no-op for whichever test ran next — against a
+    client that never saw it created. Autouse because the coupling is invisible
+    at the call site.
+    """
+    memory_service._known_collections.clear()
+    yield
+    memory_service._known_collections.clear()
+
+
+@pytest.fixture
+def embeddings(monkeypatch) -> list[str]:
+    """Swap the embedding endpoint for a deterministic in-process stub.
+
+    The vectors are fake but their *width* is real — it matches the
+    ``embedding_dim`` the collection is created with, so a mismatch between the
+    two still fails the upsert rather than being quietly accepted. Returns the
+    list of texts embedded, for tests that assert on call counts.
+    """
+    embedded: list[str] = []
+
+    async def _embed(texts: list[str]) -> list[list[float]]:
+        embedded.extend(texts)
+        return [deterministic_vector(text) for text in texts]
+
+    monkeypatch.setattr(memory_service, "embed_texts", _embed)
+    return embedded
+
+
+@pytest.fixture
+async def qdrant(monkeypatch, embeddings) -> AsyncQdrantClient:
+    """A real Qdrant, in-process, wired into ``memory_service``.
+
+    ``:memory:`` runs qdrant-client's local implementation — no server, no
+    docker, and no file lock (a disk path would take one via portalocker). Each
+    client is fully isolated from every other, so tests cannot leak into one
+    another through it.
+    """
+    client = AsyncQdrantClient(":memory:")
+    monkeypatch.setattr(memory_service, "get_qdrant_client", lambda: client)
+    monkeypatch.setattr(settings, "embedding_dim", TEST_EMBEDDING_DIM)
+    yield client
+    await client.close()
+
+
+# --- Real servers (integration marker) --------------------------------------
+#
+# Ports default to the compose file's, which are deliberately offset: a native
+# mongod bound to loopback beats Docker's wildcard bind, so Maestro publishes
+# Mongo on 27018 rather than 27017. Never default to the stock port here.
+
+INTEGRATION_MONGO_URL = os.environ.get("MONGODB_URL", "mongodb://localhost:27018")
+INTEGRATION_QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+
+# Long enough for a loaded CI runner, short enough that an absent server skips
+# promptly. The app's own client passes no timeout at all, so it would inherit
+# pymongo's 30-second default and stall the run instead.
+_INTEGRATION_TIMEOUT_MS = 1500
+
+
+def _skip_or_fail(reason: str) -> None:
+    """An absent server skips locally but fails in CI.
+
+    Skipping is right on a laptop: `pytest -m integration` without
+    `docker compose up` should say what is missing, not fail a change that is
+    fine. In CI the same skip is the worst outcome available — the job reports
+    green having asserted nothing, which is precisely the failure mode this
+    whole tier exists to remove — so the workflow sets the variable.
+    """
+    if os.environ.get("REQUIRE_INTEGRATION_SERVERS"):
+        pytest.fail(reason)
+    pytest.skip(reason)
+
+
+@pytest.fixture
+async def mongo_db(monkeypatch):
+    """A throwaway database on a real MongoDB server, wired into the app.
+
+    The seam is ``database._mongo_client``, not each service's accessor:
+    ``get_mongo_db()`` reads that global at call time, so one patch redirects
+    every consumer at once — task_service, document_service, custom_api_service
+    and ``ensure_indexes`` included. Without it a service would quietly build
+    its own client against ``settings.mongodb_url``, which is a developer's real
+    ``maestro`` database, using pymongo's 30-second selection default.
+    """
+    client = AsyncIOMotorClient(
+        INTEGRATION_MONGO_URL,
+        tz_aware=True,
+        serverSelectionTimeoutMS=_INTEGRATION_TIMEOUT_MS,
+    )
+    try:
+        await client.admin.command("ping")
+    except Exception as exc:  # noqa: BLE001 - any failure means "not available"
+        client.close()
+        _skip_or_fail(f"No MongoDB at {INTEGRATION_MONGO_URL}: {exc}")
+    # A unique name per test: repeated and concurrent runs must not collide, and
+    # a dropped database leaves a developer's instance as it was found.
+    name = f"maestro_test_{uuid.uuid4().hex}"
+    monkeypatch.setattr(database, "_mongo_client", client)
+    monkeypatch.setattr(settings, "mongodb_db_name", name)
+    try:
+        yield client[name]
+    finally:
+        await client.drop_database(name)
+        client.close()
+
+
+class QdrantScratch:
+    """A real Qdrant client plus the scratch collections this test may use."""
+
+    def __init__(
+        self, client: AsyncQdrantClient, memories: str, documents: str
+    ) -> None:
+        self.client = client
+        self.memories = memories
+        self.documents = documents
+
+
+@pytest.fixture
+async def qdrant_server(monkeypatch, embeddings):
+    """The same round-trips as ``qdrant``, against a real Qdrant over HTTP.
+
+    Writes go to per-test scratch collections, never the production names: an
+    integration run must not disturb the ``conversation_memories`` a developer
+    keeps in their local instance, and two runs must not collide.
+
+    Redirecting them takes both halves. ``memory_service`` reads the two
+    collection constants as module globals *inside* function bodies
+    (``add_document_chunks``, ``purge_user_vectors``), so monkeypatching the
+    module attribute reaches those at call time. It does NOT reach the
+    ``collection=`` default parameters, which Python bound at definition time —
+    so tests calling ``add_memory``/``retrieve_memories`` pass
+    ``collection=scratch.memories`` explicitly.
+    """
+    client = AsyncQdrantClient(url=INTEGRATION_QDRANT_URL, timeout=5)
+    try:
+        await client.get_collections()
+    except Exception as exc:  # noqa: BLE001 - any failure means "not available"
+        await client.close()
+        _skip_or_fail(f"No Qdrant at {INTEGRATION_QDRANT_URL}: {exc}")
+
+    suffix = uuid.uuid4().hex
+    memories = f"maestro_test_memories_{suffix}"
+    documents = f"maestro_test_documents_{suffix}"
+    monkeypatch.setattr(memory_service, "get_qdrant_client", lambda: client)
+    monkeypatch.setattr(settings, "embedding_dim", TEST_EMBEDDING_DIM)
+    monkeypatch.setattr(memory_service, "QDRANT_CONVERSATION_MEMORIES", memories)
+    monkeypatch.setattr(memory_service, "QDRANT_DOCUMENT_CHUNKS", documents)
+    try:
+        yield QdrantScratch(client, memories, documents)
+    finally:
+        for name in (memories, documents):
+            if await client.collection_exists(name):
+                await client.delete_collection(name)
+        await client.close()

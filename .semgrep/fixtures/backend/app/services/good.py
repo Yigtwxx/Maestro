@@ -11,9 +11,9 @@ from sqlalchemy import text
 
 async def scoped_search(collection, query_vector, user_id):
     """The `_user_filter` helper — how memory_service scopes its RAG search."""
-    return await get_qdrant_client().search(
+    return await get_qdrant_client().query_points(
         collection_name=collection,
-        query_vector=query_vector,
+        query=query_vector,
         query_filter=_user_filter(user_id),
         limit=10,
     )

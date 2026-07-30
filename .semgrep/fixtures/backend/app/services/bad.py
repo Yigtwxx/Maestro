@@ -17,8 +17,8 @@ from app.services.connected_common import request_api
 
 async def leak_vectors(collection, query_vector):
     """Cross-tenant read: no query_filter at all."""
-    return await get_qdrant_client().search(
-        collection_name=collection, query_vector=query_vector, limit=10
+    return await get_qdrant_client().query_points(
+        collection_name=collection, query=query_vector, limit=10
     )
 
 

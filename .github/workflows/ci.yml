@@ -205,6 +205,48 @@ jobs:
       - name: Start backing services
         run: docker compose up -d --wait postgres mongo qdrant redis
 
+      # The default `pytest` run replaces Mongo and Qdrant with in-memory
+      # doubles, and each double hand-defines the methods it answers to. So when
+      # qdrant-client removed `AsyncQdrantClient.search`, the fakes kept
+      # replying, every gate stayed green, and `retrieve_memories` — which
+      # degrades to [] on any exception — returned "no results" for every user
+      # in production. Nothing else in CI can catch that class of drift, because
+      # nothing else runs the service code against a real client. These tests
+      # do, against the four services already started above.
+      #
+      # Placed before the image work on purpose: a drift failure is reported in
+      # seconds rather than after a build and boot, and it cannot be mistaken
+      # for an app-runtime failure.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install test dependencies
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      # Ports match the compose file, whose offsets are deliberate (27018, not
+      # 27017 — see docker-compose.yml). REQUIRE_INTEGRATION_SERVERS turns the
+      # fixtures' "no server, skip" path into a hard failure: a skip here would
+      # mean a broken compose service reports a green job that asserted nothing,
+      # which is the exact failure mode this tier exists to remove.
+      #
+      # No --cov: the coverage number comes from the `backend` job, and a second
+      # partial report would misrepresent it. `-m integration` deselects
+      # everything else at collection, so this is a handful of tests rather than
+      # a second full suite. They use a maestro_test_<uuid> database and scratch
+      # Qdrant collections, so they cannot disturb the app container started
+      # further down against db `maestro`.
+      - name: Integration tests (real Mongo + Qdrant)
+        working-directory: backend
+        env:
+          MONGODB_URL: mongodb://localhost:27018
+          QDRANT_URL: http://localhost:6333
+          REQUIRE_INTEGRATION_SERVERS: "1"
+        run: pytest -m integration -p no:cacheprovider
+
       # Ports and credentials mirror .env.example, which points at the same
       # compose file (5433/27018 are deliberate — see the comments there).
       # ENVIRONMENT stays at its non-production default, so the placeholder
