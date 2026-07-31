@@ -935,6 +935,29 @@ SIGNUP_MIN_FORM_SECONDS = 2.0
 # nonces expires before it is useful.
 SIGNUP_CHALLENGE_TTL_MINUTES = 30
 
+# --- Email identity ---
+# Providers whose sub-addressing rules are known, mapped to
+# (strip_dots_from_local_part, canonical_domain).
+#
+# Deliberately an allowlist rather than a blanket rule: '+' is a legal
+# local-part character and its meaning belongs to the receiving server. A
+# self-hosted domain may route `a+b@x` to a genuinely different mailbox, so
+# stripping it everywhere would merge unrelated accounts -- a correctness bug
+# worse than the abuse it prevents.
+#
+# googlemail.com maps onto gmail.com because they are one mailbox. hotmail,
+# outlook and live are separate Microsoft mailboxes and are never merged.
+EMAIL_CANONICAL_PROVIDERS: dict[str, tuple[bool, str]] = {
+    "gmail.com": (True, "gmail.com"),
+    "googlemail.com": (True, "gmail.com"),
+    "outlook.com": (False, "outlook.com"),
+    "hotmail.com": (False, "hotmail.com"),
+    "live.com": (False, "live.com"),
+}
+
+# The sub-address separator every provider above uses.
+EMAIL_SUBADDRESS_SEPARATOR = "+"
+
 # --- Document ingestion (RAG) ---
 # Character-based chunking (approximate; keeps ingestion dependency-free).
 DOCUMENT_CHUNK_SIZE = 1000
