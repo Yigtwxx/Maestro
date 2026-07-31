@@ -723,7 +723,21 @@ export interface DocumentMeta {
   id: string;
   filename: string;
   chunk_count: number;
+  size_bytes: number;
   created_at: string;
+}
+
+/**
+ * Knowledge-base usage against the account's plan allowance.
+ *
+ * `max_documents` / `max_bytes` are `null` for an unmetered (admin) account,
+ * which means "no ceiling" — never zero. Branch on it before comparing.
+ */
+export interface DocumentStorage {
+  documents: number;
+  bytes: number;
+  max_documents: number | null;
+  max_bytes: number | null;
 }
 
 // --- Moderation / content reports ---

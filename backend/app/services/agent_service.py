@@ -18,6 +18,7 @@ from app.core.constants import (
     COMMUNITY_PLATFORMS,
     COMMUNITY_READ_ACTION,
     CONNECTED_TOOL_PROVIDERS,
+    CUSTOM_AGENTS_MAX,
     EXECUTABLE_TOOL_IDS,
     KEYLESS_CONNECTED_TOOL_IDS,
     ROUTING_CUSTOM_AGENTS_MAX,
@@ -171,7 +172,17 @@ async def create_agent(
     ``source``/``marketplace_item_id`` record provenance (a marketplace install
     stamps them). The passing security scan is recorded with the scanner version
     so a later scanner bump forces a re-scan at execution time.
+
+    This is the single insert point for a custom agent, marketplace installs
+    included, so it is where ``CUSTOM_AGENTS_MAX`` is enforced -- a one-click
+    install must not be the way around a cap the wizard respects.
     """
+    owned = await _collection().count_documents({"user_id": str(user_id)})
+    if owned >= CUSTOM_AGENTS_MAX:
+        raise AgentValidationError(
+            f"You can own at most {CUSTOM_AGENTS_MAX} custom agents. "
+            "Delete one to make room."
+        )
     _guard_prompt(payload.system_prompt)
     tools = _validate_tools(payload.tools)
     custom_api_tool_ids = await _validate_custom_api_tool_ids(

@@ -68,6 +68,14 @@ MAX_SUBTASKS = 8
 # blow up the classifier's context.
 ROUTING_CUSTOM_AGENTS_MAX = 10
 
+# How many custom agents one account may own, counting marketplace installs --
+# ``agent_service.create_agent`` is the single insert point for both. Flat
+# rather than per-plan (unlike documents) because an agent config is a few KB of
+# Mongo with no vectors behind it: this is an abuse ceiling, not a resource
+# allowance. Above ROUTING_CUSTOM_AGENTS_MAX on purpose, so a user can keep
+# directly-selectable agents beyond the ten the router will consider.
+CUSTOM_AGENTS_MAX = 25
+
 # Effort scaling (Backend v2 §4.6/D15): the orchestrator classifies task
 # complexity and the Main Agent scales its team size accordingly. A "simple"
 # task runs one member with the reviewer skipped; "complex" gets the full team.
@@ -464,6 +472,35 @@ PLAN_MAX_CONCURRENT_TASKS: dict[str, int] = {
     SubscriptionPlan.SCALE.value: 5,
 }
 
+# How much of the platform's *own* storage one account may hold. A third axis,
+# independent of both the token quota (monthly spend) and the concurrency cap
+# (simultaneity): an uploaded document costs nothing per run, it costs disk and
+# Qdrant RAM forever. Without this the only ceiling was DOCUMENT_MAX_BYTES per
+# file, i.e. unbounded x 5 MB.
+#
+# The byte cap is the load-bearing one and the count is the friendly face of it:
+# a 1 KB note and a 5 MB handbook are the same row in Mongo but differ by four
+# orders of magnitude in the vector store. Sizing follows from the chunker --
+# 1 KB of text becomes roughly one DOCUMENT_CHUNK_SIZE chunk, and one
+# ``settings.embedding_dim``-wide float32 vector is ~3 KB -- so a plan's byte
+# allowance costs roughly 3x itself in resident Qdrant memory. FREE at 10 MB is
+# therefore ~30 MB of RAM per account, which is what makes an unverified signup
+# affordable; SCALE at 300 MB is ~900 MB, which is the most one tenant may take
+# from a single box.
+PLAN_MAX_DOCUMENTS: dict[str, int] = {
+    SubscriptionPlan.FREE.value: 10,
+    SubscriptionPlan.STARTER.value: 30,
+    SubscriptionPlan.PRO.value: 100,
+    SubscriptionPlan.SCALE.value: 300,
+}
+
+PLAN_MAX_DOCUMENT_BYTES: dict[str, int] = {
+    SubscriptionPlan.FREE.value: 10_000_000,
+    SubscriptionPlan.STARTER.value: 30_000_000,
+    SubscriptionPlan.PRO.value: 100_000_000,
+    SubscriptionPlan.SCALE.value: 300_000_000,
+}
+
 PLAN_PRICE_USD_CENTS: dict[str, int] = {
     SubscriptionPlan.FREE.value: 0,
     SubscriptionPlan.STARTER.value: 500,
@@ -778,6 +815,23 @@ class MongoCollection(StrEnum):
 # --- Qdrant collection names ---
 QDRANT_CONVERSATION_MEMORIES = "conversation_memories"
 QDRANT_DOCUMENT_CHUNKS = "document_chunks"
+
+# Conversation memories one account may keep. ``document_chunks`` needs no cap
+# of its own -- it is bounded transitively by PLAN_MAX_DOCUMENT_BYTES -- but a
+# memory is written once per completed task, so an account that never uploads
+# anything still grows this collection forever.
+#
+# The cap is a ring buffer, not a wall: ``memory_service.add_memory`` drops the
+# oldest points past it. Refusing the write instead would freeze a user's
+# recall at whatever they happened to run first, which is worse than forgetting
+# the distant past -- retrieval is relevance-ranked and older answers describe
+# an account state that has since changed.
+MEMORY_MAX_POINTS_PER_USER = 500
+
+# Read back per prune pass. Points are only ordered by a payload timestamp, so
+# trimming means scrolling the user's ids; this bounds that read on a collection
+# that grew before the cap existed (or past it, if a prune failed).
+MEMORY_PRUNE_SCROLL_LIMIT = 2_000
 
 
 # --- Rate limiting (CLAUDE.md §9.4) ---

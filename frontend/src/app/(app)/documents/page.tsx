@@ -10,13 +10,28 @@ import { cn } from '@/lib/cn';
 import { api, ApiError } from '@/lib/api';
 import { DOCUMENT_MAX_BYTES } from '@/lib/constants';
 import { MODULE_COLOR } from '@/lib/module-colors';
-import type { DocumentMeta } from '@/types';
+import type { DocumentMeta, DocumentStorage } from '@/types';
 
 const mc = MODULE_COLOR.documents;
 const MAX_MB = DOCUMENT_MAX_BYTES / 1_000_000;
 
+const mb = (bytes: number) => (bytes / 1_000_000).toFixed(1);
+
+/**
+ * Whether the plan's knowledge-base allowance is spent.
+ *
+ * A `null` ceiling is an unmetered (admin) account, not a full one — so an
+ * undefined snapshot and a null limit both read as "not full" and let the
+ * server have the final say.
+ */
+const isFull = (storage: DocumentStorage | undefined) =>
+  storage !== undefined &&
+  ((storage.max_documents !== null && storage.documents >= storage.max_documents) ||
+    (storage.max_bytes !== null && storage.bytes >= storage.max_bytes));
+
 export default function DocumentsPage() {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
+  const [storage, setStorage] = useState<DocumentStorage | undefined>();
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -25,7 +40,12 @@ export default function DocumentsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setDocs(await api.listDocuments());
+      const [list, usage] = await Promise.all([
+        api.listDocuments(),
+        api.documentStorage(),
+      ]);
+      setDocs(list);
+      setStorage(usage);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Documents could not be loaded.');
     } finally {
@@ -102,6 +122,12 @@ export default function DocumentsPage() {
         <p className="text-sm text-muted">
           Upload your .txt or .md file (max {MAX_MB} MB)
         </p>
+        {storage && storage.max_documents !== null && storage.max_bytes !== null && (
+          <p className="text-micro text-muted">
+            {storage.documents} / {storage.max_documents} DOCUMENTS &middot;{' '}
+            {mb(storage.bytes)} / {mb(storage.max_bytes)} MB
+          </p>
+        )}
         <input
           ref={inputRef}
           type="file"
@@ -114,8 +140,9 @@ export default function DocumentsPage() {
           module="documents"
           onClick={() => inputRef.current?.click()}
           loading={uploading}
+          disabled={isFull(storage)}
         >
-          Upload Document
+          {isFull(storage) ? 'Storage Full' : 'Upload Document'}
         </Button>
       </div>
 

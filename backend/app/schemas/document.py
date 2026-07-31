@@ -13,4 +13,18 @@ class DocumentPublic(BaseModel):
     id: str
     filename: str
     chunk_count: int
+    size_bytes: int = 0
     created_at: datetime
+
+
+class DocumentStorage(BaseModel):
+    """A user's knowledge-base usage against their plan allowance.
+
+    ``max_documents``/``max_bytes`` are ``null`` for an unmetered (admin)
+    account, which means "no ceiling" -- not zero.
+    """
+
+    documents: int
+    bytes: int
+    max_documents: int | None
+    max_bytes: int | None

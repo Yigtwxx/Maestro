@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 from qdrant_client import models
@@ -17,6 +18,8 @@ from app.core.config import settings
 from app.core.constants import (
     DOCUMENT_CHUNK_OVERLAP,
     DOCUMENT_CHUNK_SIZE,
+    MEMORY_MAX_POINTS_PER_USER,
+    MEMORY_PRUNE_SCROLL_LIMIT,
     QDRANT_CONVERSATION_MEMORIES,
     QDRANT_DOCUMENT_CHUNKS,
     RAG_NO_RESULTS_NOTICE,
@@ -69,16 +72,81 @@ async def add_memory(
     metadata: dict[str, Any] | None = None,
     collection: str = QDRANT_CONVERSATION_MEMORIES,
 ) -> str:
-    """Embed and store a memory for a user. Returns the point id."""
+    """Embed and store a memory for a user. Returns the point id.
+
+    Conversation memories are capped per user (``MEMORY_MAX_POINTS_PER_USER``);
+    the oldest are trimmed after the write, so the newest memory always lands.
+    """
     await ensure_collection(collection)
     vectors = await embed_texts([text])
     point_id = str(uuid.uuid4())
-    payload = {"user_id": str(user_id), "text": text, **(metadata or {})}
+    payload = {
+        "user_id": str(user_id),
+        "text": text,
+        **(metadata or {}),
+        # Last on purpose: this is the prune's ordering key, so a caller's
+        # metadata must not be able to overwrite it.
+        "created_at": datetime.now(UTC).timestamp(),
+    }
     await get_qdrant_client().upsert(
         collection_name=collection,
         points=[models.PointStruct(id=point_id, vector=vectors[0], payload=payload)],
     )
+    if collection == QDRANT_CONVERSATION_MEMORIES:
+        await _prune_memories(user_id, collection)
     return point_id
+
+
+async def _prune_memories(user_id: uuid.UUID, collection: str) -> int:
+    """Drop this user's oldest points past the cap. Returns how many went.
+
+    Best-effort: a failed prune leaves the collection over its ceiling until the
+    next write, which is the right trade against losing the memory that was just
+    stored -- but it is logged, because a prune that fails every time is how an
+    unbounded collection comes back while looking capped.
+
+    Ordering is done here rather than by Qdrant because ``order_by`` needs a
+    payload index on ``created_at``, and building one is a schema commitment on
+    a collection that already exists in every deployment. Points written before
+    this cap carry no timestamp and sort oldest, which is what they are.
+    """
+    client = get_qdrant_client()
+    try:
+        total = (
+            await client.count(
+                collection_name=collection,
+                count_filter=_user_filter(user_id),
+                exact=True,
+            )
+        ).count
+        excess = total - MEMORY_MAX_POINTS_PER_USER
+        if excess <= 0:
+            return 0
+        points, _ = await client.scroll(
+            collection_name=collection,
+            scroll_filter=_user_filter(user_id),
+            limit=MEMORY_PRUNE_SCROLL_LIMIT,
+            with_payload=["created_at"],
+            with_vectors=False,
+        )
+        oldest_first = sorted(
+            points, key=lambda p: float((p.payload or {}).get("created_at") or 0.0)
+        )
+        doomed = [point.id for point in oldest_first[:excess]]
+        if not doomed:
+            return 0
+        await client.delete(
+            collection_name=collection,
+            points_selector=models.PointIdsList(points=doomed),
+        )
+        return len(doomed)
+    except Exception:  # noqa: BLE001 - never fail a stored memory over a trim
+        logger.warning(
+            "pruning conversation memories failed",
+            exc_info=True,
+            extra={"user_id": str(user_id)},
+        )
+        return 0
 
 
 async def retrieve_memories(

@@ -31,6 +31,7 @@ import type {
   DashboardMetrics,
   HumanCheckFields,
   DocumentMeta,
+  DocumentStorage,
   LLMProvider,
   MarketplaceItem,
   MarketplaceItemPreview,
@@ -858,6 +859,10 @@ export const api = {
 
   listDocuments() {
     return request<DocumentMeta[]>('/api/v1/documents');
+  },
+
+  documentStorage() {
+    return request<DocumentStorage>('/api/v1/documents/storage');
   },
 
   uploadDocument(file: File) {

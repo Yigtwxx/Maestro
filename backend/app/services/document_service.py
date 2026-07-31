@@ -8,6 +8,7 @@ vector collection (CLAUDE.md §10); lightweight metadata is kept in MongoDB
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +19,14 @@ from app.services import memory_service
 
 class DocumentError(ValueError):
     """Raised when a document cannot be ingested."""
+
+
+@dataclass(slots=True, frozen=True)
+class StorageUsage:
+    """What a user's knowledge base currently occupies."""
+
+    documents: int
+    bytes: int
 
 
 def _collection():
@@ -42,10 +51,32 @@ async def ingest(user_id: uuid.UUID, filename: str, content: bytes) -> dict[str,
         "user_id": str(user_id),
         "filename": filename,
         "chunk_count": chunk_count,
+        # Raw upload size, which is what the storage quota is denominated in.
+        # Recorded here rather than derived from ``chunk_count`` because the
+        # chunker overlaps and drops blank runs, so chunks are a lossy proxy.
+        "size_bytes": len(content),
         "created_at": datetime.now(UTC),
     }
     await _collection().insert_one(dict(document))
     return document
+
+
+async def storage_usage(user_id: uuid.UUID) -> StorageUsage:
+    """How many documents and bytes this user is holding.
+
+    Summed in Python over a projection rather than through an aggregation
+    pipeline: the row count is bounded by ``PLAN_MAX_DOCUMENTS``, so this reads
+    a few hundred integers at worst. Rows written before ``size_bytes`` existed
+    count as zero — they under-report rather than locking an early account out
+    of its own knowledge base, and the count cap still bounds them.
+    """
+    cursor = _collection().find({"user_id": str(user_id)}, {"_id": 0, "size_bytes": 1})
+    documents = 0
+    total = 0
+    async for doc in cursor:
+        documents += 1
+        total += int(doc.get("size_bytes") or 0)
+    return StorageUsage(documents=documents, bytes=total)
 
 
 async def list_documents(user_id: uuid.UUID) -> list[dict[str, Any]]:

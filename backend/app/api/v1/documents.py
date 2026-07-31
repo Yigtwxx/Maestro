@@ -17,9 +17,9 @@ from app.core.constants import (
     RATE_LIMIT_UPLOAD,
     RATE_LIMIT_WRITE,
 )
-from app.core.deps import ActiveUser
-from app.schemas.document import DocumentPublic
-from app.services import document_service
+from app.core.deps import ActiveUser, DbSession
+from app.schemas.document import DocumentPublic, DocumentStorage
+from app.services import document_service, quota_service
 from app.services.document_service import DocumentError
 from app.utils.rate_limiter import rate_limit
 
@@ -37,14 +37,31 @@ async def list_documents(user: ActiveUser) -> list[dict]:
     return await document_service.list_documents(user.id)
 
 
+@router.get("/storage", response_model=DocumentStorage, dependencies=[_read_rate_limit])
+async def document_storage(user: ActiveUser, db: DbSession) -> dict:
+    """Report the caller's knowledge-base usage against their plan allowance."""
+    snapshot = await quota_service.get_storage_snapshot(db, user)
+
+    return {
+        "documents": snapshot.documents,
+        "bytes": snapshot.bytes,
+        "max_documents": snapshot.max_documents,
+        "max_bytes": snapshot.max_bytes,
+    }
+
+
 @router.post(
     "",
     response_model=DocumentPublic,
     status_code=status.HTTP_201_CREATED,
     dependencies=[_upload_rate_limit],
 )
-async def upload_document(file: UploadFile, user: ActiveUser) -> dict:
-    """Upload a text/markdown document into the RAG knowledge base."""
+async def upload_document(file: UploadFile, user: ActiveUser, db: DbSession) -> dict:
+    """Upload a text/markdown document into the RAG knowledge base.
+
+    This is the only place a document can be stored, so it is where the plan's
+    storage allowance is enforced.
+    """
     filename = file.filename or "untitled.txt"
     ext = os.path.splitext(filename)[1].lower()
     if ext not in DOCUMENT_ALLOWED_EXTENSIONS:
@@ -66,6 +83,11 @@ async def upload_document(file: UploadFile, user: ActiveUser) -> dict:
     # Fallback for the rare case the multipart parser left size unknown.
     if len(content) > DOCUMENT_MAX_BYTES:
         raise too_large
+    # Measured against the body actually received, and checked before ingest so
+    # a refused upload spends no embedding calls.
+    await quota_service.enforce_can_upload_document(
+        db, user, incoming_bytes=len(content)
+    )
     try:
         return await document_service.ingest(user.id, filename, content)
     except DocumentError as exc:

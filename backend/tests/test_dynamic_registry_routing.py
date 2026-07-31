@@ -68,6 +68,10 @@ class _FakeColl:
     def __init__(self) -> None:
         self.inserted: dict | None = None
 
+    async def count_documents(self, criteria: dict) -> int:
+        # Owned-agent count, read by the CUSTOM_AGENTS_MAX check on create.
+        return 1 if self.inserted is not None else 0
+
     async def insert_one(self, doc: dict) -> None:
         self.inserted = doc
 

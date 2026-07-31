@@ -213,7 +213,7 @@ users         me (GET/PATCH), password, sessions (list/revoke/revoke-others),
 api-keys      list, create, delete
 tasks         create, get, cancel, answer, WS stream
 agents        CRUD, system-prompt patch
-documents     upload, list, delete
+documents     upload, list, delete, storage (usage vs plan allowance)
 marketplace   list, publish, install, reviews (submit/list), report
 billing       plans, subscription, subscribe, cancel, payment-method
 dashboard     metrics, token-usage, cost-summary, costs
@@ -261,6 +261,24 @@ one case the cap exists to stop. Any non-terminal status holds a slot, `AWAITING
 included: a paused task still owns a lease and an in-process runner. Nothing gets stuck,
 because the reconciliation sweep finalizes runs whose worker died. Admins are unmetered
 here as they are for quota, so the operator can still load-test.
+
+**Per-account storage.** A third axis, and the only one that costs the platform
+*after* a run ends: tokens meter monthly spend, concurrency meters simultaneity, and
+neither bounds what an account keeps forever. Three ceilings, each shaped by what it
+guards. Uploaded documents are per-plan (`PLAN_MAX_DOCUMENTS` / `PLAN_MAX_DOCUMENT_BYTES`,
+free 10 files / 10 MB up to scale 300 / 300 MB), enforced by
+`quota_service.enforce_can_upload_document` at the one route that can store one, after
+the body is read and before it is chunked — so a refusal costs no embedding calls. The
+byte cap is the load-bearing half: a plan's allowance costs roughly 3× itself in resident
+Qdrant memory, and the file count is only the legible face of it. Custom agents carry a
+flat `CUSTOM_AGENTS_MAX` at `agent_service.create_agent`, the single insert point, so a
+one-click marketplace install cannot route around the cap the wizard respects.
+`conversation_memories` — one point per completed task, growing even for an account that
+never uploads — is a ring buffer at `MEMORY_MAX_POINTS_PER_USER`: the newest write always
+lands and `_prune_memories` drops the oldest, best-effort and logged, because failing a
+stored memory over a trim is the worse trade. `document_chunks` needs no cap of its own,
+being bounded transitively by the byte quota. Admins are unmetered here as they are for
+quota and concurrency; a `None` ceiling means exactly that and must never be read as zero.
 
 **Tool escalation (agent-to-agent, not HITL).** When a subagent needs a tool it was
 not assigned, it emits a `request_tool` directive; the Main Agent LLM, acting as a

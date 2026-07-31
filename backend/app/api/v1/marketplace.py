@@ -29,6 +29,7 @@ from app.schemas.marketplace import (
     MarketplaceReviewSubmit,
 )
 from app.services import marketplace_service, moderation_service
+from app.services.agent_service import AgentValidationError
 from app.services.marketplace_service import (
     MarketplaceReviewForbiddenError,
     MarketplaceSecurityError,
@@ -100,8 +101,18 @@ async def get_item(item_id: str, user: ActiveUser) -> dict:
     dependencies=[_write_rate_limit],
 )
 async def install_item(item_id: str, user: ActiveUser) -> dict:
-    """Install an item into the caller's custom agents (one-click, CLAUDE.md §8)."""
-    agent = await marketplace_service.install(user.id, item_id)
+    """Install an item into the caller's custom agents (one-click, CLAUDE.md §8).
+
+    An install creates a custom agent like any other, so it can be refused by
+    the same ``CUSTOM_AGENTS_MAX`` cap. Translated here rather than left to the
+    central handler, which would report a full shelf as a server error.
+    """
+    try:
+        agent = await marketplace_service.install(user.id, item_id)
+    except AgentValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        ) from exc
     if agent is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Item not found."

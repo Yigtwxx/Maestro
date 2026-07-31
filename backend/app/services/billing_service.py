@@ -25,6 +25,8 @@ from app.core.constants import (
     BILLING_PERIOD_DAYS,
     PAYMENT_PROVIDER_MOCK,
     PLAN_MAX_CONCURRENT_TASKS,
+    PLAN_MAX_DOCUMENT_BYTES,
+    PLAN_MAX_DOCUMENTS,
     PLAN_MONTHLY_TOKEN_QUOTA,
     PLAN_PRICE_USD_CENTS,
     PROVIDER_COST_PER_1K_TOKENS,
@@ -217,6 +219,18 @@ def plan_concurrency_limit(plan: str) -> int:
     cap, and that is decided in ``quota_service``, not here.
     """
     return PLAN_MAX_CONCURRENT_TASKS[plan]
+
+
+def plan_document_limits(plan: str) -> tuple[int, int]:
+    """A plan's ``(max documents, max total bytes)`` knowledge-base allowance.
+
+    Returned as a pair because the two are one decision: the byte cap is what
+    actually bounds the vector store, and the count exists so the ceiling is
+    legible before a user has any feel for how large their notes are. Same
+    contract as ``plan_concurrency_limit`` -- no unlimited sentinel, and only
+    admins bypass it, decided in ``quota_service``.
+    """
+    return PLAN_MAX_DOCUMENTS[plan], PLAN_MAX_DOCUMENT_BYTES[plan]
 
 
 def is_unlimited_quota(quota_tokens: int) -> bool:
