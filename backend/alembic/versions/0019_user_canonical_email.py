@@ -24,6 +24,13 @@ column would be populated under one rule and enforced under another, and the
 index would reject addresses the app considers distinct. The rule also cannot be
 expressed in SQL, so this is a Python data migration by necessity.
 
+The backfill pages its reads and batches its writes. All (id, email) pairs are
+collected first (chunking the read to bound memory per round trip), then
+`unique_canonicals` is called once over the complete set — a per-chunk call
+would miss collisions that straddle chunk boundaries, and the unique index would
+then fail to prevent duplicates. The resulting updates are batched with
+executemany to reduce round trips.
+
 The test suite builds its schema with `Base.metadata.create_all` and never runs
 this file; only the CI smoke job does. Review it as SQL.
 """
@@ -33,6 +40,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 
 from alembic import op
+
 from app.utils.email_identity import unique_canonicals
 
 revision = "0019_user_canonical_email"
@@ -41,6 +49,7 @@ branch_labels = None
 depends_on = None
 
 _INDEX = "ix_users_canonical_email"
+_BACKFILL_CHUNK_SIZE = 1000
 
 
 def upgrade() -> None:
@@ -49,14 +58,39 @@ def upgrade() -> None:
     )
 
     conn = op.get_bind()
-    rows = conn.execute(sa.text("SELECT id, email FROM users")).all()
-    for row_id, canonical in unique_canonicals(
-        [(row.id, row.email) for row in rows]
-    ).items():
-        conn.execute(
-            sa.text("UPDATE users SET canonical_email = :canonical WHERE id = :id"),
-            {"canonical": canonical, "id": row_id},
-        )
+
+    # Collect all (id, email) pairs by chunking the read
+    all_pairs = []
+    offset = 0
+    while True:
+        rows = conn.execute(
+            sa.text(
+                "SELECT id, email FROM users ORDER BY id LIMIT :limit OFFSET :offset"
+            ),
+            {"limit": _BACKFILL_CHUNK_SIZE, "offset": offset},
+        ).all()
+        if not rows:
+            break
+        all_pairs.extend([(row.id, row.email) for row in rows])
+        offset += _BACKFILL_CHUNK_SIZE
+
+    # Call unique_canonicals once over the complete set
+    # (calling per-chunk would miss collisions that straddle chunk boundaries)
+    canonical_map = unique_canonicals(all_pairs)
+
+    # Batch the updates in chunks using executemany
+    for i in range(0, len(canonical_map), _BACKFILL_CHUNK_SIZE):
+        chunk_ids = list(canonical_map.keys())[i : i + _BACKFILL_CHUNK_SIZE]
+        if chunk_ids:
+            params = [
+                {"canonical": canonical_map[row_id], "id": row_id} for row_id in chunk_ids
+            ]
+            conn.execute(
+                sa.text(
+                    "UPDATE users SET canonical_email = :canonical WHERE id = :id"
+                ),
+                params,
+            )
 
     op.create_index(_INDEX, "users", ["canonical_email"], unique=True)
 
