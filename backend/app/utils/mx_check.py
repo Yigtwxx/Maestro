@@ -32,7 +32,11 @@ import dns.exception
 import dns.resolver
 
 from app.core.config import settings
-from app.core.constants import MX_CACHE_TTL_SECONDS, MX_LOOKUP_TIMEOUT_SECONDS
+from app.core.constants import (
+    MX_CACHE_MAX_ENTRIES,
+    MX_CACHE_TTL_SECONDS,
+    MX_LOOKUP_TIMEOUT_SECONDS,
+)
 from app.utils.email_identity import domain_of
 
 logger = logging.getLogger(__name__)
@@ -60,8 +64,20 @@ async def has_mx(email: str) -> bool:
     except dns.exception.DNSException as exc:
         # Deliberately not cached: extending one blip across the whole TTL
         # would turn a transient resolver hiccup into an hour of missing checks.
-        logger.warning("MX lookup failed for %s, admitting it: %s", domain, exc)
+        # The exception class is logged, never the domain: a bucket key travels
+        # through monitoring output the same way `login_throttle` warns about
+        # (CLAUDE.md §8), and a domain is PII-adjacent for the same reason.
+        logger.warning(
+            "MX lookup is failing open (%s); resolver may be degraded",
+            type(exc).__name__,
+        )
         return True
+    if len(_cache) >= MX_CACHE_MAX_ENTRIES:
+        # A flush, not LRU eviction: this cache is fed by an unauthenticated
+        # endpoint, so the simplest bound that cannot itself become a target is
+        # best. A cold cache costs one extra lookup per domain; LRU bookkeeping
+        # would add complexity to a structure an attacker can already fill.
+        _cache.clear()
     _cache[domain] = (time.monotonic() + MX_CACHE_TTL_SECONDS, deliverable)
     return deliverable
 

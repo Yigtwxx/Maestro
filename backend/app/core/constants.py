@@ -987,6 +987,11 @@ MX_LOOKUP_TIMEOUT_SECONDS = 1.0
 # answers are cached; a transient failure is not, or one blip would be extended
 # across the whole window.
 MX_CACHE_TTL_SECONDS = 3600.0
+# The cache is process-local and fed by an unauthenticated endpoint
+# (`/register`): a TTL alone bounds how long an entry lives, not how many can
+# accumulate before it expires, so an attacker posting a fresh random domain
+# per request grows it without limit. This bounds the entry count as well.
+MX_CACHE_MAX_ENTRIES = 4096
 
 # --- Document ingestion (RAG) ---
 # Character-based chunking (approximate; keeps ingestion dependency-free).

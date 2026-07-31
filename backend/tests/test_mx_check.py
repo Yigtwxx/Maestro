@@ -6,6 +6,7 @@ import dns.exception
 import dns.resolver
 import pytest
 
+from app.core.constants import MX_CACHE_MAX_ENTRIES
 from app.utils import mx_check
 
 
@@ -101,3 +102,16 @@ async def test_the_switch_skips_the_lookup_entirely(monkeypatch) -> None:  # noq
     monkeypatch.setattr(mx_check, "_resolve", _explode)
 
     assert await mx_check.has_mx("someone@gmial.invalid") is True
+
+
+async def test_the_cache_does_not_grow_without_bound(monkeypatch) -> None:  # noqa: ANN001
+    """An unauthenticated endpoint (`/register`) feeds this cache one domain per
+    request; without a ceiling it would retain an entry for the life of the
+    worker. More than `MX_CACHE_MAX_ENTRIES` distinct domains must never leave
+    the cache holding more than that many entries."""
+    monkeypatch.setattr(mx_check, "_resolve", _resolver(answers=["mx1"]))
+
+    for i in range(MX_CACHE_MAX_ENTRIES + 500):
+        await mx_check.has_mx(f"someone@domain-{i}.test")
+
+    assert len(mx_check._cache) <= MX_CACHE_MAX_ENTRIES
