@@ -50,6 +50,7 @@ from app.services import (
     email_service,
     two_factor_service,
 )
+from app.utils import login_throttle
 from app.utils.rate_limiter import rate_limit
 from app.utils.request_context import client_ip, user_agent
 
@@ -145,14 +146,28 @@ async def login(
     The refresh half of the pair leaves as an httpOnly cookie, never in the
     body. Captures the User-Agent and client IP so the session shows up
     recognisably under the profile's Active Sessions.
+
+    Throttled on two axes. `_auth_rate_limit` bounds requests per caller, which
+    on this unauthenticated route means per IP; `login_throttle.password` bounds
+    failures per *account*, which is the only one of the two that a stuffing run
+    spread over a botnet actually runs into.
     """
-    result = await db.execute(select(User).where(User.email == payload.email.lower()))
+    email = payload.email.lower()
+    await login_throttle.password.enforce(email)
+    result = await db.execute(select(User).where(User.email == email))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(payload.password, user.hashed_password):
+        # Unknown addresses are charged too, so the 429 cannot be read as
+        # "this account exists".
+        await login_throttle.password.record_failure(email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password.",
         )
+    # The password was right, so this account is not under a successful guessing
+    # run; clear it even when a second factor is still owed, since the MFA step
+    # keeps its own count.
+    await login_throttle.password.clear(email)
     if user.totp_enabled:
         # Password OK, but a second factor is required. Hand out a short-lived
         # interim token that only /login/totp accepts (it is not an access token).
@@ -175,21 +190,31 @@ async def login(
 async def login_totp(
     payload: TotpVerifyRequest, request: Request, response: Response, db: DbSession
 ) -> AccessTokenResponse:
-    """Complete a 2FA login: verify a TOTP (or recovery) code, issue tokens."""
+    """Complete a 2FA login: verify a TOTP (or recovery) code, issue tokens.
+
+    Carries its own per-account failure budget. Six digits are only 10^6 and
+    `TOTP_VALID_WINDOW` widens the accepting set further, so without one the
+    second factor would be the weakest half of a 2FA login — and reaching this
+    endpoint already proves the password is known.
+    """
     try:
         claims = decode_token(payload.mfa_token, expected_type="mfa")
         user_id = uuid.UUID(claims["sub"])
     except (jwt.InvalidTokenError, KeyError, ValueError) as exc:
         raise _INVALID_MFA from exc
 
+    subject = str(user_id)
+    await login_throttle.mfa.enforce(subject)
     user = await db.get(User, user_id)
     if user is None or not user.totp_enabled:
         raise _INVALID_MFA
     if not await two_factor_service.verify_login(db, user, payload.code):
+        await login_throttle.mfa.record_failure(subject)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid authentication code.",
         )
+    await login_throttle.mfa.clear(subject)
     pair = await auth_service.issue_token_pair(
         db, user, user_agent=user_agent(request), ip_address=client_ip(request)
     )

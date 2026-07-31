@@ -816,6 +816,23 @@ RATE_LIMIT_WEBSOCKET = RateLimitTier("websocket", 30, 60.0)
 RATE_LIMIT_METRICS = RateLimitTier("metrics", 12, 60.0)
 
 RATE_LIMIT_KEY_PREFIX = "rl"
+
+# --- Login attempt throttling (per account, not per caller) ---
+#
+# A different axis from every tier above. Those bound *requests per caller*, and
+# on an unauthenticated route the caller is an IP -- so a stuffing run spread
+# over a botnet spends one or two attempts per address against the target
+# account and never fills a bucket. These bound *failures per account*, whatever
+# address they arrive from. Only failures count and a success clears the record;
+# see `utils/login_throttle` for the enforcement and the lockout trade-off.
+#
+# Ten wrong passwords in fifteen minutes is well past a human who cannot recall
+# which one they used, and well below what makes a stuffing run worth mounting.
+LOGIN_FAILURE_BUDGET = RateLimitTier("login_fail", 10, 900.0)
+# The second factor is six digits, so its ceiling is set for guessing rather
+# than for typing. Reaching this endpoint already costs a correct password, so
+# it is the last barrier in front of a known-compromised credential.
+MFA_FAILURE_BUDGET = RateLimitTier("mfa_fail", 5, 900.0)
 # After a Redis error, serve from the in-memory fallback for this long before
 # probing Redis again. Without it every request pays a connect timeout.
 RATE_LIMIT_REDIS_COOLDOWN_SECONDS = 10.0

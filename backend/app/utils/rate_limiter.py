@@ -53,6 +53,19 @@ class RateLimitResult(NamedTuple):
     retry_after: float
 
 
+class WindowState(NamedTuple):
+    """How full a bucket is *without* recording a hit.
+
+    Read by callers that count something other than requests -- see
+    `utils.login_throttle`, which records only failures and so must be able to
+    ask "is this account blocked?" on an attempt that may well succeed.
+    """
+
+    count: int
+    # Seconds until the oldest hit leaves the window. Zero when the bucket is empty.
+    retry_after: float
+
+
 class BackendUnavailable(Exception):
     """The backing store could not serve the hit; the caller should fall back."""
 
@@ -63,6 +76,10 @@ class RateLimitBackend(Protocol):
     async def hit(
         self, key: str, limit: int, window_seconds: float
     ) -> RateLimitResult: ...
+
+    async def count(self, key: str, window_seconds: float) -> WindowState: ...
+
+    async def clear(self, key: str) -> None: ...
 
 
 # --- In-memory backend ----------------------------------------------------
@@ -106,6 +123,25 @@ class MemoryBackend:
             return RateLimitResult(False, 0, hits[0] + window_seconds - now)
         hits.append(now)
         return RateLimitResult(True, limit - len(hits), 0.0)
+
+    async def count(self, key: str, window_seconds: float) -> WindowState:
+        """How many hits `key` holds inside the window, recording nothing."""
+        now = time.monotonic()
+        bucket = self._buckets.get(key)
+        if bucket is None:
+            return WindowState(0, 0.0)
+
+        window_start = now - window_seconds
+        hits = bucket.hits
+        while hits and hits[0] < window_start:
+            hits.popleft()
+        if not hits:
+            return WindowState(0, 0.0)
+        return WindowState(len(hits), hits[0] + window_seconds - now)
+
+    async def clear(self, key: str) -> None:
+        """Drop one bucket."""
+        self._buckets.pop(key, None)
 
     def reset(self) -> None:
         """Drop every bucket (tests, and after a config change)."""
@@ -160,6 +196,26 @@ redis.call('PEXPIRE', KEYS[1], window)
 return {1, limit - count - 1, 0}
 """
 
+# Read-only twin of the script above: prunes the window and reports how full it
+# is, without recording anything. Returns {count, retry_after_ms}.
+#   KEYS[1] = bucket   ARGV[1] = now_ms   ARGV[2] = window_ms
+_WINDOW_COUNT_LUA = """
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, now - window)
+local count = redis.call('ZCARD', KEYS[1])
+if count == 0 then
+  return {0, 0}
+end
+
+local oldest = redis.call('ZRANGE', KEYS[1], 0, 0)
+local score = tonumber(redis.call('ZSCORE', KEYS[1], oldest[1]))
+local retry = math.ceil(score + window - now)
+if retry < 1 then retry = 1 end
+return {count, retry}
+"""
+
 _MILLISECONDS = 1000
 
 # Anything the Redis round trip can raise. `OSError` covers raw socket errors;
@@ -173,6 +229,7 @@ class RedisBackend:
     def __init__(self, client: Redis) -> None:
         self.client = client
         self._script = client.register_script(_SLIDING_WINDOW_LUA)
+        self._count_script = client.register_script(_WINDOW_COUNT_LUA)
 
     async def hit(self, key: str, limit: int, window_seconds: float) -> RateLimitResult:
         """Record a hit in Redis. Raises `BackendUnavailable` if Redis is down.
@@ -192,6 +249,25 @@ class RedisBackend:
         return RateLimitResult(
             bool(allowed), int(remaining), int(retry_ms) / _MILLISECONDS
         )
+
+    async def count(self, key: str, window_seconds: float) -> WindowState:
+        """Report how full `key` is. Raises `BackendUnavailable` if Redis is down."""
+        now_ms = int(time.time() * _MILLISECONDS)
+        window_ms = int(window_seconds * _MILLISECONDS)
+        try:
+            count, retry_ms = await self._count_script(
+                keys=[key], args=[now_ms, window_ms]
+            )
+        except _REDIS_ERRORS as exc:
+            raise BackendUnavailable(str(exc)) from exc
+        return WindowState(int(count), int(retry_ms) / _MILLISECONDS)
+
+    async def clear(self, key: str) -> None:
+        """Drop one bucket. Raises `BackendUnavailable` if Redis is down."""
+        try:
+            await self.client.delete(key)
+        except _REDIS_ERRORS as exc:
+            raise BackendUnavailable(str(exc)) from exc
 
 
 # --- Dispatcher -----------------------------------------------------------
@@ -217,18 +293,47 @@ class Limiter:
             try:
                 return await backend.hit(key, tier.max_requests, tier.window_seconds)
             except BackendUnavailable as exc:
-                # At most one line per cooldown window: the breaker below stops
-                # the next requests from even trying.
-                logger.warning(
-                    "Redis unavailable (%s); rate limiting falls back to "
-                    "process-local buckets for %.0fs",
-                    exc,
-                    RATE_LIMIT_REDIS_COOLDOWN_SECONDS,
-                )
-                self._redis_down_until = (
-                    time.monotonic() + RATE_LIMIT_REDIS_COOLDOWN_SECONDS
-                )
+                self._trip(exc)
         return await self._memory.hit(key, tier.max_requests, tier.window_seconds)
+
+    async def count(self, key: str, tier: RateLimitTier) -> WindowState:
+        """Report how full `key` is under `tier`'s window, recording nothing."""
+        backend = self._redis_backend()
+        if backend is not None:
+            try:
+                return await backend.count(key, tier.window_seconds)
+            except BackendUnavailable as exc:
+                self._trip(exc)
+        return await self._memory.count(key, tier.window_seconds)
+
+    async def clear(self, key: str) -> None:
+        """Forget `key` entirely (a successful login clearing its failures).
+
+        Both stores, not just the live one: a bucket may have been written to
+        memory while Redis was down, and a count left there would outlive the
+        success that was supposed to clear it.
+        """
+        await self._memory.clear(key)
+        backend = self._redis_backend()
+        if backend is not None:
+            try:
+                await backend.clear(key)
+            except BackendUnavailable as exc:
+                self._trip(exc)
+
+    def _trip(self, exc: BackendUnavailable) -> None:
+        """Open the breaker: serve from memory until the cooldown elapses.
+
+        At most one log line per cooldown window -- the breaker stops the next
+        requests from even trying.
+        """
+        logger.warning(
+            "Redis unavailable (%s); rate limiting falls back to "
+            "process-local buckets for %.0fs",
+            exc,
+            RATE_LIMIT_REDIS_COOLDOWN_SECONDS,
+        )
+        self._redis_down_until = time.monotonic() + RATE_LIMIT_REDIS_COOLDOWN_SECONDS
 
     def reset(self) -> None:
         """Forget all buckets and re-arm the Redis breaker (tests)."""

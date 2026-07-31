@@ -385,6 +385,31 @@ read that inbox. The residual is `/login`: registering a *free* address sets a p
 the caller knows, so a follow-up login still distinguishes the two cases. Closing that
 would mean gating login on verification, which the soft gate deliberately does not do.
 
+**Sign-in throttling.** Two axes, because a rate-limit bucket alone measures the wrong
+one. `rate_limit` keys by *caller identity*, which on an unauthenticated route is the
+client IP — so a credential-stuffing run spread over a botnet spends one or two attempts
+per address against the target account and never approaches `RATE_LIMIT_AUTH`, leaving
+guesses against any single account effectively unbounded. `utils/login_throttle` counts
+the other axis: failures per *account*, whatever address they arrive from
+(`LOGIN_FAILURE_BUDGET`, and `MFA_FAILURE_BUDGET` for the second factor, which is only
+10⁶ and sits behind an already-known password). It runs over the limiter's own buckets, so
+Redis, the in-memory fallback and the breaker are shared rather than duplicated, and it
+obeys `RATE_LIMIT_ENABLED` like every other throttle. Only failures are recorded and a
+success clears the record, so a user who mistypes twice and then succeeds is no closer to
+a block than one who signs in first try. The check runs *before* the password is verified,
+which is what makes it a block rather than a counter — and also keeps a blocked account
+from costing an Argon2 hash. The subject is hashed into the key: an address is PII and a
+bucket key travels through monitoring output that the address should not.
+
+The accepted trade-off is the classic one: an attacker who knows an address can spend the
+budget on deliberately wrong passwords and keep its owner out for the rest of the window.
+It is bounded three ways — the block is temporary rather than an administrative lock, it
+cannot be extended past one window (a bucket at its ceiling stops recording, so the block
+still lifts when the *oldest* failure ages out), and password reset stays open throughout
+because it is keyed by an emailed token rather than by these counters. Unknown addresses
+are throttled identically, or the 429 would answer the existence question the paragraph
+above works to keep closed.
+
 **General.** JWT on every non-public endpoint, including WebSockets. Rate limiting on
 every route. Pydantic validation on every input. In the single-origin production topology
 CORS does not apply; in split deployments only known origins are allowed. Secrets live in
