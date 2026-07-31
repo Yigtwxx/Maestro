@@ -47,3 +47,14 @@ def test_production_resend_without_api_key_refuses_to_boot() -> None:
             trust_proxy_headers=True,
             _env_file=None,
         )
+
+
+def test_email_hygiene_defaults_are_on() -> None:
+    """Both ship enabled. The MX check is safe as a default because it fails
+    open -- an unreachable resolver loses the check, not registration -- and the
+    disposable list is small and curated rather than a 100k-entry sweep."""
+    fresh = Settings(_env_file=None)
+
+    assert fresh.disposable_email_block_enabled is True
+    assert fresh.email_mx_check_enabled is True
+    assert fresh.disposable_domains_extra == ""

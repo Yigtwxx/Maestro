@@ -481,6 +481,36 @@ call stops registration silently. The provider and site key reach the browser fr
 `GET /auth/challenge` at request time, never as a `NEXT_PUBLIC_*` constant, so the built
 image stays deployment-agnostic exactly as `SITE_URL` does.
 
+**Email identity.** A third axis, and the one the other two cannot see: `mail_budget`
+bounds how much mail an inbox takes and `human_check` bounds how mechanically a form is
+submitted, but neither notices that `you+1@gmail.com`, `you+2@gmail.com` and
+`y.o.u@gmail.com` are one mailbox. `users.canonical_email` carries a unique index over the
+canonical form, so an account is bounded per *mailbox* rather than per typed string. The
+rule applies only to `EMAIL_CANONICAL_PROVIDERS` — `+` is a legal local-part character
+whose meaning belongs to the receiving server, and stripping it from an unknown domain
+would merge unrelated accounts. Enforcement is the index, never a `SELECT` before the
+`INSERT`: the collision surfaces as an `IntegrityError` and falls into the silent-duplicate
+branch `/register` already has, which is what keeps the endpoint free of both a TOCTOU
+window and the timing oracle the pre-hash ordering closes. Two exceptions ride on NULL,
+which a Postgres unique index does not conflict on — an operator's `GRANT_ADMIN_EMAILS`
+address (exempt from all three checks, as admins are unmetered for quota, concurrency and
+storage) and accounts that already collided when `0019` ran.
+
+The two domain-level checks beside it answer *visibly* with a 400, unlike every other
+control in this section, and the distinction is the point: a disposable provider and a
+domain with no MX are properties of the submitted domain alone, so neither answer can be
+turned into the account-existence oracle the fixed 202 exists to close. The disposable
+list is vendored and curated rather than fetched — a runtime lookup would break the
+zero-egress default — and privacy relays (`EMAIL_RELAY_DOMAINS`) are allowlisted ahead of
+it, because Apple Private Relay and its peers are permanent addresses belonging to
+precisely the users most careful about their data. The MX check is not an abuse control
+and does not pretend to be one: every burner provider has good MX records. It exists so
+hard bounces do not damage sender reputation, and it fails open on every DNS error.
+
+None of this bites while `EMAIL_VERIFICATION_REQUIRED` is off, and that is not a gap in
+the design but its precondition: without the gate an attacker needs no working inbox at
+all, only a well-formed address. Turn these on as one change with a real sender.
+
 **General.** JWT on every non-public endpoint, including WebSockets. Rate limiting on
 every route. Pydantic validation on every input. In the single-origin production topology
 CORS does not apply; in split deployments only known origins are allowed. Secrets live in
@@ -747,6 +777,15 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
   backend cannot set a build-time constant, so the pair is flipped together, exactly like
   `BILLING_ENABLED`/`BILLING_LIVE`. Nothing is removed meanwhile: `/verify-email`, the
   6-digit code and the resend endpoint all keep working for anyone who wants them.
+- `DISPOSABLE_EMAIL_BLOCK_ENABLED` / `DISPOSABLE_DOMAINS_EXTRA` / `EMAIL_MX_CHECK_ENABLED`
+  — the email-identity checks (§8). All ship **on**, unlike `CODE_EXECUTION_ENABLED` and
+  `CUSTOM_API_TOOLS_ENABLED`, because neither widens what the platform will reach out to:
+  one reads a vendored list and the other makes a DNS query that fails open. Each switch
+  is the per-control rollback. There is deliberately no switch for canonicalisation —
+  once the unique index exists, "off" would populate the column under one rule while the
+  index enforced another, which is not a coherent state. `DISPOSABLE_DOMAINS_EXTRA` merges
+  with the vendored list rather than replacing it, so an operator addition cannot silently
+  drop the built-in coverage.
 - `CAPTCHA_PROVIDER` / `CAPTCHA_SITE_KEY` / `CAPTCHA_SECRET_KEY` — the optional third
   layer in front of `/auth/register` and `/auth/forgot-password` (§8, "Signup abuse").
   `none` is the default and is **not** "unprotected": the honeypot, the challenge nonce
