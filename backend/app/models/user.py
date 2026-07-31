@@ -27,6 +27,18 @@ class User(Base, TimestampMixin):
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    # The canonical form of `email`: `you+1@gmail.com`, `you+2@gmail.com` and
+    # `y.o.u@gmail.com` all reduce to `you@gmail.com`, so the unique index here
+    # bounds accounts per *mailbox* rather than per typed string. Computed by
+    # `utils.email_hygiene.canonical_for_storage` at every write.
+    #
+    # Nullable, and the NULLs are load-bearing rather than incidental --
+    # Postgres unique indexes do not conflict on NULL, which is what carries
+    # both exceptions: an operator's admin address (exempt, so unbounded) and
+    # accounts that already collided when 0019 ran (grandfathered).
+    canonical_email: Mapped[str | None] = mapped_column(
+        String(320), unique=True, index=True, nullable=True, default=None
+    )
     hashed_password: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     # Profile personalization. The avatar is a client-rendered monogram, not an
