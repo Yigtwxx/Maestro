@@ -493,8 +493,18 @@ would merge unrelated accounts. Enforcement is the index, never a `SELECT` befor
 branch `/register` already has, which is what keeps the endpoint free of both a TOCTOU
 window and the timing oracle the pre-hash ordering closes. Two exceptions ride on NULL,
 which a Postgres unique index does not conflict on — an operator's `GRANT_ADMIN_EMAILS`
-address (exempt from all three checks, as admins are unmetered for quota, concurrency and
-storage) and accounts that already collided when `0019` ran.
+address (exempt from all three checks) and accounts that already collided when `0019` ran.
+The `GRANT_ADMIN_EMAILS` exemption is **claim-based**, not role-based, at registration:
+the caller holds no session yet, so `/register` can only compare the submitted string
+against the configured list — anyone who learns the operator's listed address inherits
+the exemption by typing `owner+1@…`, `owner+2@…`, and so on. That is a materially weaker
+guarantee than the unmetered-for-quota/concurrency/storage comparison this paragraph used
+to equate it with, since those all gate on the authenticated fact `user.role == ADMIN`.
+The practical consequence is that the listed address should be one an attacker is
+unlikely to guess or find, not a well-known support inbox. `POST /users/me/email` closes
+the gap the way the other caps do: it exempts on `user.role == ADMIN` as well, so an
+authenticated admin session skips hygiene regardless of whether that admin's own address
+happens to be on the list.
 
 The two domain-level checks beside it answer *visibly* with a 400, unlike every other
 control in this section, and the distinction is the point: a disposable provider and a

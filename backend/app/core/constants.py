@@ -960,8 +960,21 @@ EMAIL_SUBADDRESS_SEPARATOR = "+"
 
 # Forwarding/aliasing services. These are *permanent* addresses that real,
 # privacy-conscious users sign up with -- the opposite of disposable -- and are
-# checked before the blocklist so they can never be caught by it. Aliases here
-# are also never canonicalised: each one is a distinct destination.
+# checked before the blocklist so they can never be caught by it.
+#
+# This set and `EMAIL_CANONICAL_PROVIDERS` are independent -- `canonicalize`
+# never reads this one, so membership here says nothing about whether a
+# domain's sub-addresses are collapsed. The only invariant tying them together
+# is that they never overlap (enforced by
+# `test_email_hygiene.test_relays_and_canonical_providers_never_overlap`),
+# which is what keeps a relay's aliases from ever being merged into one
+# canonical mailbox.
+#
+# `icloud.com` is Apple's primary consumer domain, not a relay alias --
+# `privaterelay.appleid.com` is the actual relay. It is listed here anyway,
+# and deliberately: membership only ever means "never blocklisted", and
+# iCloud must never be treated as disposable regardless of which of the two
+# domains a message masks through.
 EMAIL_RELAY_DOMAINS: frozenset[str] = frozenset(
     {
         "privaterelay.appleid.com",
@@ -972,7 +985,6 @@ EMAIL_RELAY_DOMAINS: frozenset[str] = frozenset(
         "slmail.me",
         "aleeas.com",
         "mozmail.com",
-        "relay.firefox.com",
         "anonaddy.com",
         "anonaddy.me",
         "addy.io",
