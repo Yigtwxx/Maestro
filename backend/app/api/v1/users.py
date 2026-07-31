@@ -53,7 +53,7 @@ from app.services import (
     two_factor_service,
     user_service,
 )
-from app.utils import mail_budget
+from app.utils import email_hygiene, mail_budget
 from app.utils.rate_limiter import rate_limit
 from app.utils.request_context import summarize_user_agent
 
@@ -193,6 +193,11 @@ async def request_email_change(
     if new_email == user.email:
         # A no-op, answered identically so the response says nothing about it.
         return DetailResponse(detail=_EMAIL_CHANGE_ACCEPTED)
+
+    # Same domain-level admission as registration. Placed after the no-op check
+    # so re-submitting one's own address can never be refused by a list the
+    # account predates.
+    await email_hygiene.enforce(new_email)
 
     # Deliberately no uniqueness check: answering "that address is taken" here
     # would turn this endpoint into an account-existence oracle. A collision

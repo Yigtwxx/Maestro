@@ -421,6 +421,11 @@ async def _apply_email_change(db: DbSession, claimed) -> DetailResponse:  # noqa
     """Move the account onto its confirmed address and lock out old sessions."""
     user, new_email = claimed.user, claimed.new_email
     user.email = new_email
+    # The canonical form moves with the address. A collision here raises from
+    # the flush below and is answered 409 like any other -- no separate branch,
+    # because "another account already holds that mailbox" is the same fact
+    # whichever of the two indexes reports it.
+    user.canonical_email = email_hygiene.canonical_for_storage(new_email)
     # Stays verified: clicking this link is exactly the proof that the new
     # inbox is reachable.
     user.email_verified = True
