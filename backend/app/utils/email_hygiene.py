@@ -8,11 +8,14 @@ on existing accounts -- canonical uniqueness -- is deliberately not here: it is
 enforced by the `users.canonical_email` unique index, so it surfaces as an
 IntegrityError instead of a read-then-write with a timing oracle in front of it.
 
-Admin addresses skip everything, the same way `quota_service`, the concurrency
-cap and the storage caps run unmetered for admins so the operator can still
-load-test. The list is the existing `GRANT_ADMIN_EMAILS`; both sides of the
-comparison are canonicalised, which is what lets an operator listed once open
-unlimited `+loadtest` accounts.
+Admin addresses skip everything. At `/register`, the exemption is claim-based: an
+unauthenticated caller submits an email address and `enforce` compares the
+canonicalised form against `GRANT_ADMIN_EMAILS`. This is materially weaker than
+the authenticated check in `POST /users/me/email`: there, a second gate also runs
+on `user.role == UserRole.ADMIN`, a fact the session has already established,
+which is the same role-based gate `quota_service` and the concurrency and storage
+caps use for admins. At registration, anyone who learns the operator's listed
+address can inherit the exemption via `owner+1@`, `owner+2@`, and so on.
 """
 
 from __future__ import annotations

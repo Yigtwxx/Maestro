@@ -92,11 +92,10 @@ def test_relays_and_the_disposable_blocklist_never_overlap() -> None:
 
 
 def test_relays_and_canonical_providers_never_overlap() -> None:
-    """`disposable_domains.py`'s docstring and CLAUDE.md both claim relay
-    aliases are never canonicalised, but `canonicalize` only ever reads
-    `EMAIL_CANONICAL_PROVIDERS` -- it never consults `EMAIL_RELAY_DOMAINS` at
-    all. The claim holds only because the two sets happen not to overlap
-    today; this is the one thing enforcing that. If it ever fails, a relay
-    domain would silently start having its sub-addresses collapsed, merging
-    distinct privacy-relay mailboxes into one canonical form."""
+    """`canonicalize` reads only `EMAIL_CANONICAL_PROVIDERS` and never
+    consults `EMAIL_RELAY_DOMAINS`. If a domain were ever added to both sets,
+    its sub-addresses would silently start being merged into one account,
+    collapsing distinct privacy-relay mailboxes into a single canonical form
+    with no warning. This test is the only enforcement of the disjointness
+    that prevents that silent failure."""
     assert EMAIL_RELAY_DOMAINS.isdisjoint(EMAIL_CANONICAL_PROVIDERS)

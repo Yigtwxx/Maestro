@@ -133,7 +133,7 @@ jobs:
           # canonical address and must be grandfathered as NULL rather than
           # merged or arbitrarily assigned to one of them. `alice+work@gmail.com`
           # collides with nothing and must backfill normally.
-          psql -h localhost -U maestro -d maestro_migcheck <<'SQL'
+          psql -v ON_ERROR_STOP=1 -h localhost -U maestro -d maestro_migcheck <<'SQL'
           INSERT INTO users (
             id, email, hashed_password, created_at, updated_at,
             default_reviewer_enabled, totp_enabled, email_verified, role,
@@ -146,11 +146,11 @@ jobs:
 
           alembic upgrade head
 
-          you_canonical=$(psql -h localhost -U maestro -d maestro_migcheck -tAc \
+          you_canonical=$(psql -v ON_ERROR_STOP=1 -h localhost -U maestro -d maestro_migcheck -tAc \
             "SELECT canonical_email FROM users WHERE email = 'you@gmail.com'")
-          tag_canonical=$(psql -h localhost -U maestro -d maestro_migcheck -tAc \
+          tag_canonical=$(psql -v ON_ERROR_STOP=1 -h localhost -U maestro -d maestro_migcheck -tAc \
             "SELECT canonical_email FROM users WHERE email = 'y.o.u+tag@gmail.com'")
-          alice_canonical=$(psql -h localhost -U maestro -d maestro_migcheck -tAc \
+          alice_canonical=$(psql -v ON_ERROR_STOP=1 -h localhost -U maestro -d maestro_migcheck -tAc \
             "SELECT canonical_email FROM users WHERE email = 'alice+work@gmail.com'")
 
           # psql renders SQL NULL as an empty string with -tA, so a non-empty
