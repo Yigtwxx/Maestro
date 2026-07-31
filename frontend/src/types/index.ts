@@ -171,6 +171,33 @@ export interface MfaChallenge {
   mfa_token: string;
 }
 
+/**
+ * What a public form needs to render and submit, fetched at runtime.
+ *
+ * Deliberately not a build-time constant: a site key baked in as a
+ * `NEXT_PUBLIC_*` value would tie the built image to one deployment, the same
+ * reason `SITE_URL` is server-only. `provider === 'none'` means the CAPTCHA
+ * layer is off and nothing should be loaded from a third party.
+ */
+export interface CaptchaChallenge {
+  provider: 'none' | 'turnstile';
+  site_key: string;
+  nonce: string;
+}
+
+/**
+ * The anti-automation fields a public form submits alongside its own data.
+ *
+ * `website_url` is a honeypot: it is hidden from users and must stay empty.
+ * The backend answers a tripped submission with its normal success body, so
+ * nothing here changes what the caller sees.
+ */
+export interface HumanCheckFields {
+  website_url?: string;
+  challenge?: string;
+  captcha_token?: string;
+}
+
 /** When deletion was requested, and when it becomes irreversible. */
 export interface AccountDeletionStatus {
   deletion_requested_at: string;

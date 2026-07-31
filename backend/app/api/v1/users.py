@@ -53,6 +53,7 @@ from app.services import (
     two_factor_service,
     user_service,
 )
+from app.utils import mail_budget
 from app.utils.rate_limiter import rate_limit
 from app.utils.request_context import summarize_user_agent
 
@@ -202,8 +203,17 @@ async def request_email_change(
     )
     old_email = user.email
     await db.commit()
-    await email_service.send_email_change_verification(new_email, raw_token, raw_code)
-    await email_service.send_email_change_notice(old_email, new_email)
+    # Charged against the *target* address, not the caller's: this endpoint
+    # accepts an arbitrary `new_email`, so without a per-recipient budget one
+    # account is a mail cannon aimed at anyone -- and it is the only endpoint
+    # that can mail an address holding no account at all. The notice to the old
+    # address is charged separately, being a different inbox.
+    if await mail_budget.allow(new_email):
+        await email_service.send_email_change_verification(
+            new_email, raw_token, raw_code
+        )
+    if await mail_budget.allow(old_email):
+        await email_service.send_email_change_notice(old_email, new_email)
     return DetailResponse(detail=_EMAIL_CHANGE_ACCEPTED)
 
 

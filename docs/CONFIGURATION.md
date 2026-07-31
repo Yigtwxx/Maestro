@@ -132,6 +132,34 @@ environment variables.
 | `SITE_URL` | Base URL the backend uses to build verification / reset links | `http://localhost:3000` |
 | `EMAIL_VERIFICATION_REQUIRED` | Soft-gates task start, API-key creation and custom-API-tool writes until the email is verified. Ships off: the default `console` sender delivers nothing to an inbox, so an enforced gate would lock a fresh install rather than protect it. Enable it only alongside a real sender, and flip `EMAIL_VERIFICATION_LIVE` in `frontend/src/lib/legal/config.ts` with it | `false` |
 
+## Signup abuse protection
+
+Two protections guard the endpoints that send mail. Neither needs configuring.
+
+The **per-recipient mail budget** counts sends per *recipient* address and is
+always on — `rate_limit` keys by caller, and every one of these endpoints lets
+the caller choose who receives the mail, so a caller-keyed limit measures the
+wrong thing. The **anti-automation check** (honeypot plus a server-signed form
+challenge) guards the two unauthenticated endpoints, `/auth/register` and
+`/auth/forgot-password`; a CAPTCHA provider is an optional third layer on top.
+
+Rejections are silent by design: the endpoint answers with its normal success
+body, because those endpoints already guarantee a response that reveals nothing
+about whether an address exists. Watch `maestro_abuse_rejected_total{reason}` on
+`/metrics` — a silent rejection is invisible to the user, so that counter is the
+only place a false positive shows up.
+
+| Variable | Description | Default |
+|---|---|---|
+| `CAPTCHA_PROVIDER` | `none` or `turnstile`. `none` is not "unprotected": the honeypot and form-challenge layers still run and no third party is contacted. There is deliberately no production guard forcing a provider — requiring one would refuse to boot every self-hosted deployment, the same trap `EMAIL_VERIFICATION_REQUIRED` avoids by shipping off | `none` |
+| `CAPTCHA_SITE_KEY` | Cloudflare Turnstile site key. Served to the browser at runtime by `GET /api/v1/auth/challenge`, never baked into the frontend bundle, so turning a provider on needs no rebuild | — |
+| `CAPTCHA_SECRET_KEY` | Turnstile secret, used server-side only. Production refuses to boot if either key is empty while `CAPTCHA_PROVIDER=turnstile`: a provider that cannot verify fails closed on every call and stops registration silently | — |
+
+Turnstile verification **fails closed** — if Cloudflare is unreachable, the
+submission is refused. That costs nothing in practice: when siteverify is down
+the widget did not load for real users either, so they hold no token regardless,
+and failing open would relax the gate only for clients that never needed it.
+
 ## App & observability
 
 | Variable | Description | Default |

@@ -10,7 +10,24 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from app.core.constants import EMAIL_CODE_DIGITS, LLMProvider
 
 
-class RegisterRequest(BaseModel):
+class HumanCheckFields(BaseModel):
+    """The anti-automation fields every public form submits.
+
+    All optional on the wire so an older client and the suite's direct POSTs
+    still parse; `utils.human_check` decides what a missing value means.
+
+    `website_url` is the honeypot -- named to avoid browser autofill. A field
+    called `email`, `name`, `phone` or `company` would be filled by the browser
+    and would silently block a real user, whose only symptom is an account that
+    never appears.
+    """
+
+    website_url: str | None = Field(default=None, max_length=200)
+    challenge: str | None = Field(default=None, max_length=1024)
+    captcha_token: str | None = Field(default=None, max_length=4096)
+
+
+class RegisterRequest(HumanCheckFields):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     display_name: str | None = Field(default=None, max_length=120)
@@ -51,6 +68,19 @@ class MfaChallenge(BaseModel):
     mfa_token: str
 
 
+class CaptchaChallenge(BaseModel):
+    """What a public form needs to render and submit.
+
+    Served at request time rather than compiled into the frontend bundle: a site
+    key baked in as a NEXT_PUBLIC_* constant would tie the built image to one
+    deployment, the same reason SITE_URL is server-only.
+    """
+
+    provider: str
+    site_key: str
+    nonce: str
+
+
 class TotpVerifyRequest(BaseModel):
     """Second login step: the interim token plus a TOTP or recovery code."""
 
@@ -74,7 +104,7 @@ class VerifyEmailCodeRequest(BaseModel):
     )
 
 
-class ForgotPasswordRequest(BaseModel):
+class ForgotPasswordRequest(HumanCheckFields):
     email: EmailStr
 
 

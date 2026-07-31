@@ -10,11 +10,14 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.config import settings
 from app.core.constants import (
     MFA_TOKEN_EXPIRE_MINUTES,
     RATE_LIMIT_AUTH,
+    RATE_LIMIT_CHALLENGE,
     RATE_LIMIT_EMAIL_CODE,
     RATE_LIMIT_REFRESH,
+    SIGNUP_CHALLENGE_TTL_MINUTES,
     EmailTokenPurpose,
 )
 from app.core.cookies import (
@@ -33,6 +36,7 @@ from app.core.security import (
 from app.models.user import User
 from app.schemas.auth import (
     AccessTokenResponse,
+    CaptchaChallenge,
     DetailResponse,
     ForgotPasswordRequest,
     LoginRequest,
@@ -50,7 +54,7 @@ from app.services import (
     email_service,
     two_factor_service,
 )
-from app.utils import login_throttle
+from app.utils import human_check, login_throttle, mail_budget
 from app.utils.rate_limiter import rate_limit
 from app.utils.request_context import client_ip, user_agent
 
@@ -65,10 +69,52 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # one must produce byte-identical responses, or the endpoint is an oracle.
 _REGISTER_ACCEPTED = "Check your email — we've sent you the next step."
 
+# The challenge nonce is anonymous by construction: it is issued before anyone
+# has identified themselves, and a real subject here would be a session in
+# disguise -- something an unauthenticated caller could hand to an endpoint
+# that trusts `sub`.
+_CHALLENGE_SUBJECT = "anonymous"
+
+# Hoisted so the abuse-rejection early return and the normal return are the same
+# string by construction. Two copies of a body that must be byte-identical is a
+# bug waiting for someone to edit one of them.
+_FORGOT_PASSWORD_ACCEPTED = (
+    "If an account exists for that address, a reset link is on its way."
+)
+
 # Tighter limit on auth endpoints to slow credential stuffing and email
 # bombing. Mostly unauthenticated (keyed by client IP); resend-verification
 # carries a token and is keyed by user.
 _auth_rate_limit = rate_limit(RATE_LIMIT_AUTH, scope="auth")
+
+
+@router.get(
+    "/challenge",
+    response_model=CaptchaChallenge,
+    dependencies=[rate_limit(RATE_LIMIT_CHALLENGE, scope="challenge")],
+)
+async def challenge() -> CaptchaChallenge:
+    """Issue a form challenge for the public register and reset forms.
+
+    Its own rate-limit tier rather than the shared `auth` bucket, on the same
+    reasoning that gives /refresh one: rendering the register form spends a
+    challenge, so a user with the page open in several tabs must not be
+    throttled alongside credential stuffing.
+
+    The nonce grants nothing -- it only proves that some time passed between
+    fetching the form and submitting it, which is what breaks a one-shot POST
+    loop. The provider and site key travel with it so the frontend can learn
+    them at runtime instead of baking them into its bundle.
+    """
+    return CaptchaChallenge(
+        provider=settings.captcha_provider,
+        site_key=settings.captcha_site_key,
+        nonce=create_token(
+            _CHALLENGE_SUBJECT,
+            "challenge",
+            expires_delta=timedelta(minutes=SIGNUP_CHALLENGE_TTL_MINUTES),
+        ),
+    )
 
 
 @router.post(
@@ -77,7 +123,9 @@ _auth_rate_limit = rate_limit(RATE_LIMIT_AUTH, scope="auth")
     status_code=status.HTTP_202_ACCEPTED,
     dependencies=[_auth_rate_limit],
 )
-async def register(payload: RegisterRequest, db: DbSession) -> DetailResponse:
+async def register(
+    payload: RegisterRequest, request: Request, db: DbSession
+) -> DetailResponse:
     """Create a new user account.
 
     A fresh account is provisioned with an active FREE plan (unlimited tokens)
@@ -93,10 +141,13 @@ async def register(payload: RegisterRequest, db: DbSession) -> DetailResponse:
     know. Closing that needs login gated on verification, which the soft-gate
     design deliberately does not do.
 
-    This does mean /register can mail a victim repeatedly. The bound is the
-    per-IP _auth_rate_limit -- the same exposure /forgot-password carries by
-    design.
+    Repeated attempts against one address are bounded by `mail_budget`, which
+    counts sends per *recipient* -- the axis the per-IP limit cannot see, since
+    a run spread over a botnet never approaches that ceiling. An exhausted
+    budget suppresses the mail only; the account is still created.
     """
+    if not await human_check.passes(payload, client_ip(request)):
+        return DetailResponse(detail=_REGISTER_ACCEPTED)
     email = payload.email.lower()
     # Build the user -- and so hash the password -- before the branch, so
     # Argon2 dominates both paths and the duplicate case is not measurably
@@ -117,7 +168,7 @@ async def register(payload: RegisterRequest, db: DbSession) -> DetailResponse:
         # Re-read rather than trusting the payload: guards the narrow race
         # where the row vanished between the violation and here.
         existing = await db.scalar(select(User).where(User.email == email))
-        if existing is not None:
+        if existing is not None and await mail_budget.allow(existing.email):
             await email_service.send_registration_attempt(existing.email)
         return DetailResponse(detail=_REGISTER_ACCEPTED)
 
@@ -133,7 +184,12 @@ async def register(payload: RegisterRequest, db: DbSession) -> DetailResponse:
         db, user.id, EmailTokenPurpose.VERIFY_EMAIL, with_code=True
     )
     await db.commit()
-    await email_service.send_verification(email, raw_token, raw_code)
+    # Checked after the commit, so an exhausted window costs the mail and not
+    # the account. Refusing to create would let an attacker who keeps one
+    # address's bucket full deny that address registration indefinitely -- a
+    # better weapon than the flood being removed.
+    if await mail_budget.allow(email):
+        await email_service.send_verification(email, raw_token, raw_code)
     return DetailResponse(detail=_REGISTER_ACCEPTED)
 
 
@@ -422,7 +478,8 @@ async def resend_verification(user: CurrentUser, db: DbSession) -> DetailRespons
             db, user.id, EmailTokenPurpose.VERIFY_EMAIL, with_code=True
         )
         await db.commit()
-        await email_service.send_verification(user.email, raw_token, raw_code)
+        if await mail_budget.allow(user.email):
+            await email_service.send_verification(user.email, raw_token, raw_code)
     return DetailResponse(
         detail="If your email is unverified, a new link is on its way."
     )
@@ -435,7 +492,7 @@ async def resend_verification(user: CurrentUser, db: DbSession) -> DetailRespons
     dependencies=[_auth_rate_limit],
 )
 async def forgot_password(
-    payload: ForgotPasswordRequest, db: DbSession
+    payload: ForgotPasswordRequest, request: Request, db: DbSession
 ) -> DetailResponse:
     """Start a password reset. Always 202: the response must not reveal
     whether an account exists (enumeration resistance).
@@ -443,6 +500,8 @@ async def forgot_password(
     Works for deletion-locked accounts too -- they keep working credentials
     during the grace period by design, so they must be able to recover them.
     """
+    if not await human_check.passes(payload, client_ip(request)):
+        return DetailResponse(detail=_FORGOT_PASSWORD_ACCEPTED)
     result = await db.execute(select(User).where(User.email == payload.email.lower()))
     user = result.scalar_one_or_none()
     if user is not None:
@@ -453,10 +512,9 @@ async def forgot_password(
             db, user.id, EmailTokenPurpose.RESET_PASSWORD
         )
         await db.commit()
-        await email_service.send_password_reset(user.email, raw_token)
-    return DetailResponse(
-        detail="If an account exists for that address, a reset link is on its way."
-    )
+        if await mail_budget.allow(user.email):
+            await email_service.send_password_reset(user.email, raw_token)
+    return DetailResponse(detail=_FORGOT_PASSWORD_ACCEPTED)
 
 
 @router.post(

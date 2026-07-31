@@ -64,6 +64,15 @@ _SECONDS_PER_MINUTE = 60.0
 
 _ALERT_KINDS: tuple[str, ...] = ("readiness", "error_rate")
 
+# The label set for maestro_abuse_rejected_total. A fixed tuple, so cardinality
+# stays bounded -- the same constraint that keeps `path` off the HTTP counter.
+_ABUSE_REJECT_REASONS: tuple[str, ...] = (
+    "honeypot",
+    "challenge",
+    "captcha",
+    "mail_budget",
+)
+
 
 def worker_id() -> str:
     """Stable per-process series label: ``{hostname}-{pid}``."""
@@ -108,6 +117,7 @@ class Snapshot:
     ready: bool | None
     alerts_sent: dict[str, int]
     alerts_suppressed: dict[str, int]
+    abuse_rejected: dict[str, int]
 
     def to_json(self) -> str:
         """Serialise for the Redis snapshot key."""
@@ -124,6 +134,7 @@ class Snapshot:
                 "ready": self.ready,
                 "alerts_sent": self.alerts_sent,
                 "alerts_suppressed": self.alerts_suppressed,
+                "abuse_rejected": self.abuse_rejected,
             },
             separators=(",", ":"),
         )
@@ -154,6 +165,12 @@ class Snapshot:
             alerts_suppressed={
                 str(k): int(v) for k, v in data["alerts_suppressed"].items()
             },
+            # `.get` rather than `[...]`: a peer running the previous build has
+            # no such key, and raising here would drop that worker's whole
+            # snapshot -- every metric, not just this counter.
+            abuse_rejected={
+                str(k): int(v) for k, v in data.get("abuse_rejected", {}).items()
+            },
         )
 
 
@@ -171,6 +188,7 @@ class MetricsRegistry:
         self._ready: bool | None = None
         self._alerts_sent: dict[str, int] = dict.fromkeys(_ALERT_KINDS, 0)
         self._alerts_suppressed: dict[str, int] = dict.fromkeys(_ALERT_KINDS, 0)
+        self._abuse_rejected: dict[str, int] = dict.fromkeys(_ABUSE_REJECT_REASONS, 0)
         # (minute_epoch, total, server_errors), oldest first.
         self._window: deque[list[float]] = deque()
 
@@ -225,6 +243,15 @@ class MetricsRegistry:
         counter = self._alerts_sent if sent else self._alerts_suppressed
         counter[kind] = counter.get(kind, 0) + 1
 
+    def record_abuse_rejection(self, reason: str) -> None:
+        """Count one request dropped by a signup abuse-protection layer.
+
+        Those rejections are deliberately silent to the caller -- the endpoint
+        answers with its normal body -- so this counter is the only place a
+        false positive ever becomes visible.
+        """
+        self._abuse_rejected[reason] = self._abuse_rejected.get(reason, 0) + 1
+
     # --- Watchdog reads ---------------------------------------------------
 
     def error_rate_window(self, window_seconds: float) -> tuple[int, int]:
@@ -260,6 +287,7 @@ class MetricsRegistry:
             ready=self._ready,
             alerts_sent=dict(self._alerts_sent),
             alerts_suppressed=dict(self._alerts_suppressed),
+            abuse_rejected=dict(self._abuse_rejected),
         )
 
     def render(self, peers: Iterable[Snapshot] = ()) -> str:
@@ -289,6 +317,7 @@ class MetricsRegistry:
         self._ready = None
         self._alerts_sent = dict.fromkeys(_ALERT_KINDS, 0)
         self._alerts_suppressed = dict.fromkeys(_ALERT_KINDS, 0)
+        self._abuse_rejected = dict.fromkeys(_ABUSE_REJECT_REASONS, 0)
         self._window.clear()
 
 
@@ -391,6 +420,18 @@ def _readiness_up(snapshot: Snapshot) -> list[str]:
     return [f"maestro_readiness_up{labels} {int(snapshot.ready)}"]
 
 
+def _abuse_rejections(snapshot: Snapshot) -> list[str]:
+    """One series per rejection reason, including reasons that never fired."""
+    lines = []
+    for reason in _ABUSE_REJECT_REASONS:
+        labels = _labels((("worker", snapshot.worker), ("reason", reason)))
+        lines.append(
+            f"maestro_abuse_rejected_total{labels} "
+            f"{snapshot.abuse_rejected.get(reason, 0)}"
+        )
+    return lines
+
+
 def _alerts(counter_name: str, attribute: str) -> _Renderer:
     """Build the renderer for one alert counter family."""
 
@@ -461,6 +502,14 @@ _FAMILIES: tuple[_Family, ...] = (
         "counter",
         "Operator alerts suppressed by the dedupe cooldown, by kind.",
         _alerts("maestro_alerts_suppressed_total", "alerts_suppressed"),
+    ),
+    _Family(
+        "maestro_abuse_rejected_total",
+        "counter",
+        "Requests dropped by a signup abuse-protection layer, by reason. Those "
+        "are answered with a normal response body, so this counter is the only "
+        "signal that a layer fired.",
+        _abuse_rejections,
     ),
 )
 

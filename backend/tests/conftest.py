@@ -60,6 +60,7 @@ from app.services import (  # noqa: E402
 )
 from app.services.alerts import get_alert_channels  # noqa: E402
 from app.services.email import EmailMessage  # noqa: E402
+from app.utils import human_check  # noqa: E402
 from app.utils.rate_limiter import limiter  # noqa: E402
 
 _test_engine = create_async_engine(
@@ -174,6 +175,24 @@ def rate_limited(_no_rate_limit, monkeypatch):
     limiter.reset()
     yield limiter
     limiter.reset()
+
+
+async def _always_human(payload, remote_ip):  # noqa: ANN001, ANN202
+    """Stand-in for ``human_check.passes`` that admits every submission."""
+    return True
+
+
+@pytest.fixture(autouse=True)
+def _human_check_off(monkeypatch):
+    """Public-form anti-automation is opt-in per test, like ``_no_rate_limit``.
+
+    The challenge nonce is minted server-side with a real ``iat`` and is only
+    valid after ``SIGNUP_MIN_FORM_SECONDS``, so a test that wanted to present a
+    genuine one would have to sleep for two seconds -- per registration. Tests
+    that exercise these layers live in ``test_human_check.py`` and restore the
+    real function themselves.
+    """
+    monkeypatch.setattr(human_check, "passes", _always_human)
 
 
 @pytest.fixture(autouse=True)

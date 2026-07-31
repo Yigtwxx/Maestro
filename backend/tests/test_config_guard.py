@@ -269,3 +269,27 @@ def test_code_execution_defaults_off() -> None:
     assert settings.code_execution_enabled is False, (
         "CODE_EXECUTION_ENABLED must default to false — see config.py"
     )
+
+
+def test_turnstile_without_keys_is_refused() -> None:
+    """A provider that cannot verify is worse than no provider at all.
+
+    `none` degrades honestly to the honeypot and nonce layers. `turnstile` with
+    no secret fails closed on every call, so registration silently stops
+    working -- refuse the boot instead of discovering it from support tickets.
+    """
+    with pytest.raises(ValidationError, match="CAPTCHA_SECRET_KEY"):
+        _prod(captcha_provider="turnstile", captcha_site_key="0x4AAA")
+
+
+def test_turnstile_with_both_keys_boots() -> None:
+    _prod(
+        captcha_provider="turnstile",
+        captcha_site_key="0x4AAA",
+        captcha_secret_key="0x4BBB",
+    )
+
+
+def test_unknown_captcha_provider_is_refused() -> None:
+    with pytest.raises(ValidationError, match="CAPTCHA_PROVIDER"):
+        _make(captcha_provider="recaptcha")

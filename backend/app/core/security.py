@@ -44,7 +44,12 @@ def verify_password(password: str, hashed: str) -> bool:
 # "mfa" is a short-lived interim token issued between the password check and the
 # TOTP step; it is NOT accepted by the access-token guard (type mismatch), so it
 # can never be used to call the API — only to complete the second login factor.
-TokenType = Literal["access", "refresh", "mfa"]
+#
+# "challenge" is an anonymous, short-lived nonce handed to a public form by
+# GET /auth/challenge and presented back on submit. It has no account and grants
+# nothing; `expected_type` is what stops an access or refresh token -- which
+# every signed-in caller already holds -- being passed off as one.
+TokenType = Literal["access", "refresh", "mfa", "challenge"]
 
 
 def create_token(

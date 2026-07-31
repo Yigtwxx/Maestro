@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 import pytest
@@ -335,3 +336,34 @@ async def test_metrics_path_is_not_access_logged(client, monkeypatch, caplog) ->
 
     records = [record for record in caplog.records if record.name == "maestro.access"]
     assert records == [], records
+
+
+def test_abuse_rejections_render_one_series_per_reason() -> None:
+    """Bounded label set, like the alert `kind` label and unlike a path."""
+    metrics.record_abuse_rejection("honeypot")
+    metrics.record_abuse_rejection("honeypot")
+    metrics.record_abuse_rejection("mail_budget")
+
+    body = metrics.render()
+
+    assert "# TYPE maestro_abuse_rejected_total counter" in body
+    assert 'maestro_abuse_rejected_total{worker="' in body
+    assert 'reason="honeypot"} 2' in body
+    assert 'reason="mail_budget"} 1' in body
+    # Reasons that never fired still emit a zero series, so a dashboard panel
+    # exists before the first rejection rather than appearing mid-incident.
+    assert 'reason="captcha"} 0' in body
+
+
+def test_snapshot_from_a_peer_without_the_field_still_loads() -> None:
+    """A rolling restart runs mixed builds.
+
+    `from_json` raising costs that worker's entire series -- every metric, not
+    just this counter -- so an older peer must degrade to zeros.
+    """
+    older = json.loads(metrics.snapshot().to_json())
+    del older["abuse_rejected"]
+
+    restored = Snapshot.from_json(json.dumps(older))
+
+    assert restored.abuse_rejected == {}

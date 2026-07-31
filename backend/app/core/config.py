@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from app.core.constants import DATA_FETCH_ENGINES
+from app.core.constants import CAPTCHA_PROVIDERS, DATA_FETCH_ENGINES
 
 # Development-only placeholders. Rejected at startup when ENVIRONMENT=production
 # (see Settings._guard_production_secrets). Kept as the field defaults below so
@@ -303,6 +303,21 @@ class Settings(BaseSettings):
     # cannot read this setting. Verification emails go out either way.
     email_verification_required: bool = False
 
+    # --- Signup abuse protection ---
+    # "none" (the default) runs the honeypot and challenge-nonce layers only, so
+    # a self-hosted instance needs no third-party account and sends no bytes to
+    # Cloudflare -- the same "empty means fully off with zero egress" contract
+    # SENTRY_DSN follows. "turnstile" adds server-side token verification.
+    #
+    # There is deliberately NO production guard forcing a provider: requiring
+    # one would refuse to boot every self-hosted deployment, which is the trap
+    # EMAIL_VERIFICATION_REQUIRED avoids by shipping off. Configuring a provider
+    # *is* the enable. What production does refuse is a provider that cannot
+    # work -- see _guard_production_secrets.
+    captcha_provider: str = "none"
+    captcha_site_key: str = ""
+    captcha_secret_key: str = ""
+
     # --- Free / local model (Ollama, OpenAI-compatible) ---
     free_model_endpoint: str = "http://localhost:11434/v1"
     free_model_name: str = "qwen3.5:9b"
@@ -549,6 +564,21 @@ class Settings(BaseSettings):
             raise ValueError(f"DATA_FETCH_ENGINE must be one of: {allowed}")
         return normalized
 
+    @field_validator("captcha_provider")
+    @classmethod
+    def _check_captcha_provider(cls, value: str) -> str:
+        """Reject a typo'd provider name at boot rather than at first signup.
+
+        Unlike the production guard below this runs in every environment: an
+        unrecognised name would otherwise resolve to "no provider I know" at the
+        first registration, long after the operator thought they enabled one.
+        """
+        normalized = value.strip().lower()
+        if normalized not in CAPTCHA_PROVIDERS:
+            allowed = ", ".join(sorted(CAPTCHA_PROVIDERS))
+            raise ValueError(f"CAPTCHA_PROVIDER must be one of: {allowed}")
+        return normalized
+
     @field_validator("alert_webhook_url")
     @classmethod
     def _check_alert_webhook_url(cls, value: str) -> str:
@@ -601,6 +631,16 @@ class Settings(BaseSettings):
             )
         if self.email_provider == "resend" and not self.resend_api_key:
             problems.append("RESEND_API_KEY must be set when EMAIL_PROVIDER=resend")
+        if self.captcha_provider == "turnstile" and not (
+            self.captcha_site_key and self.captcha_secret_key
+        ):
+            # A provider that cannot verify is worse than no provider: it fails
+            # closed on every call, so registration stops working silently.
+            # "none" is the honest way to run without one.
+            problems.append(
+                "CAPTCHA_SITE_KEY and CAPTCHA_SECRET_KEY must be set when "
+                "CAPTCHA_PROVIDER=turnstile"
+            )
         if not self.refresh_cookie_is_secure:
             # The cookie *is* the session. Without Secure it rides plain HTTP
             # to any host that can be reached over the same origin name.

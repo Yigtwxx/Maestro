@@ -837,6 +837,35 @@ MFA_FAILURE_BUDGET = RateLimitTier("mfa_fail", 5, 900.0)
 # probing Redis again. Without it every request pays a connect timeout.
 RATE_LIMIT_REDIS_COOLDOWN_SECONDS = 10.0
 
+# --- Signup abuse protection ---
+CAPTCHA_PROVIDER_NONE = "none"
+CAPTCHA_PROVIDER_TURNSTILE = "turnstile"
+CAPTCHA_PROVIDERS = frozenset({CAPTCHA_PROVIDER_NONE, CAPTCHA_PROVIDER_TURNSTILE})
+
+# Cloudflare's server-side token verification endpoint. A constant of ours,
+# never model- or user-supplied, so like every other connected-API host it has
+# no SSRF surface and deliberately does not go through url_guard.
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+# Challenge fetches sit outside the shared `auth` bucket for the same reason
+# /refresh does: rendering the register form spends one, so a user opening it in
+# several tabs must not be throttled alongside credential stuffing.
+RATE_LIMIT_CHALLENGE = RateLimitTier("challenge", 30, 60.0)
+
+# Outbound mail per *recipient* address per hour, shared by every endpoint that
+# can mail an address its caller chose. Keyed by recipient rather than by caller
+# because it is the inbox being protected -- POST /users/me/email proves the two
+# need not be the same party. Three covers a real user who registers, mistypes
+# and retries, and is far below what makes a mailbox unusable.
+MAIL_SEND_BUDGET = RateLimitTier("mail_send", 3, 3600.0)
+
+# A submission faster than this was not typed by a human. Only a floor is
+# needed: the ceiling is the challenge nonce's own `exp`.
+SIGNUP_MIN_FORM_SECONDS = 2.0
+# Long enough to fill a form slowly, short enough that a harvested batch of
+# nonces expires before it is useful.
+SIGNUP_CHALLENGE_TTL_MINUTES = 30
+
 # --- Document ingestion (RAG) ---
 # Character-based chunking (approximate; keeps ingestion dependency-free).
 DOCUMENT_CHUNK_SIZE = 1000

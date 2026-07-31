@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -13,6 +13,7 @@ import { useAuthStore } from '@/stores/auth';
 import { toast } from '@/stores/toast';
 import { cn } from '@/lib/cn';
 import { MODULE_COLOR } from '@/lib/module-colors';
+import type { CaptchaChallenge } from '@/types';
 
 // Delay before redirecting on success so the "access granted" sweep reads.
 const GRANTED_SWEEP_MS = 200;
@@ -31,6 +32,28 @@ export default function RegisterPage() {
   // Shown when auto-login did not go through. Says nothing about whether
   // the address was already registered — that is the whole point.
   const [pending, setPending] = useState(false);
+  // Anti-automation state. `challenge` is fetched rather than built in: the
+  // provider and site key are runtime values so the image stays deployment-
+  // agnostic, and the nonce proves time passed between render and submit.
+  const [challenge, setChallenge] = useState<CaptchaChallenge | undefined>();
+  const [websiteUrl, setWebsiteUrl] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    api
+      .challenge()
+      .then((next) => {
+        if (active) setChallenge(next);
+      })
+      .catch(() => {
+        // A failed fetch must not brick the form. The submit is rejected
+        // server-side and the user lands on the same neutral screen a bot
+        // would -- better than disabling the button on a transient error.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const fail = (message: string) => {
     setError(message);
@@ -46,7 +69,10 @@ export default function RegisterPage() {
     }
     setLoading(true);
     try {
-      await api.register(email, password, displayName || undefined);
+      await api.register(email, password, displayName || undefined, {
+        website_url: websiteUrl,
+        challenge: challenge?.nonce,
+      });
     } catch (err) {
       fail(err instanceof ApiError ? err.message : 'Registration failed.');
       setLoading(false);
@@ -105,6 +131,22 @@ export default function RegisterPage() {
         ) : (
         <>
         <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-4">
+          {/*
+            Honeypot: hidden from people, filled by naive scrapers. Named to
+            avoid browser autofill -- a field called email, name, phone or
+            company would be filled for a real user, whose only symptom would
+            be an account that never appears.
+          */}
+          <input
+            type="text"
+            name="website_url"
+            value={websiteUrl}
+            onChange={(e) => setWebsiteUrl(e.target.value)}
+            autoComplete="off"
+            tabIndex={-1}
+            aria-hidden="true"
+            className="hidden"
+          />
           <Input
             label="Display name (optional)"
             value={displayName}

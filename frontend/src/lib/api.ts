@@ -23,11 +23,13 @@ import type {
   CustomApiToolTestResult,
   AgentList,
   ApiKeyPublic,
+  CaptchaChallenge,
   CardInput,
   CostBreakdown,
   CostGroupBy,
   CostSummary,
   DashboardMetrics,
+  HumanCheckFields,
   DocumentMeta,
   LLMProvider,
   MarketplaceItem,
@@ -311,10 +313,28 @@ export const api = {
    * registered — the endpoint deliberately reveals nothing — so this response
    * must never be branched on to infer whether an account was created.
    */
-  register(email: string, password: string, display_name?: string) {
+  register(
+    email: string,
+    password: string,
+    display_name?: string,
+    guard?: HumanCheckFields,
+  ) {
     return request<{ detail: string }>('/api/v1/auth/register', {
       method: 'POST',
-      body: { email, password, display_name },
+      body: { email, password, display_name, ...guard },
+      auth: false,
+    });
+  },
+
+  /**
+   * Fetch the form challenge for a public form.
+   *
+   * Public, and on its own rate-limit tier: rendering the register page spends
+   * one, so it must not share the bucket that guards credential stuffing.
+   */
+  challenge() {
+    return request<CaptchaChallenge>('/api/v1/auth/challenge', {
+      method: 'GET',
       auth: false,
     });
   },
@@ -436,10 +456,10 @@ export const api = {
   },
 
   /** Always resolves 202 — the response never reveals account existence. */
-  forgotPassword(email: string) {
+  forgotPassword(email: string, guard?: HumanCheckFields) {
     return request<{ detail: string }>('/api/v1/auth/forgot-password', {
       method: 'POST',
-      body: { email },
+      body: { email, ...guard },
       auth: false,
     });
   },

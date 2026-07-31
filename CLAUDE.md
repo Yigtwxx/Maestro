@@ -410,6 +410,44 @@ because it is keyed by an emailed token rather than by these counters. Unknown a
 are throttled identically, or the 429 would answer the existence question the paragraph
 above works to keep closed.
 
+**Signup abuse.** Two protections on different axes, because the endpoints that send
+mail differ in who can reach them. `utils/mail_budget` counts sends per *recipient*
+address over the limiter's own buckets — the axis `rate_limit` cannot see, since it keys
+by caller and all four of these endpoints let the caller choose the recipient.
+`POST /users/me/email` is the sharpest of them: it takes an arbitrary `new_email` behind
+a session, so without a per-recipient budget one account is a mail cannon aimed at
+anyone, and it is also the only endpoint that can mail an address holding no account at
+all. `utils/human_check` adds honeypot, a server-signed challenge nonce and an optional
+CAPTCHA to the two *unauthenticated* endpoints only; `/users/me/email` and
+`/auth/resend-verification` already sit behind a session, which is the stronger gate.
+
+Every rejection is silent — the endpoint answers with its normal fixed body. A 429 or a
+"captcha failed" would break the byte-identical response `/register` already guarantees
+*and* tell an automated client which layer caught it, which is the one piece of
+information needed to tune around it. The cost is that a false positive is invisible to
+the user, which is why each rejection increments `maestro_abuse_rejected_total{reason}`;
+that counter is the only place the false-positive rate can be seen, and it is what keeps
+these layers falsifiable rather than merely reassuring.
+
+At `/register` an exhausted budget suppresses the *mail* and still creates the account.
+Refusing the request would hand back a better weapon than the one removed: keeping one
+address's bucket full would deny that address registration indefinitely.
+
+The challenge nonce is the weakest layer and is not pretending otherwise — a client that
+fetches `/auth/challenge`, waits two seconds and posts defeats it. Its value is breaking
+the one-shot `curl` loop and forcing the attacker to hold state. It is minted by
+`create_token` under its own `"challenge"` type, and `expected_type` is load-bearing:
+without it any valid access token would satisfy the check, and every signed-in caller
+already holds one.
+
+`CAPTCHA_PROVIDER` defaults to `none` and there is deliberately no production guard
+forcing a provider — requiring one would refuse to boot every self-hosted deployment,
+the trap `EMAIL_VERIFICATION_REQUIRED` avoids by shipping off. What production does
+refuse is `turnstile` with a missing key, because a provider that fails closed on every
+call stops registration silently. The provider and site key reach the browser from
+`GET /auth/challenge` at request time, never as a `NEXT_PUBLIC_*` constant, so the built
+image stays deployment-agnostic exactly as `SITE_URL` does.
+
 **General.** JWT on every non-public endpoint, including WebSockets. Rate limiting on
 every route. Pydantic validation on every input. In the single-origin production topology
 CORS does not apply; in split deployments only known origins are allowed. Secrets live in
@@ -676,6 +714,16 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
   backend cannot set a build-time constant, so the pair is flipped together, exactly like
   `BILLING_ENABLED`/`BILLING_LIVE`. Nothing is removed meanwhile: `/verify-email`, the
   6-digit code and the resend endpoint all keep working for anyone who wants them.
+- `CAPTCHA_PROVIDER` / `CAPTCHA_SITE_KEY` / `CAPTCHA_SECRET_KEY` — the optional third
+  layer in front of `/auth/register` and `/auth/forgot-password` (§8, "Signup abuse").
+  `none` is the default and is **not** "unprotected": the honeypot, the challenge nonce
+  and the per-recipient mail budget all still run, and no third party is contacted —
+  the `SENTRY_DSN` zero-egress contract. There is no guard forcing a provider in
+  production, for the `EMAIL_VERIFICATION_REQUIRED` reason; the guard that does exist
+  refuses `turnstile` with an empty key, because a provider that fails closed on every
+  call stops registration without saying so. The site key is served by
+  `GET /auth/challenge` rather than compiled in, so enabling one needs no frontend
+  rebuild.
 - `SENTRY_DSN` / `FRONTEND_SENTRY_DSN` — two separate projects. Empty means fully off with
   zero egress; the frontend SDK chunk is never even downloaded.
 - `DATA_FETCH_ENGINE` — `scrapling` (default) or `httpx`. The httpx path is the
