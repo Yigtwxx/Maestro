@@ -41,7 +41,6 @@ import type {
   MarketplaceReviewList,
   MarketplaceStatus,
   MfaChallenge,
-  PaymentMethodPublic,
   PlanPublic,
   PlanPublicListing,
   RecoveryCodes,
@@ -607,12 +606,9 @@ export const api = {
     });
   },
 
+  /** Carries `payment_method` inline, so the card needs no second call. */
   getSubscription() {
     return request<SubscriptionPublic>('/api/v1/billing/subscription');
-  },
-
-  getPaymentMethod() {
-    return request<PaymentMethodPublic | undefined>('/api/v1/billing/payment-method');
   },
 
   /** The card number is sent once and never persisted client-side. */
