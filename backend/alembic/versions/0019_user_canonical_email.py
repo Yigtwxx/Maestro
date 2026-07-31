@@ -78,19 +78,17 @@ def upgrade() -> None:
     # (calling per-chunk would miss collisions that straddle chunk boundaries)
     canonical_map = unique_canonicals(all_pairs)
 
-    # Batch the updates in chunks using executemany
-    for i in range(0, len(canonical_map), _BACKFILL_CHUNK_SIZE):
-        chunk_ids = list(canonical_map.keys())[i : i + _BACKFILL_CHUNK_SIZE]
-        if chunk_ids:
-            params = [
-                {"canonical": canonical_map[row_id], "id": row_id} for row_id in chunk_ids
-            ]
-            conn.execute(
-                sa.text(
-                    "UPDATE users SET canonical_email = :canonical WHERE id = :id"
-                ),
-                params,
-            )
+    # Batch the updates in chunks using executemany. Built once outside the
+    # loop -- rebuilding `list(canonical_map.keys())` on every iteration would
+    # make this pass O(n^2 / chunk_size) in Python for no reason.
+    canonical_items = list(canonical_map.items())
+    for i in range(0, len(canonical_items), _BACKFILL_CHUNK_SIZE):
+        chunk = canonical_items[i : i + _BACKFILL_CHUNK_SIZE]
+        params = [{"canonical": canonical, "id": row_id} for row_id, canonical in chunk]
+        conn.execute(
+            sa.text("UPDATE users SET canonical_email = :canonical WHERE id = :id"),
+            params,
+        )
 
     op.create_index(_INDEX, "users", ["canonical_email"], unique=True)
 

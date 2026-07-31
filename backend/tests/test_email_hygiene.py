@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from app.core.config import settings
+from app.core.constants import EMAIL_CANONICAL_PROVIDERS, EMAIL_RELAY_DOMAINS
+from app.utils.disposable_domains import DISPOSABLE_EMAIL_DOMAINS
 from app.utils.email_hygiene import canonical_for_storage, is_disposable, is_exempt
 
 
@@ -79,3 +81,22 @@ def test_an_ordinary_address_stores_its_canonical(monkeypatch) -> None:  # noqa:
     monkeypatch.setattr(settings, "grant_admin_emails", "")
 
     assert canonical_for_storage("You+tag@Gmail.com") == "you@gmail.com"
+
+
+def test_relays_and_the_disposable_blocklist_never_overlap() -> None:
+    """If this ever fails, a domain both allowlisted as a privacy relay and
+    blocklisted as disposable would be blocked -- `is_disposable` checks the
+    relay set first, but only a passing test keeps a future edit to either set
+    from creating a domain that is both."""
+    assert DISPOSABLE_EMAIL_DOMAINS.isdisjoint(EMAIL_RELAY_DOMAINS)
+
+
+def test_relays_and_canonical_providers_never_overlap() -> None:
+    """`disposable_domains.py`'s docstring and CLAUDE.md both claim relay
+    aliases are never canonicalised, but `canonicalize` only ever reads
+    `EMAIL_CANONICAL_PROVIDERS` -- it never consults `EMAIL_RELAY_DOMAINS` at
+    all. The claim holds only because the two sets happen not to overlap
+    today; this is the one thing enforcing that. If it ever fails, a relay
+    domain would silently start having its sub-addresses collapsed, merging
+    distinct privacy-relay mailboxes into one canonical form."""
+    assert EMAIL_RELAY_DOMAINS.isdisjoint(EMAIL_CANONICAL_PROVIDERS)

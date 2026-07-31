@@ -109,6 +109,67 @@ jobs:
       - name: Schema matches models
         run: alembic check
 
+      # The 0019 backfill is a one-shot, irreversible data migration: it reads
+      # whatever rows already exist and decides, in Python, which ones collide
+      # under the new canonical rule. Its only production run is the first
+      # real one -- every other gate in this workflow, including "Apply
+      # migrations from scratch" above, runs the whole chain against an empty
+      # `users` table, so the read loop returns zero rows and the write loop's
+      # chunking, its single `unique_canonicals` call, and the NULL-on-
+      # collision behaviour have never executed against real data. This step
+      # downgrades one revision, seeds a colliding pair plus a non-colliding
+      # row, re-runs the migration, and asserts the documented outcome so a
+      # regression here fails CI instead of surfacing on the first real
+      # deploy.
+      - name: Backfill grandfathers colliding accounts
+        env:
+          PGPASSWORD: maestro
+        run: |
+          set -euo pipefail
+
+          alembic downgrade 0018_free_plan
+
+          # `you@gmail.com` and `y.o.u+tag@gmail.com` reduce to the same
+          # canonical address and must be grandfathered as NULL rather than
+          # merged or arbitrarily assigned to one of them. `alice+work@gmail.com`
+          # collides with nothing and must backfill normally.
+          psql -h localhost -U maestro -d maestro_migcheck <<'SQL'
+          INSERT INTO users (
+            id, email, hashed_password, created_at, updated_at,
+            default_reviewer_enabled, totp_enabled, email_verified, role,
+            default_tracing_enabled
+          ) VALUES
+            (gen_random_uuid(), 'you@gmail.com', 'placeholder', now(), now(), false, false, false, 'user', false),
+            (gen_random_uuid(), 'y.o.u+tag@gmail.com', 'placeholder', now(), now(), false, false, false, 'user', false),
+            (gen_random_uuid(), 'alice+work@gmail.com', 'placeholder', now(), now(), false, false, false, 'user', false);
+          SQL
+
+          alembic upgrade head
+
+          you_canonical=$(psql -h localhost -U maestro -d maestro_migcheck -tAc \
+            "SELECT canonical_email FROM users WHERE email = 'you@gmail.com'")
+          tag_canonical=$(psql -h localhost -U maestro -d maestro_migcheck -tAc \
+            "SELECT canonical_email FROM users WHERE email = 'y.o.u+tag@gmail.com'")
+          alice_canonical=$(psql -h localhost -U maestro -d maestro_migcheck -tAc \
+            "SELECT canonical_email FROM users WHERE email = 'alice+work@gmail.com'")
+
+          # psql renders SQL NULL as an empty string with -tA, so a non-empty
+          # result here means the collision was NOT grandfathered.
+          if [ -n "$you_canonical" ]; then
+            echo "expected you@gmail.com to be grandfathered NULL, got '$you_canonical'"
+            exit 1
+          fi
+          if [ -n "$tag_canonical" ]; then
+            echo "expected y.o.u+tag@gmail.com to be grandfathered NULL, got '$tag_canonical'"
+            exit 1
+          fi
+          if [ "$alice_canonical" != "alice@gmail.com" ]; then
+            echo "expected alice+work@gmail.com to backfill to alice@gmail.com, got '$alice_canonical'"
+            exit 1
+          fi
+
+          echo "backfill behaved as documented: collisions grandfathered, non-colliding row backfilled"
+
   frontend:
     name: Frontend (lint + type-check + build)
     runs-on: ubuntu-latest
