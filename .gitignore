@@ -72,6 +72,8 @@ desktop.ini
 CLAUDE.local.md
 # Transient quality-sweep working notes: verbatim prompts and model output.
 OVERNIGHT-QUALITY-REPORT.md
+# Pre-launch readiness audit: a working checklist, not a document about the product.
+LAUNCH_GAP_ANALYSIS.md
 
 # --- Docker volumes (local data) ---
 .data/
@@ -82,6 +84,8 @@ OVERNIGHT-QUALITY-REPORT.md
 
 # Superpowers SDD scratch (plans/specs live under docs/, this is transient)
 .superpowers/
+# Same tooling's notes written under docs/: transient, and not part of the site.
+/docs/superpowers/
 
 # --- Documentation site (MkDocs) ---
 # Build output.
