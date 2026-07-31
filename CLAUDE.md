@@ -670,11 +670,20 @@ tree with every check green. `no-unused-vars` stays at `warn` (Next's own overri
 generated locks and must never be edited by hand. Regenerate with:
 
 ```bash
-uv pip compile --universal --python-version 3.11 --generate-hashes requirements.in -o requirements.txt
+uv pip compile requirements.in -o requirements.txt --universal --python-version 3.11 --generate-hashes --custom-compile-command "uv pip compile requirements.in -o requirements.txt --universal --python-version 3.11 --generate-hashes"
+uv pip compile requirements-dev.in -o requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.txt --custom-compile-command "uv pip compile requirements-dev.in -o requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.txt"
 ```
 
-CI regenerates the locks and fails the PR if they drift. Frontend versions are pinned
-exactly (`.npmrc` sets `save-exact=true`); install with `npm ci`.
+Copy those two lines exactly, `--custom-compile-command` included. uv writes the invoking
+command into the lock's first comment line, so regenerating with the same resolution but a
+different *argument order* rewrites that header — a one-line diff in a file CI compares
+byte-for-byte. The flag pins the header independently of how the command was typed, which
+is why `.github/workflows/ci.yml` passes it and why a shorter form that resolves
+identically still fails the gate.
+
+CI regenerates both locks with exactly these commands and fails the PR if they drift.
+Frontend versions are pinned exactly (`.npmrc` sets `save-exact=true`); install with
+`npm ci`.
 
 ---
 
