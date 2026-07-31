@@ -958,6 +958,27 @@ EMAIL_CANONICAL_PROVIDERS: dict[str, tuple[bool, str]] = {
 # The sub-address separator every provider above uses.
 EMAIL_SUBADDRESS_SEPARATOR = "+"
 
+# Forwarding/aliasing services. These are *permanent* addresses that real,
+# privacy-conscious users sign up with -- the opposite of disposable -- and are
+# checked before the blocklist so they can never be caught by it. Aliases here
+# are also never canonicalised: each one is a distinct destination.
+EMAIL_RELAY_DOMAINS: frozenset[str] = frozenset(
+    {
+        "privaterelay.appleid.com",
+        "icloud.com",
+        "duck.com",
+        "simplelogin.com",
+        "simplelogin.io",
+        "slmail.me",
+        "aleeas.com",
+        "mozmail.com",
+        "relay.firefox.com",
+        "anonaddy.com",
+        "anonaddy.me",
+        "addy.io",
+    }
+)
+
 # --- Document ingestion (RAG) ---
 # Character-based chunking (approximate; keeps ingestion dependency-free).
 DOCUMENT_CHUNK_SIZE = 1000

@@ -282,6 +282,15 @@ class Settings(BaseSettings):
     # GRANT_ADMIN_EMAILS=... and any --email flags on top.
     grant_admin_emails: str = ""
 
+    # --- Email identity hygiene ---
+    # Refuse registration from known throwaway providers. On by default: the
+    # curated list is small and errs toward well-known burner services, and the
+    # per-control rollback is this switch rather than a code change.
+    disposable_email_block_enabled: bool = True
+    # Operator additions to the vendored list (comma-separated domains), merged
+    # with it rather than replacing it.
+    disposable_domains_extra: str = ""
+
     # --- Transactional email ---
     # "console" logs messages (dev/self-host default, zero dependencies);
     # "resend" sends through the Resend HTTP API. Send failures never fail the
