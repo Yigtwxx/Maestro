@@ -247,6 +247,21 @@ Agent's pre-planning discovery pass by `max_discovery_calls` (default 2). Each g
 raises tool *variety*, never call *volume* — the per-tool and total `max_tool_calls`
 caps still bound executions.
 
+**Per-account concurrency.** Those bounds cap one run; `PLAN_MAX_CONCURRENT_TASKS`
+(free 1, starter 1, pro 3, scale 5) caps how many an account may hold at once. It is a
+different axis from the token quota, which bounds monthly *spend* and says nothing about
+simultaneity: without it the only ceiling was `RATE_LIMIT_EXPENSIVE` ×
+`task_timeout_seconds`, i.e. hundreds of concurrent runs per account, each fanning out to
+subagents, outbound fetches and — where enabled — sandbox containers. Enforcement lives in
+`task_run_store.create_run`, the single insert point for a run header, *inside* the
+transaction that writes it and serialized per user by a row lock on `users`. A count in
+the route handler would be a TOCTOU window several awaits wide, and a burst of
+simultaneous starts would each observe the pre-insert count and all pass — which is the
+one case the cap exists to stop. Any non-terminal status holds a slot, `AWAITING_ANSWER`
+included: a paused task still owns a lease and an in-process runner. Nothing gets stuck,
+because the reconciliation sweep finalizes runs whose worker died. Admins are unmetered
+here as they are for quota, so the operator can still load-test.
+
 **Tool escalation (agent-to-agent, not HITL).** When a subagent needs a tool it was
 not assigned, it emits a `request_tool` directive; the Main Agent LLM, acting as a
 gatekeeper, autonomously grants or denies it. This is distinct from the §12

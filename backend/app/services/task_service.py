@@ -173,10 +173,31 @@ async def start_task(
     api_key: str | None,
     base_url: str | None = None,
     model: str | None = None,
+    max_concurrent: int | None = None,
 ) -> str:
-    """Create a task session and launch the orchestration in the background."""
+    """Create a task session and launch the orchestration in the background.
+
+    ``max_concurrent`` bounds the user's in-flight runs; the run header is
+    reserved *before* the Mongo session document so a refusal leaves nothing
+    behind. Raises ``task_run_store.ConcurrencyLimitReached`` when the cap is
+    already met.
+    """
     task_id = str(uuid.uuid4())
     now = datetime.now(UTC)
+
+    # Durable run header: authoritative status + ownership lease + resume
+    # deadline. Written first because it is the concurrency gate -- and because
+    # Postgres is the authority here and Mongo the projection.
+    deadline_at = now + timedelta(seconds=settings.task_timeout_seconds)
+    await task_run_store.create_run(
+        task_id=task_id,
+        user_id=user_id,
+        payload=payload.model_dump(mode="json"),
+        provider=payload.provider.value,
+        deadline_at=deadline_at,
+        max_active=max_concurrent,
+    )
+
     document = {
         "task_id": task_id,
         "user_id": str(user_id),
@@ -193,16 +214,6 @@ async def start_task(
         "updated_at": now,
     }
     await _sessions_collection().insert_one(document)
-
-    # Durable run header: authoritative status + ownership lease + resume deadline.
-    deadline_at = now + timedelta(seconds=settings.task_timeout_seconds)
-    await task_run_store.create_run(
-        task_id=task_id,
-        user_id=user_id,
-        payload=payload.model_dump(mode="json"),
-        provider=payload.provider.value,
-        deadline_at=deadline_at,
-    )
 
     rc = task_engine.TaskRunContext(
         task_id=task_id,

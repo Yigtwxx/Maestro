@@ -28,7 +28,13 @@ from app.schemas.task import (
     TaskState,
     TaskSummary,
 )
-from app.services import agent_service, quota_service, task_service, trace_service
+from app.services import (
+    agent_service,
+    quota_service,
+    task_run_store,
+    task_service,
+    trace_service,
+)
 from app.utils.rate_limiter import rate_limit
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -119,6 +125,7 @@ async def start_task(
     This is the only place a task can begin, so it is where quota is enforced.
     """
     await quota_service.enforce_can_start_task(db, user)
+    concurrency_limit = await quota_service.resolve_task_concurrency_limit(db, user)
     # A custom agent selector must name an agent the caller owns (per-user
     # isolation); the syntax was already checked by the schema validator.
     if payload.domain and is_custom_domain(payload.domain):
@@ -164,13 +171,20 @@ async def start_task(
         }
     )
     creds = await _resolve_credentials(db, user.id, provider)
-    task_id = await task_service.start_task(
-        user_id=user.id,
-        payload=payload,
-        api_key=creds.secret,
-        base_url=creds.base_url,
-        model=creds.model,
-    )
+    try:
+        task_id = await task_service.start_task(
+            user_id=user.id,
+            payload=payload,
+            api_key=creds.secret,
+            base_url=creds.base_url,
+            model=creds.model,
+            max_concurrent=concurrency_limit,
+        )
+    except task_run_store.ConcurrencyLimitReached as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=quota_service.CONCURRENCY_LIMIT_DETAIL.format(limit=exc.limit),
+        ) from exc
     return TaskCreated(task_id=task_id, status=TaskStatus.PENDING)
 
 

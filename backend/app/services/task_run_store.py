@@ -18,17 +18,26 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 
 from app.core.constants import RESUMABLE_TASK_STATUSES, TaskStatus
 from app.core.database import SessionLocal
 from app.models.task_run import TaskRun
+from app.models.user import User
 
 # Identifies this process as a run owner: "host:pid:8hex". The random suffix
 # distinguishes two workers that share a host+pid across a fast restart.
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
 _RESUMABLE_VALUES = tuple(s.value for s in RESUMABLE_TASK_STATUSES)
+
+
+class ConcurrencyLimitReached(Exception):
+    """The user already holds as many in-flight runs as their plan allows."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(f"concurrent task limit of {limit} reached")
+        self.limit = limit
 
 
 @dataclass(slots=True)
@@ -67,10 +76,42 @@ async def create_run(
     payload: dict,
     provider: str,
     deadline_at: datetime,
+    max_active: int | None = None,
 ) -> None:
-    """Insert the run header for a freshly started task (owned by this worker)."""
+    """Insert the run header for a freshly started task (owned by this worker).
+
+    ``max_active`` caps how many non-terminal runs the user may hold at once
+    (``None`` = no cap; see ``PLAN_MAX_CONCURRENT_TASKS``). It is enforced here
+    rather than in the route because this is the *only* insert point for a run
+    header: a count in the handler would leave a TOCTOU window several awaits
+    wide, and a burst of simultaneous starts would each observe the pre-insert
+    count and all pass -- which is exactly the case the cap exists to stop.
+    The count and the insert therefore share one transaction, serialized per
+    user by a row lock on ``users``. Locking the ``task_runs`` rows instead
+    would not work: there is nothing to lock when the count is zero, and no gap
+    lock stops a concurrent INSERT.
+
+    Raises ``ConcurrencyLimitReached`` (nothing is written) when the cap is hit.
+    """
     now = datetime.now(UTC)
     async with SessionLocal() as db:
+        if max_active is not None:
+            # SQLite (tests) has no row locks and renders no FOR UPDATE, which
+            # is harmless there: it serializes writers process-wide anyway.
+            await db.execute(
+                select(User.id).where(User.id == user_id).with_for_update()
+            )
+            active = await db.scalar(
+                select(func.count())
+                .select_from(TaskRun)
+                .where(
+                    TaskRun.user_id == user_id,
+                    TaskRun.status.in_(_RESUMABLE_VALUES),
+                )
+            )
+            if (active or 0) >= max_active:
+                await db.rollback()
+                raise ConcurrencyLimitReached(max_active)
         db.add(
             TaskRun(
                 task_id=task_id,

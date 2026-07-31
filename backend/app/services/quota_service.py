@@ -15,7 +15,11 @@ from dataclasses import dataclass
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.constants import TASK_TOKEN_BUDGET_DEFAULT, UserRole
+from app.core.constants import (
+    TASK_TOKEN_BUDGET_DEFAULT,
+    SubscriptionPlan,
+    UserRole,
+)
 from app.core.database import SessionLocal
 from app.models.user import User
 from app.services import billing_service, usage_service
@@ -28,6 +32,12 @@ logger = logging.getLogger(__name__)
 INACTIVE_DETAIL = "Your plan is inactive. Contact support to restore access."
 QUOTA_EXHAUSTED_DETAIL = (
     "Monthly token quota exhausted. Upgrade your plan or wait for renewal."
+)
+# Names the ceiling and the two ways out, because unlike the quota message this
+# one is transient: the user is not out of allowance, just out of slots.
+CONCURRENCY_LIMIT_DETAIL = (
+    "Your plan allows {limit} task(s) at a time and you are already running "
+    "that many. Wait for one to finish, cancel it, or upgrade your plan."
 )
 
 
@@ -92,6 +102,24 @@ async def enforce_can_start_task(db: AsyncSession, user: User) -> None:
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
             detail=QUOTA_EXHAUSTED_DETAIL,
         )
+
+
+async def resolve_task_concurrency_limit(db: AsyncSession, user: User) -> int | None:
+    """How many tasks this user may hold in flight; ``None`` means no ceiling.
+
+    Only unmetered (admin) accounts get ``None`` -- the operator has to be able
+    to exercise and load-test the platform. A user with no subscription row
+    resolves to the FREE ceiling rather than to "unlimited": the caller has
+    already refused an inactive plan, so reaching this branch means something
+    is wrong, and the strictest cap is the safe reading of it.
+    """
+    if is_unmetered(user):
+        return None
+    subscription = await billing_service.get_subscription(db, user.id)
+    plan = (
+        subscription.plan if subscription is not None else SubscriptionPlan.FREE.value
+    )
+    return billing_service.plan_concurrency_limit(plan)
 
 
 async def resolve_task_token_budget(user_id: uuid.UUID) -> int:

@@ -24,6 +24,7 @@ from app.core.constants import (
     ACTIVE_SUBSCRIPTION_STATUSES,
     BILLING_PERIOD_DAYS,
     PAYMENT_PROVIDER_MOCK,
+    PLAN_MAX_CONCURRENT_TASKS,
     PLAN_MONTHLY_TOKEN_QUOTA,
     PLAN_PRICE_USD_CENTS,
     PROVIDER_COST_PER_1K_TOKENS,
@@ -205,6 +206,17 @@ async def cost_summary(user_id: uuid.UUID) -> dict[str, Any]:
 def plan_quota(plan: str) -> int:
     """Monthly token allowance for a plan (UNLIMITED_TOKEN_QUOTA = no ceiling)."""
     return PLAN_MONTHLY_TOKEN_QUOTA[plan]
+
+
+def plan_concurrency_limit(plan: str) -> int:
+    """How many tasks a plan may hold in flight at once.
+
+    Deliberately has no unlimited sentinel: every plan carries a real ceiling,
+    so there is no negative value a caller could do arithmetic on by mistake
+    (the trap ``is_unlimited_quota`` exists to close). Only admins bypass the
+    cap, and that is decided in ``quota_service``, not here.
+    """
+    return PLAN_MAX_CONCURRENT_TASKS[plan]
 
 
 def is_unlimited_quota(quota_tokens: int) -> bool:

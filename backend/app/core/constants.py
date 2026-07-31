@@ -449,6 +449,21 @@ PLAN_MONTHLY_TOKEN_QUOTA: dict[str, int] = {
     SubscriptionPlan.SCALE.value: 10_000_000,
 }
 
+# How many non-terminal tasks one account may hold at once. This is a
+# *concurrency* bound, not a monthly allowance: the token quota above caps how
+# much an account spends over a period, and says nothing about how much it may
+# run simultaneously. One task fans out to subagents, outbound fetches and --
+# where enabled -- sandbox containers, so without this the only ceiling was
+# RATE_LIMIT_EXPENSIVE x task_timeout_seconds, which admits hundreds of
+# concurrent runs per account. Enforced at the single run-header insert
+# (task_run_store.create_run), not in the route, so the check cannot be raced.
+PLAN_MAX_CONCURRENT_TASKS: dict[str, int] = {
+    SubscriptionPlan.FREE.value: 1,
+    SubscriptionPlan.STARTER.value: 1,
+    SubscriptionPlan.PRO.value: 3,
+    SubscriptionPlan.SCALE.value: 5,
+}
+
 PLAN_PRICE_USD_CENTS: dict[str, int] = {
     SubscriptionPlan.FREE.value: 0,
     SubscriptionPlan.STARTER.value: 500,
