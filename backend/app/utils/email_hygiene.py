@@ -20,7 +20,7 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 
 from app.core.config import settings
-from app.core.constants import EMAIL_RELAY_DOMAINS, EMAIL_SUBADDRESS_SEPARATOR
+from app.core.constants import EMAIL_RELAY_DOMAINS
 from app.core.metrics import metrics
 from app.utils import mx_check
 from app.utils.disposable_domains import DISPOSABLE_EMAIL_DOMAINS
@@ -52,34 +52,16 @@ def is_disposable(email: str) -> bool:
     return domain in DISPOSABLE_EMAIL_DOMAINS or domain in _extra_domains()
 
 
-def _admin_key(email: str) -> str:
-    """Canonical form for the admin-exemption comparison specifically.
-
-    `canonicalize` only folds a sub-address on `EMAIL_CANONICAL_PROVIDERS` --
-    correct for merging two *strangers'* accounts, where an unlisted domain's
-    `+tag` convention is genuinely unknown. An operator's own admin address is a
-    different trust context: it is self-declared, and the `+loadtest` pattern
-    this exemption exists to support must work regardless of which provider the
-    operator happens to use. So this applies one further, universal fold on top
-    of `canonicalize` -- stripping a `+tag` unconditionally -- scoped to this
-    comparison alone. `canonical_for_storage` and public `canonicalize` are
-    untouched, so two ordinary users on an unlisted domain are never merged.
-    """
-    canonical = canonicalize(email)
-    local, separator, domain = canonical.rpartition("@")
-    if not separator:
-        return canonical
-    return f"{local.split(EMAIL_SUBADDRESS_SEPARATOR, 1)[0]}@{domain}"
-
-
 def is_exempt(email: str) -> bool:
     """Report whether ``email`` is one of the operator's admin addresses."""
     configured = settings.grant_admin_emails
     if not configured:
         return False
-    target = _admin_key(email)
+    target = canonicalize(email)
     return any(
-        _admin_key(entry) == target for entry in configured.split(",") if entry.strip()
+        canonicalize(entry) == target
+        for entry in configured.split(",")
+        if entry.strip()
     )
 
 

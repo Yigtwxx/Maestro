@@ -103,11 +103,12 @@ async def test_a_sub_address_on_an_unknown_provider_is_a_distinct_account(  # no
     assert await _user_count(db_session) == 2
 
 
-async def test_an_admin_address_skips_every_check(  # noqa: ANN001
+async def test_an_admin_address_skips_the_domain_checks(  # noqa: ANN001
     client, db_session, monkeypatch, mx_check_on
 ) -> None:
     """The operator keeps unrestricted signup, as they do for quota,
-    concurrency and storage."""
+    concurrency and storage. `mailinator.com` is on the disposable list, and
+    the resolver is rigged to fail the test if it is consulted at all."""
     monkeypatch.setattr(settings, "grant_admin_emails", "owner@mailinator.com")
 
     def _explode(*args: object, **kwargs: object):  # noqa: ANN202
@@ -115,8 +116,23 @@ async def test_an_admin_address_skips_every_check(  # noqa: ANN001
 
     monkeypatch.setattr(mx_check, "_resolve", _explode)
 
-    first = await _register(client, "owner@mailinator.com")
-    second = await _register(client, "owner+loadtest@mailinator.com")
+    resp = await _register(client, "owner@mailinator.com")
+
+    assert resp.status_code == 202, resp.text
+    assert await _user_count(db_session) == 1
+
+
+async def test_an_admin_sub_address_bypasses_canonical_uniqueness(  # noqa: ANN001
+    client, db_session, monkeypatch
+) -> None:
+    """Two accounts on one mailbox, which is the point of the exemption: the
+    NULL canonical does not conflict with itself. Uses a domain that really
+    does sub-address, so plain `canonicalize` matches both against the
+    configured admin entry."""
+    monkeypatch.setattr(settings, "grant_admin_emails", "owner@gmail.com")
+
+    first = await _register(client, "owner@gmail.com")
+    second = await _register(client, "owner+loadtest@gmail.com")
 
     assert first.status_code == 202, first.text
     assert second.status_code == 202, second.text
