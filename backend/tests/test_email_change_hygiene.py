@@ -6,6 +6,7 @@ import re
 
 from sqlalchemy import select
 
+from app.core.constants import UserRole
 from app.models.user import User
 
 _REGISTER = "/api/v1/auth/register"
@@ -73,6 +74,29 @@ async def test_confirming_a_change_stores_the_new_canonical(  # noqa: ANN001
         select(User.canonical_email).where(User.email == "you+tag@gmail.com")
     )
     assert stored == "you@gmail.com"
+
+
+async def test_an_admin_role_bypasses_hygiene_even_off_the_grant_list(  # noqa: ANN001
+    client, db_session, sent_emails
+) -> None:
+    """The role-based exemption (Fix 3) is the authenticated counterpart to
+    `GRANT_ADMIN_EMAILS`: it fires on `user.role`, not on the caller's address
+    matching a configured string, so an admin whose own address was never
+    listed still moves to a disposable domain."""
+    headers = await _signed_in(client, "owner@example.com")
+    user = await db_session.scalar(
+        select(User).where(User.email == "owner@example.com")
+    )
+    user.role = UserRole.ADMIN.value
+    await db_session.commit()
+
+    resp = await client.post(
+        _CHANGE,
+        json={"new_email": "throwaway@mailinator.com", "current_password": _PASSWORD},
+        headers=headers,
+    )
+
+    assert resp.status_code == 202, resp.text
 
 
 async def test_confirming_onto_another_accounts_mailbox_conflicts(  # noqa: ANN001

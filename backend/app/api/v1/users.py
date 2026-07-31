@@ -28,6 +28,7 @@ from app.core.constants import (
     EmailTokenPurpose,
     LLMProvider,
     SubscriptionStatus,
+    UserRole,
 )
 from app.core.deps import ActiveUser, CurrentFamily, CurrentUser, DbSession
 from app.core.security import hash_password, verify_password
@@ -197,7 +198,18 @@ async def request_email_change(
     # Same domain-level admission as registration. Placed after the no-op check
     # so re-submitting one's own address can never be refused by a list the
     # account predates.
-    await email_hygiene.enforce(new_email)
+    #
+    # An admin also short-circuits on role here, in addition to the
+    # `GRANT_ADMIN_EMAILS` match `email_hygiene.enforce` already applies. The
+    # two exemptions differ in what they trust: at `/register` the caller holds
+    # no session, so the check can only compare an unauthenticated, attacker-
+    # suppliable string against the configured list -- anyone who knows the
+    # operator's listed address inherits it there. Here the caller is
+    # authenticated, so `user.role` is a fact the session already established,
+    # the same authenticated-role gate `quota_service.is_unmetered` uses for
+    # admins on quota, concurrency and storage.
+    if user.role != UserRole.ADMIN.value:
+        await email_hygiene.enforce(new_email)
 
     # Deliberately no uniqueness check: answering "that address is taken" here
     # would turn this endpoint into an account-existence oracle. A collision
