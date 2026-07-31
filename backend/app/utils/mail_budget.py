@@ -22,6 +22,13 @@ owns, so Redis, the in-memory fallback and the breaker are shared rather than
 duplicated. It is the sibling of `utils.login_throttle`, which does the same for
 the account axis of `/login`.
 
+The budget is per *mailbox*, not per typed string. `you@gmail.com` and
+`you+tag@gmail.com` are one inbox, so the key is the canonical address
+(`utils.email_identity.canonicalize`) rather than the raw recipient -- otherwise
+every sub-address variant would open its own bucket while every message still
+landed in the same place, multiplying the budget by however many variants an
+attacker bothers to type.
+
 Two differences from `login_throttle.AttemptGuard`:
 
 * It returns a bool instead of raising 429. The caller answers with the
@@ -54,6 +61,7 @@ import hashlib
 from app.core.config import settings
 from app.core.constants import MAIL_SEND_BUDGET, RATE_LIMIT_KEY_PREFIX
 from app.core.metrics import metrics
+from app.utils.email_identity import canonicalize
 from app.utils.rate_limiter import limiter
 
 # 32 hex chars of SHA-256, matching `login_throttle`. Not a secret-keyed MAC:
@@ -84,6 +92,11 @@ async def allow(recipient: str) -> bool:
 
 
 def _key(recipient: str) -> str:
-    """Bucket key for one recipient, normalised and hashed."""
-    digest = hashlib.sha256(recipient.strip().lower().encode("utf-8")).hexdigest()
+    """Bucket key for one recipient's *mailbox*, canonicalised and hashed.
+
+    Canonicalising first is what makes `you@gmail.com` and `you+tag@gmail.com`
+    share a bucket: `canonicalize` already lowercases and strips, so no
+    separate normalisation is needed here.
+    """
+    digest = hashlib.sha256(canonicalize(recipient).encode("utf-8")).hexdigest()
     return f"{RATE_LIMIT_KEY_PREFIX}:{MAIL_SEND_BUDGET.name}:{digest[:_DIGEST_CHARS]}"

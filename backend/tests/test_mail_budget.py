@@ -112,6 +112,60 @@ async def test_email_change_charges_the_target_not_the_caller(
     )
 
 
+async def test_sub_addresses_share_one_mail_budget(
+    client,  # noqa: ANN001
+    rate_limited,  # noqa: ANN001
+    sent_emails,  # noqa: ANN001
+) -> None:
+    """The budget keys on the mailbox, not the typed string.
+
+    `victim@gmail.com` and `victim+other@gmail.com` are one inbox; keying on
+    the raw recipient would let each variant open its own bucket while every
+    message still landed in the same place, multiplying the budget by however
+    many variants the caller bothers to type.
+    """
+    await _register(client, _ATTACKER)
+    token = (await _login(client, _ATTACKER)).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    variants = ["victim@gmail.com", "victim+other@gmail.com"]
+
+    for attempt in range(_BUDGET):
+        target = variants[attempt % 2]
+        resp = await _request_email_change(client, headers, target)
+        assert resp.status_code == 202, f"attempt {attempt}: {resp.text}"
+    total = _to(sent_emails, variants[0]) + _to(sent_emails, variants[1])
+    assert total == _BUDGET
+
+    resp = await _request_email_change(client, headers, variants[0])
+
+    assert resp.status_code == 202
+    total_after = _to(sent_emails, variants[0]) + _to(sent_emails, variants[1])
+    assert total_after == _BUDGET, "no further mail reaches either variant"
+
+
+async def test_distinct_mailboxes_get_separate_budgets(
+    client,  # noqa: ANN001
+    rate_limited,  # noqa: ANN001
+    sent_emails,  # noqa: ANN001
+) -> None:
+    """Two addresses that are not the same mailbox must not share a bucket."""
+    await _register(client, _ATTACKER)
+    token = (await _login(client, _ATTACKER)).json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    for _ in range(_BUDGET):
+        resp = await _request_email_change(client, headers, "one@gmail.com")
+        assert resp.status_code == 202
+    assert _to(sent_emails, "one@gmail.com") == _BUDGET
+
+    resp = await _request_email_change(client, headers, "two@gmail.com")
+
+    assert resp.status_code == 202
+    assert _to(sent_emails, "two@gmail.com") == 1, (
+        "a different mailbox has its own budget"
+    )
+
+
 async def test_budget_exhaustion_still_creates_the_account(
     client,  # noqa: ANN001
     rate_limited,  # noqa: ANN001
