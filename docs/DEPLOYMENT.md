@@ -85,8 +85,8 @@ repo on every tagged rollout; the other three files are host-managed only.
 
 ### 3. Fill in `.env.prod`
 
-Generate real secrets — the defaults in `.env.example` are placeholders and the
-app will start with them:
+Generate real secrets — the defaults in `.env.example` are placeholders, and with
+`ENVIRONMENT=production` the backend refuses to start until each one is replaced:
 
 ```bash
 openssl rand -hex 32        # JWT_SECRET
@@ -97,6 +97,18 @@ openssl rand -base64 24     # POSTGRES_PASSWORD, MONGO_PASSWORD, QDRANT_API_KEY
 Set `DOMAIN` to your hostname, then substitute the passwords you generated into
 `POSTGRES_URL` and `MONGODB_URL`. Keep `?authSource=admin` on the Mongo URL: the
 root user cannot authenticate without it and index creation fails at startup.
+
+The boot guard checks the substitution for you. With `ENVIRONMENT=production` the
+backend refuses to start while `CHANGE_ME` is still in `POSTGRES_URL`,
+`MONGODB_URL` or `REDIS_URL`, while either of the first two is still the
+development default, or while a password is guessable — and the error in
+`docker compose logs backend` lists every variable at fault in one line, without
+echoing any value. It also refuses `RATE_LIMIT_ENABLED=false` and an unset
+`TRUST_PROXY_HEADERS`. It does not demand a password where there is none: a
+datastore reachable only on the compose network may run without auth. Note that
+the compose-level `${POSTGRES_PASSWORD:?}` guards cover the *container's*
+variables, not the URLs the backend reads — the two can be wrong independently,
+which is what this guard closes.
 
 ### 4. Bring it up
 
@@ -260,7 +272,8 @@ WEB_CONCURRENCY=4
 **Multi-worker (>1) requires `REDIS_URL` to be set — enforced at boot.** The
 backend refuses to start (clear config error in the logs) when
 `WEB_CONCURRENCY>1` and `REDIS_URL` is empty, instead of silently degrading to
-process-local state. With more than one worker,
+process-local state. The production config guard runs first, so clear anything it
+reports before expecting to see this one. With more than one worker,
 task execution, the live event stream, human-in-the-loop answers, and task
 cancellation must coordinate across processes; they do so over Redis:
 
@@ -309,6 +322,13 @@ you are not running Redis.
 
   This is a one-off operational choice, not a schema change, which is why it is
   not an Alembic migration — the cookie change itself needs none.
+- **`TRUST_PROXY_HEADERS` has no safe default**, which is why production will not
+  boot without it. `.env.prod.example` ships `true`, correct for this stack: Caddy
+  is the only service that opens a port, and it appends the peer it actually saw.
+  Set `false` only if you put the backend on a public port yourself — leaving
+  `true` there would let any client forge `X-Forwarded-For` and get a fresh
+  rate-limit bucket per request. Upgrading a deployment whose `.env.prod` predates
+  this guard means adding the one line before the next `up -d`.
 - **`PAYMENT_PROVIDER=mock`.** No real money moves, and no real card should ever
   be entered: `payment_methods` would fall under PCI scope. Ship a real
   processor adapter before advertising billing.

@@ -36,7 +36,7 @@ _OSES: tuple[tuple[str, str], ...] = (
 
 def client_ip(request: Request) -> str | None:
     """The caller's IP, honouring ``X-Forwarded-For`` only behind a trusted proxy."""
-    if settings.trust_proxy_headers:
+    if settings.proxy_headers_are_trusted:
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
             return forwarded.rsplit(",", 1)[-1].strip()

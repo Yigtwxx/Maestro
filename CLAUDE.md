@@ -421,10 +421,14 @@ CORS does not apply; in split deployments only known origins are allowed. Secret
     router-level default: FastAPI merges router- and route-level dependency lists, so an
     overriding route would be counted twice. `tests/test_rate_limiter.py` fails on any
     route without a limit. New WebSocket routes must call `check_websocket` before
-    `accept()` and be added to the test's allow-list.
+    `accept()` and be added to the test's allow-list. `RATE_LIMIT_ENABLED=false` is a
+    development escape hatch only; production refuses to boot with it off.
 13. `TRUST_PROXY_HEADERS` must be `true` only behind a reverse proxy that sets
     `X-Forwarded-For`. Exposed directly, a client forges the header and opens a fresh
     bucket per request. Left `false` behind a proxy, every user shares the proxy's bucket.
+    It is therefore `bool | None` and production refuses to boot with it unset — there is
+    no safe default to guess. Code reads `settings.proxy_headers_are_trusted`, never the
+    raw field: on a `None` the field is merely falsy, which is a decision nobody made.
 14. The refresh token never reaches JavaScript. It is set and read as an httpOnly cookie
     only: no endpoint accepts one in a request body, none returns one in a response body,
     and the frontend persists no credential. `tests/test_auth_cookie.py` fails on any of
@@ -544,7 +548,18 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
 
 - `REDIS_URL` — empty falls back to in-process rate-limit buckets and event bus. Boot is
   refused if `WEB_CONCURRENCY > 1` while this is empty.
-- `TRUST_PROXY_HEADERS` — see rule 13 above.
+- `POSTGRES_URL` / `MONGODB_URL` / `REDIS_URL` / `QDRANT_API_KEY` — production rejects the dev
+  defaults, a `CHANGE_ME` left over from `.env.prod.example`, and a guessable password (one
+  equal to its username, or a compose default). It deliberately does **not** require
+  credentials at all: a MongoDB or Redis reachable only on the compose network legitimately
+  runs without auth, and demanding one would refuse a working deploy. `REDIS_URL` is the one
+  that most needs this — a wrong password there boots fine and silently degrades every
+  throttle to per-process buckets. The error names the variable and never the value: a
+  datastore URL is itself a credential, and a boot failure lands in logs and issue reports.
+- `TRUST_PROXY_HEADERS` — see rule 13 above. Tri-state like `REFRESH_COOKIE_SECURE`, but for
+  the opposite reason: unset resolves to `false` rather than to the secure value, because no
+  single value is safe in every topology, so production refuses to boot until the operator
+  chooses. Consumers read `settings.proxy_headers_are_trusted`.
 - `REFRESH_COOKIE_SECURE` / `REFRESH_COOKIE_SAMESITE` / `REFRESH_COOKIE_DOMAIN` — the
   refresh cookie's attributes (§8, "Token storage"). `SECURE` is deliberately *unset*
   rather than `true`: Safari has historically refused a `Secure` cookie over

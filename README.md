@@ -377,7 +377,8 @@ The full documentation site is at **[yigtwxx.github.io/Maestro](https://yigtwxx.
 
 Two secrets are required before any run — `JWT_SECRET` and `API_KEY_MASTER_KEY`. Generate
 them with `openssl rand -hex 32` and `openssl rand -base64 32`. In production the backend
-refuses to boot with placeholder or weak values.
+refuses to boot with placeholder or weak values, and with a datastore URL that still carries
+an example password.
 
 ## Self-hosting vs Maestro Cloud
 

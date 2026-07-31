@@ -39,5 +39,11 @@ def test_production_resend_without_api_key_refuses_to_boot() -> None:
             api_key_master_key="a" * 64,  # 64-char hex = 32 bytes
             email_provider=EMAIL_PROVIDER_RESEND,
             resend_api_key="",
+            # The datastore and proxy-header guards are exercised in
+            # test_config_guard.py; satisfy them here so this case can only fail
+            # for the variable it names.
+            postgres_url="postgresql+asyncpg://maestro:Hk2p9WqLb4Tz@postgres:5432/maestro",
+            mongodb_url="mongodb://maestro:Hk2p9WqLb4Tz@mongo:27017/?authSource=admin",
+            trust_proxy_headers=True,
             _env_file=None,
         )

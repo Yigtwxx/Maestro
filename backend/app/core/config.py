@@ -10,6 +10,7 @@ import base64
 import binascii
 from functools import lru_cache
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -23,6 +24,43 @@ _DEV_JWT_SECRET = "change-me"
 _DEV_MASTER_KEY = "change-me-32-byte-base64-master-key"
 _MIN_JWT_SECRET_LENGTH = 32
 _MASTER_KEY_BYTES = 32  # AES-256
+# The same contract for the two datastore URLs. Both point at the shifted host
+# ports docker-compose.yml publishes, not the stock 5432/27017: a natively
+# installed PostgreSQL or MongoDB binds loopback specifically and therefore wins
+# over Docker's wildcard bind, so the stock port would silently reach the wrong
+# server.
+_DEV_POSTGRES_URL = "postgresql+asyncpg://maestro:maestro@localhost:5433/maestro"
+_DEV_MONGODB_URL = "mongodb://localhost:27018"
+
+# "The operator copied .env.prod.example and never substituted the password."
+# Matched case-insensitively against the whole value, so a placeholder left in
+# the host or the query part is caught too. Deliberately only the spellings this
+# repo actually ships (.env.prod.example writes CHANGE_ME, _DEV_JWT_SECRET
+# writes change-me): inventing further tokens buys nothing and only risks
+# refusing a randomly generated password that happens to contain one.
+_PLACEHOLDER_TOKENS = ("change_me", "change-me", "changeme")
+
+# Datastore passwords that are a compose default rather than a secret. This is
+# default detection, not a strength meter: `openssl rand -base64 24` output can
+# never appear here, so a real deployment is never refused. A password equal to
+# its own username (maestro:maestro, postgres:postgres) is handled separately in
+# _has_weak_credentials. "changeme" is deliberately absent -- _PLACEHOLDER_TOKENS
+# matches it first and gives the more actionable message.
+_WEAK_DB_PASSWORDS = frozenset(
+    {
+        "admin",
+        "maestro",
+        "mongo",
+        "mongodb",
+        "passwd",
+        "password",
+        "postgres",
+        "redis",
+        "root",
+        "secret",
+        "test",
+    }
+)
 
 
 def _decoded_key_len(raw: str) -> int:
@@ -40,6 +78,45 @@ def _decoded_key_len(raw: str) -> int:
         if len(key) == _MASTER_KEY_BYTES:
             return len(key)
     return len(stripped.encode("utf-8"))
+
+
+def _contains_placeholder(value: str) -> bool:
+    """Whether ``value`` still carries a copy-the-example placeholder."""
+    lowered = value.lower()
+    return any(token in lowered for token in _PLACEHOLDER_TOKENS)
+
+
+def _has_weak_credentials(url: str) -> bool:
+    """Whether a datastore URL carries a guessable password.
+
+    A *missing* password is not a problem: a MongoDB or Redis reachable only on
+    the compose network legitimately runs without auth, and demanding one here
+    would refuse a working deployment. Only a present-and-guessable password is
+    rejected -- the compose defaults (``maestro:maestro``) and the handful of
+    passwords everyone tries first.
+
+    ``urlsplit`` copes with the ``postgresql+asyncpg`` and ``mongodb+srv``
+    schemes (a ``+`` is legal in a scheme) and with an empty username
+    (``redis://:pw@host``), returning empty parts rather than raising for input
+    it cannot make sense of. The one input that *does* raise is a malformed IPv6
+    literal; that counts as "nothing to inspect" rather than as a credential
+    problem, because the driver's own connection error is the useful message for
+    it and this guard must never turn a typo into a misleading security
+    complaint. ``.port`` is deliberately never read -- it raises on a
+    non-numeric port for the same reason.
+
+    Detection is textual, so a percent-encoded password (``p%40ssword``) does
+    not match a token. That is accepted: the point is catching a default nobody
+    replaced, not scoring password strength.
+    """
+    try:
+        parts = urlsplit(url)
+        username, password = parts.username, parts.password
+    except ValueError:
+        return False
+    if not password:
+        return False
+    return password.lower() in _WEAK_DB_PASSWORDS or password == username
 
 
 class Settings(BaseSettings):
@@ -124,12 +201,10 @@ class Settings(BaseSettings):
     metrics_token: str = ""
 
     # --- Databases ---
-    # Both defaults point at the shifted host ports docker-compose.yml publishes,
-    # not the stock 5432/27017: a natively-installed PostgreSQL or MongoDB binds
-    # loopback specifically and therefore wins over Docker's wildcard bind, so
-    # the stock port would silently reach the wrong server.
-    postgres_url: str = "postgresql+asyncpg://maestro:maestro@localhost:5433/maestro"
-    mongodb_url: str = "mongodb://localhost:27018"
+    # The defaults, and why they use shifted ports, are the module constants
+    # above. Production refuses to boot while either is still on its default.
+    postgres_url: str = _DEV_POSTGRES_URL
+    mongodb_url: str = _DEV_MONGODB_URL
     mongodb_db_name: str = "maestro"
 
     # --- Vector DB (Qdrant) ---
@@ -141,10 +216,16 @@ class Settings(BaseSettings):
     # which is correct for a single-worker dev server and for the test suite.
     redis_url: str = ""
     rate_limit_enabled: bool = True
-    # Only enable behind a reverse proxy that overwrites/appends X-Forwarded-For
-    # (our Caddy does). With the backend directly exposed, a client could forge
-    # the header and mint a fresh bucket per request.
-    trust_proxy_headers: bool = False
+    # Tri-state like refresh_cookie_secure -- but for the opposite reason. No
+    # value is safe in every topology: `true` with the backend directly exposed
+    # lets a client forge X-Forwarded-For and mint a fresh bucket per request,
+    # while `false` behind our Caddy buckets every caller under the proxy's
+    # single container IP, so one client tripping the login limit locks out
+    # everyone. So there is nothing to guess: unset resolves to the conservative
+    # `false` (the pre-tri-state behaviour, which dev and the test suite rely
+    # on) and the production guard below refuses a boot that has not chosen.
+    # Read `proxy_headers_are_trusted`, never this field.
+    trust_proxy_headers: bool | None = None
 
     # --- Health probes ---
     # Unlocks the per-dependency `checks` map on /health/ready, which names the
@@ -486,11 +567,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _guard_production_secrets(self) -> Settings:
-        """Refuse to boot in production with placeholder or weak secrets.
+        """Refuse to boot in production with placeholder or weak configuration.
 
         Runs at import time via ``get_settings()``, so a failure here blocks
         startup instead of silently serving with a publicly-known JWT signing
-        key or AES master key. Messages never echo the secret values.
+        key or AES master key. Beyond the secrets it also covers the datastore
+        credentials, the rate-limit switch and the proxy-header decision -- each
+        of which used to boot happily while being wrong. Messages name the
+        variable and never echo its value: a datastore URL *is* a password, and
+        a boot failure ends up in logs, screenshots and issue reports.
+
+        Every production check lives in this one validator on purpose. Pydantic
+        stops at the first ``mode="after"`` validator that raises, so problems
+        split across two validators would never be reported together, and an
+        operator who copied ``.env.prod.example`` verbatim has several at once.
         """
         if self.environment != "production":
             return self
@@ -515,6 +605,50 @@ class Settings(BaseSettings):
             # The cookie *is* the session. Without Secure it rides plain HTTP
             # to any host that can be reached over the same origin name.
             problems.append("REFRESH_COOKIE_SECURE must not be false in production")
+        for name, value, dev_default in (
+            ("POSTGRES_URL", self.postgres_url, _DEV_POSTGRES_URL),
+            ("MONGODB_URL", self.mongodb_url, _DEV_MONGODB_URL),
+            ("REDIS_URL", self.redis_url, None),
+        ):
+            # One problem per variable, hence elif: the Postgres dev default is
+            # also a username-as-password, and reporting the same mistake twice
+            # reads like two separate ones.
+            if dev_default is not None and value == dev_default:
+                problems.append(
+                    f"{name} is still the development default "
+                    f"(a local datastore with a published password)"
+                )
+            elif _contains_placeholder(value):
+                problems.append(
+                    f"{name} still contains a setup placeholder -- substitute "
+                    f"the password you generated"
+                )
+            elif _has_weak_credentials(value):
+                problems.append(
+                    f"{name} carries a guessable password (a compose default, "
+                    f"or the password equal to the username)"
+                )
+        if _contains_placeholder(self.qdrant_api_key or ""):
+            # Empty stays allowed on purpose: a Qdrant reachable only on the
+            # compose network needs no key, and docker-compose.prod.yml already
+            # demands one server-side via ${QDRANT_API_KEY:?}. An unsubstituted
+            # placeholder is a different thing from a deliberate blank.
+            problems.append("QDRANT_API_KEY still contains a setup placeholder")
+        if not self.rate_limit_enabled:
+            # Documented as forbidden in production since day one (.env.example,
+            # docs/CONFIGURATION.md, CLAUDE.md rule 12) but never enforced. With
+            # the limiter off, credential stuffing against /auth/login is free.
+            problems.append("RATE_LIMIT_ENABLED must not be false in production")
+        if self.trust_proxy_headers is None:
+            # Reads the raw tri-state field, not proxy_headers_are_trusted:
+            # detecting "nobody chose" is the entire point, and the property
+            # resolves that away to False.
+            problems.append(
+                "TRUST_PROXY_HEADERS must be set explicitly in production: "
+                "true behind a reverse proxy that appends X-Forwarded-For "
+                "(this stack's Caddy does), false when the backend serves a "
+                "public port itself"
+            )
         if problems:
             raise ValueError(
                 "Insecure production configuration: " + "; ".join(problems)
@@ -552,6 +686,25 @@ class Settings(BaseSettings):
         if self.refresh_cookie_secure is None:
             return self.environment != "development"
         return self.refresh_cookie_secure
+
+    @property
+    def proxy_headers_are_trusted(self) -> bool:
+        """Whether ``X-Forwarded-For`` may be believed for the caller's address.
+
+        Unlike the refresh cookie, unset does *not* resolve to the secure value,
+        because neither value is secure in every topology (see the field). It
+        resolves to the conservative one -- read the peer address, never the
+        header -- and the production guard above refuses to boot until the
+        operator has actually chosen.
+
+        Consumers must read this rather than ``trust_proxy_headers``: the raw
+        field is tri-state, so ``if settings.trust_proxy_headers:`` on a ``None``
+        silently means "do not trust" without anyone having decided that, and it
+        would break outright the moment the resolution rule changes.
+        """
+        if self.trust_proxy_headers is None:
+            return False
+        return self.trust_proxy_headers
 
 
 @lru_cache

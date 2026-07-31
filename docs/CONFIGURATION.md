@@ -1,7 +1,10 @@
 # Configuration
 
 Every setting is read from an environment variable; the `.env` file is gitignored and never
-committed. In production the backend refuses to boot with placeholder or weak secrets.
+committed. In production the backend refuses to boot with placeholder or weak secrets, with a
+datastore URL still carrying an example or default password, with rate limiting switched off, or
+with `TRUST_PROXY_HEADERS` left unset. Every problem is reported in one message, naming the
+variables and never their values.
 
 Generate the two required secrets before the first run:
 
@@ -17,11 +20,11 @@ variant. The tables below group the settings by concern.
 
 | Variable | Description | Default |
 |---|---|---|
-| `POSTGRES_URL` | Async PostgreSQL connection string | `postgresql+asyncpg://maestro:maestro@localhost:5433/maestro` |
-| `MONGODB_URL` | MongoDB connection string. Port 27018, not the stock 27017 — a natively-installed MongoDB binds loopback and beats Docker's wildcard bind, so 27017 can silently reach the wrong server | `mongodb://localhost:27018` |
+| `POSTGRES_URL` | Async PostgreSQL connection string. Production refuses to boot on this default, on a leftover `CHANGE_ME`, or on a guessable password (one equal to the username, or a compose default like `password`) | `postgresql+asyncpg://maestro:maestro@localhost:5433/maestro` |
+| `MONGODB_URL` | MongoDB connection string. Port 27018, not the stock 27017 — a natively-installed MongoDB binds loopback and beats Docker's wildcard bind, so 27017 can silently reach the wrong server. Production refuses to boot on this default or on a leftover `CHANGE_ME` | `mongodb://localhost:27018` |
 | `MONGODB_DB_NAME` | MongoDB database name | `maestro` |
 | `QDRANT_URL` | Qdrant vector DB address | `http://localhost:6333` |
-| `QDRANT_API_KEY` | Qdrant API key (optional for local) | — |
+| `QDRANT_API_KEY` | Qdrant API key (optional for local, and optional in production too — but a leftover `CHANGE_ME` is rejected at boot) | — |
 
 ## Security & auth
 
@@ -42,13 +45,15 @@ variant. The tables below group the settings by concern.
 
 | Variable | Description | Default |
 |---|---|---|
-| `REDIS_URL` | Redis for shared sliding-window buckets; empty falls back to in-process memory (single dev worker) | — |
-| `RATE_LIMIT_ENABLED` | Master throttle switch; never `false` in production | `true` |
-| `TRUST_PROXY_HEADERS` | Only `true` behind a proxy that appends `X-Forwarded-For` (e.g. Caddy) | `false` |
+| `REDIS_URL` | Redis for shared sliding-window buckets; empty falls back to in-process memory (single dev worker). A leftover `CHANGE_ME` or a guessable password is rejected in production — it would otherwise boot and silently fall back to per-process buckets | — |
+| `RATE_LIMIT_ENABLED` | Master throttle switch. `false` is rejected at boot in production | `true` |
+| `TRUST_PROXY_HEADERS` | `true` only behind a proxy that appends `X-Forwarded-For` (e.g. Caddy). Unset is rejected in production: neither value is safe to guess | unset (means `false`) |
 
 `TRUST_PROXY_HEADERS` cuts both ways: exposed directly to the internet, a client forges the
 header and opens a fresh bucket per request; left `false` behind a proxy, every user shares
-the proxy's single bucket.
+the proxy's single bucket. That is why there is no default worth shipping: production refuses to
+boot until the variable is set explicitly, while development and the test suite treat unset as
+`false`. Code reads the resolved `settings.proxy_headers_are_trusted`, never the tri-state field.
 
 ## Models & embeddings
 

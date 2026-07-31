@@ -264,7 +264,7 @@ def _client_ip(connection: HTTPConnection) -> str:
     last hop is the only one a client cannot forge by sending its own header.
     Reading the leftmost entry would let anyone mint a fresh bucket per request.
     """
-    if settings.trust_proxy_headers:
+    if settings.proxy_headers_are_trusted:
         forwarded = connection.headers.get("x-forwarded-for")
         if forwarded:
             return forwarded.rsplit(",", 1)[-1].strip()
