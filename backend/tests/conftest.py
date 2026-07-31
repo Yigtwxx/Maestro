@@ -60,7 +60,7 @@ from app.services import (  # noqa: E402
 )
 from app.services.alerts import get_alert_channels  # noqa: E402
 from app.services.email import EmailMessage  # noqa: E402
-from app.utils import human_check  # noqa: E402
+from app.utils import human_check, mx_check  # noqa: E402
 from app.utils.rate_limiter import limiter  # noqa: E402
 
 _test_engine = create_async_engine(
@@ -193,6 +193,27 @@ def _human_check_off(monkeypatch):
     real function themselves.
     """
     monkeypatch.setattr(human_check, "passes", _always_human)
+
+
+@pytest.fixture(autouse=True)
+def _no_mx_check(monkeypatch):
+    """DNS is opt-in per test, like ``_no_rate_limit`` and ``_human_check_off``.
+
+    The suite registers with addresses under `example.com` and `.test`, none of
+    which have MX records. Left on, every registration test would both reach the
+    real network and correctly refuse its own fixture data.
+    """
+    monkeypatch.setattr(settings, "email_mx_check_enabled", False)
+    mx_check.reset_cache()
+
+
+@pytest.fixture
+def mx_check_on(_no_mx_check, monkeypatch):
+    """Re-enable the MX lookup for one test, against an empty cache."""
+    monkeypatch.setattr(settings, "email_mx_check_enabled", True)
+    mx_check.reset_cache()
+    yield
+    mx_check.reset_cache()
 
 
 @pytest.fixture(autouse=True)

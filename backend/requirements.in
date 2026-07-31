@@ -16,6 +16,9 @@ python-multipart>=0.0.32
 pydantic>=2.9,<3.0
 pydantic-settings>=2.6,<3.0
 email-validator>=2.2
+# Already pulled in by email-validator; named explicitly because
+# app/utils/mx_check.py imports dns.asyncresolver directly.
+dnspython>=2.7
 # IANA timezone database so zoneinfo resolves names on any OS (Windows ships none).
 tzdata>=2024.1
 

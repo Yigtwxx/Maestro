@@ -979,6 +979,15 @@ EMAIL_RELAY_DOMAINS: frozenset[str] = frozenset(
     }
 )
 
+# One second is generous for a cached resolver answer and short enough that a
+# slow nameserver does not hold a registration open. A timeout fails open.
+MX_LOOKUP_TIMEOUT_SECONDS = 1.0
+# Domains repeat heavily across registrations (a handful of providers cover most
+# real signups), so a modest TTL removes almost every lookup. Only *decided*
+# answers are cached; a transient failure is not, or one blip would be extended
+# across the whole window.
+MX_CACHE_TTL_SECONDS = 3600.0
+
 # --- Document ingestion (RAG) ---
 # Character-based chunking (approximate; keeps ingestion dependency-free).
 DOCUMENT_CHUNK_SIZE = 1000

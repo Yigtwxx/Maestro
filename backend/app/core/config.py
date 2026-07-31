@@ -290,6 +290,13 @@ class Settings(BaseSettings):
     # Operator additions to the vendored list (comma-separated domains), merged
     # with it rather than replacing it.
     disposable_domains_extra: str = ""
+    # Refuse an address whose domain cannot receive mail at all. Its value is on
+    # the deliverability axis, not the abuse one -- neither Gmail nor a burner
+    # provider lacks an MX record -- but hard bounces damage sender reputation,
+    # which starts costing real money once EMAIL_PROVIDER=resend and the
+    # verification gate are on together. Safe as a default precisely because the
+    # lookup fails open: an unreachable resolver loses the check, not signups.
+    email_mx_check_enabled: bool = True
 
     # --- Transactional email ---
     # "console" logs messages (dev/self-host default, zero dependencies);
