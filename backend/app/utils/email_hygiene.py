@@ -17,10 +17,29 @@ unlimited `+loadtest` accounts.
 
 from __future__ import annotations
 
+from fastapi import HTTPException, status
+
 from app.core.config import settings
-from app.core.constants import EMAIL_RELAY_DOMAINS
+from app.core.constants import EMAIL_RELAY_DOMAINS, EMAIL_SUBADDRESS_SEPARATOR
+from app.core.metrics import metrics
+from app.utils import mx_check
 from app.utils.disposable_domains import DISPOSABLE_EMAIL_DOMAINS
 from app.utils.email_identity import canonicalize, domain_of
+
+_DISPOSABLE_REASON = "disposable_domain"
+_NO_MX_REASON = "no_mx"
+
+# Shared instances, matching `auth._INVALID_MFA`. Neither message names the
+# submitted address: these responses are read by whoever typed it, but they also
+# land in logs and support tickets.
+_DISPOSABLE_DOMAIN = HTTPException(
+    status_code=status.HTTP_400_BAD_REQUEST,
+    detail="That email provider isn't supported. Please use a permanent address.",
+)
+_UNREACHABLE_DOMAIN = HTTPException(
+    status_code=status.HTTP_400_BAD_REQUEST,
+    detail="That email domain can't receive mail. Please check the address.",
+)
 
 
 def is_disposable(email: str) -> bool:
@@ -33,16 +52,34 @@ def is_disposable(email: str) -> bool:
     return domain in DISPOSABLE_EMAIL_DOMAINS or domain in _extra_domains()
 
 
+def _admin_key(email: str) -> str:
+    """Canonical form for the admin-exemption comparison specifically.
+
+    `canonicalize` only folds a sub-address on `EMAIL_CANONICAL_PROVIDERS` --
+    correct for merging two *strangers'* accounts, where an unlisted domain's
+    `+tag` convention is genuinely unknown. An operator's own admin address is a
+    different trust context: it is self-declared, and the `+loadtest` pattern
+    this exemption exists to support must work regardless of which provider the
+    operator happens to use. So this applies one further, universal fold on top
+    of `canonicalize` -- stripping a `+tag` unconditionally -- scoped to this
+    comparison alone. `canonical_for_storage` and public `canonicalize` are
+    untouched, so two ordinary users on an unlisted domain are never merged.
+    """
+    canonical = canonicalize(email)
+    local, separator, domain = canonical.rpartition("@")
+    if not separator:
+        return canonical
+    return f"{local.split(EMAIL_SUBADDRESS_SEPARATOR, 1)[0]}@{domain}"
+
+
 def is_exempt(email: str) -> bool:
     """Report whether ``email`` is one of the operator's admin addresses."""
     configured = settings.grant_admin_emails
     if not configured:
         return False
-    target = canonicalize(email)
+    target = _admin_key(email)
     return any(
-        canonicalize(entry) == target
-        for entry in configured.split(",")
-        if entry.strip()
+        _admin_key(entry) == target for entry in configured.split(",") if entry.strip()
     )
 
 
@@ -56,6 +93,25 @@ def canonical_for_storage(email: str) -> str | None:
     if is_exempt(email):
         return None
     return canonicalize(email)
+
+
+async def enforce(email: str) -> None:
+    """Admit ``email`` or raise 400, skipping everything for an admin address.
+
+    Raises rather than returning a bool, following
+    `utils.login_throttle.password.enforce`. `mail_budget.allow` returns instead
+    because its caller must answer with a *normal* body; here a visible refusal
+    is correct -- both rejections read only the domain, so neither can be turned
+    into an account-existence oracle.
+    """
+    if is_exempt(email):
+        return
+    if is_disposable(email):
+        metrics.record_abuse_rejection(_DISPOSABLE_REASON)
+        raise _DISPOSABLE_DOMAIN
+    if not await mx_check.has_mx(email):
+        metrics.record_abuse_rejection(_NO_MX_REASON)
+        raise _UNREACHABLE_DOMAIN
 
 
 def _extra_domains() -> frozenset[str]:

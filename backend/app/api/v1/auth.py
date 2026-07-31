@@ -7,7 +7,7 @@ from datetime import timedelta
 
 import jwt
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.config import settings
@@ -27,6 +27,7 @@ from app.core.cookies import (
     set_refresh_cookie,
 )
 from app.core.deps import CurrentUser, DbSession
+from app.core.metrics import metrics
 from app.core.security import (
     create_token,
     decode_token,
@@ -54,7 +55,7 @@ from app.services import (
     email_service,
     two_factor_service,
 )
-from app.utils import human_check, login_throttle, mail_budget
+from app.utils import email_hygiene, human_check, login_throttle, mail_budget
 from app.utils.rate_limiter import rate_limit
 from app.utils.request_context import client_ip, user_agent
 
@@ -68,6 +69,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # One fixed message for both registration outcomes. A taken address and a free
 # one must produce byte-identical responses, or the endpoint is an oracle.
 _REGISTER_ACCEPTED = "Check your email — we've sent you the next step."
+
+# Counted when a flush collision resolves to a *different* mailbox spelling
+# rather than a literal duplicate -- see the IntegrityError handler below.
+_CANONICAL_DUPLICATE = "canonical_duplicate"
 
 # The challenge nonce is anonymous by construction: it is issued before anyone
 # has identified themselves, and a real subject here would be a session in
@@ -149,12 +154,19 @@ async def register(
     if not await human_check.passes(payload, client_ip(request)):
         return DetailResponse(detail=_REGISTER_ACCEPTED)
     email = payload.email.lower()
+    # Domain-level admission, before the hash. It does not reintroduce the
+    # timing oracle closed below: both checks read only the submitted domain, so
+    # their outcome is independent of whether any account exists.
+    await email_hygiene.enforce(email)
+    canonical = email_hygiene.canonical_for_storage(email)
     # Build the user -- and so hash the password -- before the branch, so
     # Argon2 dominates both paths and the duplicate case is not measurably
     # faster. A pre-SELECT existence check would introduce exactly the timing
-    # oracle this endpoint is closing.
+    # oracle this endpoint is closing. That is also why the canonical collision
+    # is left to the unique index rather than looked up here.
     user = User(
         email=email,
+        canonical_email=canonical,
         hashed_password=hash_password(payload.password),
         display_name=payload.display_name,
     )
@@ -166,8 +178,23 @@ async def register(
     except IntegrityError:
         await db.rollback()
         # Re-read rather than trusting the payload: guards the narrow race
-        # where the row vanished between the violation and here.
-        existing = await db.scalar(select(User).where(User.email == email))
+        # where the row vanished between the violation and here. Matched on
+        # either column, because the violation may have been the canonical
+        # index -- a sub-address of an account whose typed address differs.
+        existing = await db.scalar(
+            select(User).where(
+                or_(
+                    User.email == email,
+                    User.canonical_email.is_not(None)
+                    & (User.canonical_email == canonical),
+                )
+            )
+        )
+        if existing is not None and existing.email != email:
+            # A different mailbox spelling of the same inbox. Counted so the
+            # false-positive rate of the canonical rule stays visible, the same
+            # argument `human_check` makes for its silent layers.
+            metrics.record_abuse_rejection(_CANONICAL_DUPLICATE)
         if existing is not None and await mail_budget.allow(existing.email):
             await email_service.send_registration_attempt(existing.email)
         return DetailResponse(detail=_REGISTER_ACCEPTED)

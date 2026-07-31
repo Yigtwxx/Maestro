@@ -252,6 +252,15 @@ class MetricsRegistry:
         """
         self._abuse_rejected[reason] = self._abuse_rejected.get(reason, 0) + 1
 
+    def snapshot_abuse_rejections(self) -> dict[str, int]:
+        """A copy of the per-reason rejection counts.
+
+        A read seam for tests and for anything that wants the numbers without
+        rendering the Prometheus exposition. Copied so a caller cannot mutate
+        the live counters.
+        """
+        return dict(self._abuse_rejected)
+
     # --- Watchdog reads ---------------------------------------------------
 
     def error_rate_window(self, window_seconds: float) -> tuple[int, int]:
