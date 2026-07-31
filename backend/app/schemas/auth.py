@@ -134,7 +134,9 @@ class UserPublic(BaseModel):
     id: uuid.UUID
     email: EmailStr
     display_name: str | None
-    # None means the account holds no subscription (fresh or never subscribed).
+    # A display cache of the subscription row's plan. Registration provisions an
+    # active FREE plan, so a fresh account reads "free", never None; None is only
+    # a row that predates that provisioning.
     subscription_tier: str | None
     # Default LLM "brain" for tasks; None means the local model (ollama).
     default_provider: LLMProvider | None = None
@@ -151,8 +153,9 @@ class UserPublic(BaseModel):
     default_tracing_enabled: bool = False
     # Whether TOTP two-factor auth is active (never exposes the secret).
     two_factor_enabled: bool = False
-    # Whether the emailed verification link was redeemed. While false, task
-    # start and API-key creation are soft-gated (403).
+    # Whether the emailed verification link (or code) was redeemed. While false,
+    # task start, API-key creation and custom-API-tool writes are soft-gated
+    # (403) -- and only while EMAIL_VERIFICATION_REQUIRED is on.
     email_verified: bool = False
     # When the account was created ("member since" on the profile).
     created_at: datetime | None = None

@@ -106,7 +106,9 @@ export interface UserPublic {
   id: string;
   email: string;
   display_name: string | undefined;
-  // null = no active subscription (fresh account or never subscribed).
+  // A display cache of the subscription row's plan. Registration provisions an
+  // active 'free' plan, so a fresh account reads 'free', never null; null is
+  // only a row that predates that provisioning.
   subscription_tier: SubscriptionPlan | null;
   // Default LLM "brain" for tasks; undefined/null means the local model (ollama).
   default_provider: LLMProvider | null | undefined;
@@ -123,7 +125,8 @@ export interface UserPublic {
   // Whether TOTP two-factor auth is active (never exposes the secret).
   two_factor_enabled?: boolean;
   // Whether the account's email address has been verified. While false, task
-  // start and API-key creation are soft-gated server-side.
+  // start, API-key creation and custom-API-tool writes are soft-gated
+  // server-side (and only while EMAIL_VERIFICATION_REQUIRED is on).
   email_verified?: boolean;
   // ISO timestamp the account was created ("member since").
   created_at?: string | null;

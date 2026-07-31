@@ -131,8 +131,8 @@ AdminUser = Annotated[User, Depends(get_admin_user)]
 async def get_verified_user(user: ActiveUser) -> User:
     """An active user whose email address is verified (soft gate).
 
-    Applied only to abuse-sensitive writes -- task start and BYOK key
-    creation -- so onboarding stays friction-free. Self-hosted deployments may
+    Applied only to abuse-sensitive writes -- task start, BYOK key creation and
+    custom-API-tool writes -- so onboarding stays friction-free. Deployments may
     disable the gate via EMAIL_VERIFICATION_REQUIRED=false; verification
     emails still go out either way. Admins bypass the gate (staff accounts).
     """
