@@ -603,9 +603,9 @@ fake-useragent==2.2.0 \
     # via
     #   -c requirements.txt
     #   ddgs
-fakeredis==2.36.2 \
-    --hash=sha256:84cbb9c74ca8946c0d2499daadf3a5d0bfe3cfbac71e3398316d1a1eab3421c4 \
-    --hash=sha256:c37a0b307fae3f27ec7c19e59519e57b8c52782e00303df9075361b5ba441be6
+fakeredis==2.37.0 \
+    --hash=sha256:657a2a695a1123be0c13f98db409371497bd94c29d260dd76a9fc7ce1a633745 \
+    --hash=sha256:7461f124dcba04a80691d72270b3d1d5cd100ef14dc068c76db825940f3ed799
     # via -r requirements-dev.in
 fastapi==0.140.0 \
     --hash=sha256:e951c0a0d9540bf5d9a2a9e078fd415da2ab7e312d435139e7d9e2e7fe9f0b23 \
