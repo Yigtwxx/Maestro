@@ -57,7 +57,13 @@ jobs:
           # produces pins (e.g. numpy) that cannot install on the 3.11 image.
           uv pip compile requirements.in -o requirements.txt --universal --python-version 3.11 --generate-hashes --custom-compile-command "uv pip compile requirements.in -o requirements.txt --universal --python-version 3.11 --generate-hashes"
           uv pip compile requirements-dev.in -o requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.txt --custom-compile-command "uv pip compile requirements-dev.in -o requirements-dev.txt --universal --python-version 3.11 --generate-hashes -c requirements.txt"
-          git diff --exit-code -- requirements.txt requirements-dev.txt
+          # Dependabot does not use uv and rewrites the locks in its own style,
+          # so this fires on essentially every pip bump PR. scripts/relock.sh
+          # (relock.ps1 on Windows) runs the two commands above verbatim.
+          git diff --exit-code -- requirements.txt requirements-dev.txt || {
+            echo "::error::Lock files drift from the .in files. Run scripts/relock.sh (or scripts/relock.ps1) and commit backend/requirements*.txt on this branch."
+            exit 1
+          }
 
   # The test suite builds its schema with Base.metadata.create_all on in-memory
   # SQLite, so it never executes a migration: a model column added without an
