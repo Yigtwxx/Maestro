@@ -13,12 +13,12 @@
     "clean": "node -e \"const fs=require('fs');for(const p of ['.next','tsconfig.tsbuildinfo'])fs.rmSync(p,{recursive:true,force:true})\""
   },
   "dependencies": {
-    "@sentry/nextjs": "10.69.0",
+    "@sentry/nextjs": "10.70.0",
     "animejs": "4.5.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "input-otp": "1.4.2",
-    "lucide-react": "1.28.0",
+    "lucide-react": "1.31.0",
     "motion": "12.43.0",
     "next": "16.3.0",
     "ogl": "1.0.11",
@@ -32,20 +32,20 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
-    "@types/node": "26.1.2",
+    "@types/node": "26.2.0",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "autoprefixer": "10.5.4",
     "eslint": "9.18.0",
     "eslint-config-next": "16.3.0",
-    "postcss": "8.5.25",
+    "postcss": "8.5.26",
     "tailwindcss": "3.4.17",
     "typescript": "5.7.3",
     "vitest": "4.1.10"
   },
   "//overrides": "Transitive advisories that no direct dependency has released a fix for yet. Each entry is the lowest patched version inside the same major, so the parent's declared range still holds. Drop an entry once the parent ships a version that pulls the fix on its own -- `npm ls <name>` shows whether it is still needed. Pinned exactly, like every other version here (.npmrc sets save-exact).",
   "overrides": {
-    "postcss": "8.5.25",
+    "postcss": "8.5.26",
     "sharp": "0.35.3",
     "fast-uri": "3.1.5",
     "minimatch": "10.2.5",
