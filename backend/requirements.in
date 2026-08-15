@@ -9,12 +9,12 @@
 
 # --- Web framework ---
 fastapi>=0.141.1,<1.0
-uvicorn[standard]>=0.52.0,<1.0
+uvicorn[standard]>=0.52.1,<1.0
 python-multipart>=0.0.32
 
 # --- Validation / settings ---
 pydantic>=2.9,<3.0
-pydantic-settings>=2.6,<3.0
+pydantic-settings>=2.15.0,<3.0
 email-validator>=2.2
 # Already pulled in by email-validator; named explicitly because
 # app/utils/mx_check.py imports dns.asyncresolver directly.
@@ -25,14 +25,14 @@ tzdata>=2024.1
 # --- Relational DB (async) ---
 sqlalchemy[asyncio]>=2.0.51,<2.1
 asyncpg>=0.30
-alembic>=1.14
+alembic>=1.19.0
 
 # --- NoSQL / Vector DB ---
 motor>=3.6
 # >=1.15: memory_service calls `query_points`, which replaced the `search` this
 # floor used to allow. Resolving below it would compile a lock whose client has
 # no `query_points` at all, and RAG degrades silently rather than failing loudly.
-qdrant-client>=1.15
+qdrant-client>=1.19.0
 
 # --- Rate limiting (shared buckets across workers/instances) ---
 redis>=8.1.0
