@@ -17,10 +17,10 @@
     "animejs": "4.5.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "input-otp": "1.4.2",
-    "lucide-react": "1.31.0",
+    "input-otp": "1.5.0",
+    "lucide-react": "1.32.0",
     "motion": "13.1.0",
-    "next": "16.3.0",
+    "next": "16.3.1",
     "ogl": "1.0.11",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -29,7 +29,7 @@
     "remark-gfm": "4.0.1",
     "server-only": "0.0.1",
     "tailwind-merge": "3.6.0",
-    "zustand": "5.0.14"
+    "zustand": "5.0.15"
   },
   "devDependencies": {
     "@types/node": "26.2.0",
@@ -37,11 +37,11 @@
     "@types/react-dom": "19.2.4",
     "autoprefixer": "10.5.4",
     "eslint": "9.18.0",
-    "eslint-config-next": "16.3.0",
+    "eslint-config-next": "16.3.1",
     "postcss": "8.5.26",
     "tailwindcss": "3.4.17",
     "typescript": "5.7.3",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "//overrides": "Transitive advisories that no direct dependency has released a fix for yet. Each entry is the lowest patched version inside the same major, so the parent's declared range still holds. Drop an entry once the parent ships a version that pulls the fix on its own -- `npm ls <name>` shows whether it is still needed. Pinned exactly, like every other version here (.npmrc sets save-exact).",
   "overrides": {
