@@ -685,8 +685,8 @@ CI regenerates both locks with exactly these commands and fails the PR if they d
 `scripts/relock.sh` (`relock.ps1` on Windows) runs exactly those two lines and prints the
 diff, so the commands above are never retyped by hand.
 
-**Every pip Dependabot PR needs that script run on its branch before it can merge**, and
-that is expected rather than a misconfiguration: Dependabot does not use uv, so it rewrites
+**Every pip Dependabot PR needs the locks regenerated on its branch before it can merge**,
+and that is expected rather than a misconfiguration: Dependabot does not use uv, so it rewrites
 the locks in its own style. It drops the environment markers — `uvloop` loses its
 `sys_platform != 'win32'` guard and `pywin32`/`colorama`/`async-timeout`/`tomli` disappear,
 which is the load-bearing damage because uvloop publishes no Windows wheel and this repo is
@@ -696,10 +696,21 @@ developed on Windows — it writes extras into the pin (`sqlalchemy[asyncio]`,
 the dev lock's `# via -c requirements.txt` annotations. The gate compares byte-for-byte, so
 all three read as drift.
 
-This is deliberately a local script and not a CI job that self-heals the branch. A push made
-with `GITHUB_TOKEN` does not start new workflow runs, so a bot that fixed the lock would
-leave the PR permanently unchecked; and a Dependabot `pull_request` event gets a read-only
-token, so it could not push at all without escalating to `pull_request_target`.
+`.github/workflows/dependabot.yml` runs that script for Dependabot's pip PRs and pushes the
+result, so the weekly batch merges itself; the local script remains for hand-edited `.in`
+files. Two facts shape that job. A push made with `GITHUB_TOKEN` does not start new workflow
+runs, so a bot that fixed the lock with it would leave the PR permanently unchecked — the
+push therefore uses `RELOCK_TOKEN`, a fine-grained PAT (Contents: read and write, this repo
+only) stored as a **Dependabot** secret, because a Dependabot-triggered `pull_request` run
+sees no other secrets. And Dependabot stops rebasing a PR once someone else has pushed to
+it, which under the ruleset's up-to-date requirement would strand every pip PR behind the
+first sibling to merge — so the relock commit carries `[dependabot skip]`, the documented
+marker that lets Dependabot force-push over it; the next `synchronize` event simply relocks
+again. The same workflow enables GitHub's native auto-merge on every Dependabot PR whose bump
+is patch or minor (base-image bumps patch-only, since a minor there is a new runtime line);
+majors stay manual. Auto-merge waits for every required check, so CI is still the gate.
+The token is the one piece that cannot be committed: with the secret missing the job fails
+with a message naming it, and the PR is handled by hand exactly as before.
 
 Frontend versions are pinned exactly (`.npmrc` sets `save-exact=true`); install with
 `npm ci`. `package.json` carries an `overrides` block for transitive advisories that no
