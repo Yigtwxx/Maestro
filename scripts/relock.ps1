@@ -22,12 +22,10 @@
     The gate compares byte-for-byte, so every pip Dependabot PR needs the locks
     regenerated before it can merge.
 
-    This is deliberately a local script rather than a CI job. A push made with
-    GITHUB_TOKEN does not start new workflow runs, so a bot that fixed the
-    branch would leave the PR permanently unchecked; and a Dependabot
-    pull_request event gets a read-only token, so it could not push at all
-    without escalating to pull_request_target. Running it from a real account
-    keeps both problems away.
+    For Dependabot's own pip PRs, .github/workflows/dependabot.yml runs
+    relock.sh and pushes the result (with a PAT, because a GITHUB_TOKEN push
+    starts no workflow runs). Run this by hand after editing a .in file
+    yourself, or when that workflow's RELOCK_TOKEN secret is missing.
 
 .EXAMPLE
     ./scripts/relock.ps1
