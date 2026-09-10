@@ -41,7 +41,6 @@ from app.core.constants import (
     MCP_PROTOCOL_VERSION,
 )
 from app.services import connected_common
-from app.utils.url_guard import check_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -186,18 +185,15 @@ async def _post(
 ) -> connected_common.TextResult:
     """One JSON-RPC POST through the shared, redirect-free client.
 
-    ``check_public_url`` runs on *every* POST, not once per registration. One
-    logical tool call is three connections, a record outlives its validation,
-    and the DNS for a host the user owns is theirs to change between any two of
-    them -- the same argument ``custom_api_service._call`` makes, one step
-    stronger.
+    The address is resolved, validated and **pinned** on *every* POST, not
+    checked once per registration. One logical tool call is three connections, a
+    record outlives its validation, and the DNS for a host the user owns is
+    theirs to change between any two of them. Pinning means the socket lands on
+    the address that was checked, so there is no window between the two -- while
+    ``Host`` and SNI still carry the real name, so TLS verifies normally.
     """
-    if settings.llm_ssrf_guard_enabled:
-        reason = await check_public_url(endpoint.url)
-        if reason is not None:
-            raise McpTransportError(f"the server address was refused: {reason}")
     remaining = max(_MIN_POST_TIMEOUT_SECONDS, deadline - time.monotonic())
-    return await connected_common.request_text(
+    result = await connected_common.request_text(
         endpoint.url,
         method="POST",
         headers=_headers(endpoint, session),
@@ -206,7 +202,11 @@ async def _post(
         log_target=_log_target(endpoint.url),
         max_bytes=max_bytes,
         capture_headers=(_SESSION_HEADER,),
+        pin_dns=settings.llm_ssrf_guard_enabled,
     )
+    if result.refusal is not None:
+        raise McpTransportError(f"the server address was refused: {result.refusal}")
+    return result
 
 
 def _dispatch(result: connected_common.TextResult, request_id: str) -> Any:

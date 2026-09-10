@@ -117,6 +117,70 @@ def test_unsupported_keywords_never_survive(hostile):
         assert "allOf" not in value
 
 
+def test_a_union_of_alternatives_collapses_to_its_first_usable_branch():
+    """``anyOf: [string, array<string>]`` is what Pydantic emits for
+    ``str | list[str]``, and it is everywhere in real MCP servers.
+
+    Found by driving discovery against a live server: refusing it withheld
+    DeepWiki's ``ask_question`` entirely, because the union sat on a *required*
+    property. Collapsing is sound — anything the chosen branch accepts, the
+    union accepted too — and no ``anyOf`` survives into the output, so providers
+    still see a schema they understand.
+    """
+    rebuilt = mcp_service.sanitize_schema(
+        {
+            "type": "object",
+            "properties": {
+                "repoName": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
+                    "description": "A repo, or a list of them.",
+                }
+            },
+            "required": ["repoName"],
+        }
+    )
+    assert rebuilt["properties"]["repoName"]["type"] == "string"
+    # The parent carried the prose; the branches carried only types.
+    assert (
+        rebuilt["properties"]["repoName"]["description"] == "A repo, or a list of them."
+    )
+    assert "anyOf" not in rebuilt["properties"]["repoName"]
+
+
+def test_allOf_is_still_refused():
+    """A conjunction, not a choice.
+
+    Picking one branch changes the contract rather than narrowing it, and
+    merging branches is a rewrite whose result nobody validated.
+    """
+    assert (
+        mcp_service.sanitize_schema(
+            {
+                "type": "object",
+                "properties": {"x": {"allOf": [{"type": "string"}]}},
+                "required": ["x"],
+            }
+        )
+        is None
+    )
+
+
+def test_a_union_of_unusable_branches_is_still_refused():
+    assert (
+        mcp_service.sanitize_schema(
+            {
+                "type": "object",
+                "properties": {"x": {"anyOf": [{"$ref": "#/a"}, {"allOf": []}]}},
+                "required": ["x"],
+            }
+        )
+        is None
+    )
+
+
 def test_a_required_property_that_cannot_be_rebuilt_withholds_the_schema():
     """Half a schema is worse than none: the server would reject every call."""
     assert (

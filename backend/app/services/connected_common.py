@@ -44,6 +44,7 @@ import httpx
 
 from app.core.constants import UNTRUSTED_CONTENT_NOTICE
 from app.utils.prompt_guard import is_suspicious
+from app.utils.url_guard import PinnedTarget, pin_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,9 @@ class ApiResult:
     # more than we will hold" from "the endpoint sent nothing usable", which are
     # different things to tell the model.
     oversized: bool = False
+    # Set when the SSRF guard refused the address before a socket was opened.
+    # Carries the reason so a caller can say which of the two happened.
+    refusal: str | None = None
 
 
 # Module-global so a single client is reused across calls (connection pooling)
@@ -91,6 +95,17 @@ def get_client() -> httpx.AsyncClient:
     if _client is None:
         _client = httpx.AsyncClient(follow_redirects=False)
     return _client
+
+
+def new_pinned_client() -> httpx.AsyncClient:
+    """A single-use client for one pinned request. See ``_stream_capped``.
+
+    A named function rather than an inline constructor so there is one place to
+    read — and one place for a test to substitute — exactly as ``get_client``
+    is. Redirects stay disabled here too: pinning bounds where the *first*
+    connection goes, and a followed hop would leave that bound behind.
+    """
+    return httpx.AsyncClient(follow_redirects=False)
 
 
 async def close_client() -> None:
@@ -144,6 +159,7 @@ async def request_api(
     log_target: str | None = None,
     follow_redirect_host: str | None = None,
     max_bytes: int | None = None,
+    pin_dns: bool = False,
 ) -> ApiResult:
     """Call ``url`` and report both the parsed JSON and how the call ended.
 
@@ -166,7 +182,15 @@ async def request_api(
     target = log_target or _safe_target(url)
     if max_bytes is not None:
         return await _send_capped(
-            method, url, headers, params, json_body, timeout, target, max_bytes
+            method,
+            url,
+            headers,
+            params,
+            json_body,
+            timeout,
+            target,
+            max_bytes,
+            pin_dns=pin_dns,
         )
     response = await _send(method, url, headers, params, json_body, timeout, target)
     if response is None:
@@ -215,6 +239,8 @@ class TextResult:
     status: int = 0
     headers: dict[str, str] = field(default_factory=dict)
     oversized: bool = False
+    # Set when the SSRF guard refused the address before a socket was opened.
+    refusal: str | None = None
 
 
 async def request_text(
@@ -227,6 +253,7 @@ async def request_text(
     log_target: str,
     max_bytes: int,
     capture_headers: tuple[str, ...] = (),
+    pin_dns: bool = False,
 ) -> TextResult:
     """Call ``url`` and return the body as text. Never raises, never logs a body.
 
@@ -241,11 +268,19 @@ async def request_text(
     label nor an unbounded read is a safe default.
     """
     streamed = await _stream_capped(
-        method, url, headers, None, json_body, timeout, log_target, max_bytes
+        method,
+        url,
+        headers,
+        None,
+        json_body,
+        timeout,
+        log_target,
+        max_bytes,
+        pin_dns=pin_dns,
     )
     response = streamed.response
     if response is None:
-        return TextResult()
+        return TextResult(refusal=streamed.refusal)
     captured = {
         name: response.headers[name]
         for name in capture_headers
@@ -296,6 +331,9 @@ class _Streamed:
     response: httpx.Response | None = None
     body: bytearray = field(default_factory=bytearray)
     oversized: bool = False
+    # Set when the guard refused before a socket was opened, so a caller can
+    # tell "we would not go there" from "we went and it failed".
+    refusal: str | None = None
 
 
 async def _stream_capped(
@@ -307,6 +345,7 @@ async def _stream_capped(
     timeout: float,
     target: str,
     max_bytes: int,
+    pin_dns: bool = False,
 ) -> _Streamed:
     """One HTTP call whose body is abandoned past ``max_bytes``.
 
@@ -319,11 +358,44 @@ async def _stream_capped(
     never-raises discipline have exactly one implementation. A second copy of
     this loop would be two implementations of one invariant.
     """
+    pinned: PinnedTarget | None = None
+    if pin_dns:
+        pinned, reason = await pin_public_url(url)
+        if pinned is None:
+            logger.warning("API request refused before connecting: %s", target)
+            return _Streamed(refusal=reason)
+
+    # A pinned request gets its own client, and this is not an optimization
+    # oversight. Pinning rewrites the URL host to a literal address, and
+    # httpcore keys its connection pool on exactly that — so two *different*
+    # hostnames resolving to one shared CDN address would share a TLS
+    # connection, and the second one's certificate would never be verified. That
+    # is not hypothetical: the two real MCP servers this was first tested
+    # against both sit behind shared CDN addresses. A dedicated client makes the
+    # reuse structurally impossible.
+    #
+    # The cost is one TLS handshake per pinned request, paid only on the three
+    # user-supplied-host paths. A client cached per hostname would recover the
+    # pooling, at the price of eviction racing an in-flight request — the same
+    # trade ``McpSession`` declines when it stays stateless.
+    client = new_pinned_client() if pinned else get_client()
     try:
-        client = get_client()
         request = client.build_request(
-            method, url, headers=headers, params=params, json=json_body, timeout=timeout
+            method,
+            pinned.url if pinned else url,
+            headers=headers,
+            params=params,
+            json=json_body,
+            timeout=timeout,
         )
+        if pinned is not None:
+            # Connect to the literal address that was validated, but present the
+            # original name: ``Host`` so virtual hosting still routes, and
+            # ``sni_hostname`` so TLS verifies the certificate against the name
+            # the user typed. Pinning the address must never become "skip the
+            # certificate check".
+            request.headers["Host"] = pinned.host_header
+            request.extensions["sni_hostname"] = pinned.sni_hostname
         response = await client.send(request, stream=True)
         try:
             if response.status_code >= 400:
@@ -340,6 +412,11 @@ async def _stream_capped(
     except Exception:  # noqa: BLE001 - httpx raises assorted types; best-effort
         logger.warning("API request failed: %s", target)
         return _Streamed()
+    finally:
+        if pinned is not None:
+            # Safe here and not before: the body above is fully read (or
+            # abandoned) by the time this runs, so nothing is in flight.
+            await client.aclose()
     return _Streamed(response=response, body=body)
 
 
@@ -352,14 +429,23 @@ async def _send_capped(
     timeout: float,
     target: str,
     max_bytes: int,
+    pin_dns: bool = False,
 ) -> ApiResult:
     """A capped call whose body is parsed as JSON."""
     streamed = await _stream_capped(
-        method, url, headers, params, json_body, timeout, target, max_bytes
+        method,
+        url,
+        headers,
+        params,
+        json_body,
+        timeout,
+        target,
+        max_bytes,
+        pin_dns=pin_dns,
     )
     response = streamed.response
     if response is None:
-        return ApiResult()
+        return ApiResult(refusal=streamed.refusal)
     if response.status_code >= 400:
         return ApiResult(
             status=response.status_code, rate_limited=_is_rate_limited(response)

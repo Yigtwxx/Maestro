@@ -8,6 +8,7 @@ owns is theirs to change afterwards.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from app.core.config import settings
@@ -209,11 +210,18 @@ async def test_call_refuses_a_host_that_turned_private_after_registration(
     """
     sent: list[str] = []
 
-    async def _never(*args, **kwargs):  # pragma: no cover - must not run
-        sent.append(args[0] if args else "")
-        return connected_common.ApiResult(data={"ok": True}, status=200)
+    def _never(request):  # pragma: no cover - must not run
+        sent.append(str(request.url))
+        return httpx.Response(200, json={"ok": True})
 
-    monkeypatch.setattr(connected_common, "request_api", _never)
+    monkeypatch.setattr(
+        connected_common,
+        "new_pinned_client",
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(_never), follow_redirects=False
+        ),
+    )
+    monkeypatch.setattr(url_guard, "resolve_addresses", lambda _host: {"10.0.0.5"})
     monkeypatch.setattr(url_guard, "resolve_is_public", lambda _host: False)
 
     result = await custom_api_service.call(_tool(), {})
@@ -224,16 +232,26 @@ async def test_call_refuses_a_host_that_turned_private_after_registration(
 async def test_call_proceeds_when_the_host_is_public(monkeypatch) -> None:
     calls: list[str] = []
 
-    async def _ok(url: str, **_kwargs):
-        calls.append(url)
-        return connected_common.ApiResult(data={"ok": True}, status=200)
+    def _ok(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, json={"ok": True})
 
-    monkeypatch.setattr(connected_common, "request_api", _ok)
+    monkeypatch.setattr(
+        connected_common,
+        "new_pinned_client",
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(_ok), follow_redirects=False
+        ),
+    )
+    monkeypatch.setattr(url_guard, "resolve_addresses", lambda _host: {"93.184.216.34"})
     monkeypatch.setattr(url_guard, "resolve_is_public", lambda _host: True)
 
     result = await custom_api_service.call(_tool(), {})
     assert result.startswith("<custom_api_result>"), result
-    assert calls == ["https://api.example.com/v1/ping"]
+    # The socket went to the validated literal address, not to the name — and
+    # the path it was built from is unchanged, so pinning rewrote the host and
+    # nothing else.
+    assert calls == ["https://93.184.216.34/v1/ping"], calls
 
 
 async def test_call_skips_the_check_when_the_operator_disabled_the_guard(

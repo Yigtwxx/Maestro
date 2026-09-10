@@ -180,6 +180,35 @@ def sanitize_schema(node: Any, depth: int = 0) -> dict[str, Any] | None:
         # providers. Take the first scalar member rather than refusing outright.
         declared = next((t for t in declared if t in _SCALAR_TYPES), None)
     if not isinstance(declared, str):
+        # No usable ``type``, but the node may still be a *choice* between
+        # concrete alternatives. ``anyOf``/``oneOf`` collapse soundly: pick the
+        # first branch that rebuilds and describe that one, since anything the
+        # branch accepts the union accepted too. This matters in practice —
+        # ``anyOf: [string, array<string>]`` is what Pydantic emits for
+        # ``str | list[str]``, and refusing it withheld a real, popular tool on
+        # a live server.
+        #
+        # ``allOf`` is deliberately NOT collapsed. It is a conjunction, so
+        # picking one branch changes the contract rather than narrowing it, and
+        # merging branches is a rewrite whose result nobody validated.
+        for keyword in ("anyOf", "oneOf"):
+            branches = node.get(keyword)
+            if not isinstance(branches, list):
+                continue
+            for branch in branches:
+                rebuilt = sanitize_schema(branch, depth)
+                if rebuilt is None:
+                    continue
+                # The parent usually carries the human-readable description
+                # while the branches carry only types; keep the parent's, still
+                # capped and scanned like any other.
+                for inherited in ("title", "description"):
+                    text = _single_line(node.get(inherited))
+                    if text and inherited not in rebuilt:
+                        rebuilt[inherited] = connected_common.truncate(
+                            text, MCP_SCHEMA_DESCRIPTION_MAX_CHARS
+                        )
+                return rebuilt
         return None
 
     out: dict[str, Any] = {"type": declared}

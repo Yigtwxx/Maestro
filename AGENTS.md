@@ -400,7 +400,7 @@ The host is user-supplied, so it inherits the whole `custom_api` SSRF story, one
 stronger: `url_guard` runs at the schema (shape, DNS-free), in the route
 (`_outbound.reject_private_host`, resolving) and again inside `mcp_transport._post` — on
 **every** POST, because one logical tool call is three connections and their DNS can
-differ between them. The client constructs no HTTP client of its own; every socket is
+differ between them. That third check **pins**: see the DNS-rebinding paragraph below. The client constructs no HTTP client of its own; every socket is
 `connected_common.get_client()`, which follows no redirects, and a 3xx is reported as a
 failure rather than a hop. `MCP_ENABLED` ships **off** and the executor refuses a second
 time if reached anyway.
@@ -502,6 +502,33 @@ Admin takedown reuses the marketplace machinery unchanged: a hidden or removed c
 entry stops being installable, and **copies already installed keep working** — the records
 live in the installer's own account. That is the same behaviour a taken-down marketplace
 agent has, and it is stated here because the opposite is easy to assume.
+
+**DNS rebinding, closed.** `url_guard.check_public_url` validates the addresses a name
+resolves to *now*, and by itself cannot stop the name resolving elsewhere before a socket
+opens. That window used to be documented as accepted residual risk, and it is the single
+reason `CUSTOM_API_TOOLS_ENABLED` and `MCP_ENABLED` both ship off. `pin_public_url` closes
+it for the three paths where the host is *user-supplied* — custom API tools, MCP servers,
+plugin manifest imports: it resolves once, refuses unless **every** returned address is
+globally routable (a name answering with one public and one private address is the
+rebinding setup itself, so picking the public one would make it work), and hands back the
+literal address to connect to. The request goes to that address while `Host` and the TLS
+SNI still carry the original name, so virtual hosting routes and the certificate is still
+verified against what the user typed. Pinning the address must never become "skip the
+certificate check", and a test asserts both halves.
+
+A pinned request gets its **own** HTTP client rather than the shared one, and that is not
+an optimization oversight. httpcore keys its connection pool on the origin, which after
+pinning is the literal address — so two *different* hostnames behind one shared CDN
+address would share a TLS connection, and the second one's certificate would never be
+verified. That is not hypothetical: both real MCP servers this was first tested against
+sit behind shared CDN addresses. A dedicated client makes the reuse structurally
+impossible; the cost is one TLS handshake per pinned request, paid only on those three
+paths. A client cached per hostname would recover the pooling at the price of eviction
+racing an in-flight request — the trade `McpSession` declines for the same reason.
+
+`data_fetch` deliberately keeps the unpinned check: its engine drives libcurl, whose SAFE
+redirect mode refuses a hop to an internal address before the request is made and which
+never exposes a socket to pin.
 
 **Prompt injection.** Marketplace submissions are security-scanned on publish. Custom
 system prompts are scanned on write and sandboxed inside `<agent_persona>` at execution

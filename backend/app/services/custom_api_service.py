@@ -61,7 +61,6 @@ from app.schemas.custom_api_tool import (
 )
 from app.services import connected_common
 from app.utils import prompt_guard
-from app.utils.url_guard import check_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -647,21 +646,13 @@ async def _call(tool: CustomApiTool, args: dict[str, str]) -> str:
 
     url, query, headers, body = _build_request(tool, values)
 
-    if settings.llm_ssrf_guard_enabled:
-        # Re-checked here and not only at registration: the record outlives its
-        # validation, and the hostname's DNS is the user's to change. Gated on
-        # the same switch the route uses — that setting means "this deployment
-        # may reach private hosts", and honouring it in one place but not the
-        # other would make a tool registrable and then silently unusable.
-        reason = await check_public_url(url)
-        if reason:
-            logger.warning(
-                "Custom API tool %s refused by url_guard: %s", tool.slug, reason
-            )
-            return connected_common.failure(
-                tool.name, f"the endpoint is not reachable ({reason})"
-            )
-
+    # The address is re-validated here and not only at registration — a record
+    # outlives its validation and the hostname's DNS is the user's to change —
+    # and it is *pinned*, so the socket lands on the address that was checked
+    # rather than on whatever the name resolves to a moment later. Gated on the
+    # same switch the route uses: that setting means "this deployment may reach
+    # private hosts", and honouring it in one place but not the other would make
+    # a tool registrable and then silently unusable.
     result = await connected_common.request_api(
         url,
         method=tool.method,
@@ -676,8 +667,18 @@ async def _call(tool: CustomApiTool, args: dict[str, str]) -> str:
         # redirects, and that is what keeps an Authorization header from reaching
         # another origin (CLAUDE.md §8).
         max_bytes=CUSTOM_API_MAX_BYTES,
+        # Resolve, validate and *pin*: the socket lands on the address that was
+        # checked, so the name cannot move between the check and the connection.
+        pin_dns=settings.llm_ssrf_guard_enabled,
     )
 
+    if result.refusal is not None:
+        logger.warning(
+            "Custom API tool %s refused by url_guard: %s", tool.slug, result.refusal
+        )
+        return connected_common.failure(
+            tool.name, f"the endpoint is not reachable ({result.refusal})"
+        )
     if result.oversized:
         return connected_common.failure(tool.name, "the response was too large to read")
     if 300 <= result.status < 400:

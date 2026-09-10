@@ -70,7 +70,6 @@ from app.services import (
     skill_service,
 )
 from app.utils import prompt_guard
-from app.utils.url_guard import check_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -418,22 +417,21 @@ async def fetch_manifest(url: str) -> PluginManifest:
     That is why it sits behind its own switch, and why the confirmation screen
     shows the host verbatim.
 
-    ``url_guard`` runs here for the third time — schema, route, and now, because
-    a URL the user typed a moment ago can still resolve somewhere else by the
-    time it is fetched.
+    ``url_guard`` runs here for the third time — schema, route, and now — and
+    this one *pins*: a URL the user typed a moment ago can resolve somewhere else
+    by the time it is fetched, so the socket goes to the address that was
+    validated rather than to whatever the name says next.
     """
-    if settings.llm_ssrf_guard_enabled:
-        reason = await check_public_url(url)
-        if reason is not None:
-            raise PluginValidationError(f"Manifest URL rejected: {reason}.")
-
     result = await connected_common.request_api(
         url,
         method="GET",
         timeout=float(settings.plugin_import_timeout_seconds),
         max_bytes=PLUGIN_MANIFEST_MAX_BYTES,
         log_target=urlsplit(url).netloc or "<manifest host>",
+        pin_dns=settings.llm_ssrf_guard_enabled,
     )
+    if result.refusal is not None:
+        raise PluginValidationError(f"Manifest URL rejected: {result.refusal}.")
     if result.oversized:
         raise PluginValidationError("That manifest is too large to read.")
     if result.data is None:
