@@ -277,9 +277,11 @@ DOMAIN: DomainInfo = DomainInfo(
     # Contrastive against social (public web conversation) — this domain reads
     # channels the user owns and produces a work list, not a sentiment reading.
     routing_hint=(
-        "reading your own Discord, Slack or Telegram community to find "
-        "recurring complaints, feature requests and support themes, and turn "
-        "them into a backlog; NOT public social media monitoring"
+        "reading your own Discord, Slack or Telegram community for the "
+        "recurring complaints and feature requests that build up over time, "
+        "and turning them into a product backlog; NOT triaging what is being "
+        "reported right now or drafting the replies, which belongs to support, "
+        "and NOT public social media monitoring"
     ),
     group="operate",
     methodology=_METHODOLOGY,

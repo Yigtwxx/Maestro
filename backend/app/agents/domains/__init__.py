@@ -77,10 +77,12 @@ DOMAIN_GROUP_CATALOG: tuple[DomainGroup, ...] = (
             "judging software someone else wrote."
         ),
         routing_hint=(
-            "building or operating software: writing and debugging code, "
-            "testing, infrastructure and deployment, cloud and API design, "
-            "security review, analysing data with code, evaluating a library "
-            "or repository; NOT looking up a fact about a tool"
+            "building, running and operating software and the infrastructure "
+            "under it: writing and debugging code, testing, deployment "
+            "pipelines, containers, monitoring, incidents and rollbacks, cloud "
+            "and API design, security review, analysing data with code, "
+            "evaluating a library or repository; NOT deciding what to build in "
+            "the first place, and NOT looking up a fact about a tool"
         ),
         default_domain="software",
     ),
@@ -92,11 +94,13 @@ DOMAIN_GROUP_CATALOG: tuple[DomainGroup, ...] = (
             "channels, content, advertising and what people are saying."
         ),
         routing_hint=(
-            "reaching or persuading an audience: campaigns, positioning, "
-            "search visibility, written and published content, paid "
-            "advertising, brand and press, selling, what a product should be, "
-            "online store operations, measuring public reaction; NOT the "
-            "financial modelling behind a decision"
+            "deciding what a product should be, and reaching the audience for "
+            "it: requirements, MVP scope and what to cut, campaigns, "
+            "positioning, search visibility, written and published content, "
+            "paid advertising, brand and press, selling, online store "
+            "operations, measuring public reaction; NOT building or operating "
+            "the software itself, and NOT the financial modelling behind a "
+            "decision"
         ),
         default_domain="marketing",
     ),
@@ -123,10 +127,14 @@ DOMAIN_GROUP_CATALOG: tuple[DomainGroup, ...] = (
             "customers, delivery and suppliers."
         ),
         routing_hint=(
-            "running an organisation: contracts, licensing and regulatory "
-            "compliance, hiring and people policy, customer support and what "
-            "users are reporting, project planning and delivery, choosing and "
-            "negotiating with vendors; NOT building the product itself"
+            "running an organisation and serving the people it deals with: "
+            "contracts, licensing and regulatory compliance, hiring and people "
+            "policy as the employer, what your customers are reporting and how "
+            "support answers them, project planning and delivery, choosing and "
+            "negotiating with vendors; NOT building, running or operating your "
+            "own systems and infrastructure, NOT the product decisions behind "
+            "them, and NOT one person's own career, CV or job search, which is "
+            "a personal decision"
         ),
         default_domain="legal",
     ),
