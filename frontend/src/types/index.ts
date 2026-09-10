@@ -737,6 +737,27 @@ export interface PluginInstallMember {
   edited: boolean;
 }
 
+export interface PluginUpgradeChange {
+  kind: 'skill' | 'mcp_server' | 'agent';
+  slug: string;
+  name: string;
+  action: 'created' | 'updated' | 'unchanged' | 'removed' | 'conflict';
+  // Fields the new version changed and the upgrade applied.
+  applied: string[];
+  // Fields the new version changed that you had also changed, so they were
+  // left alone. This is why the upgrade is a three-way merge, not an overwrite.
+  conflicted: string[];
+  note: string;
+}
+
+export interface PluginUpgradeResult {
+  dry_run: boolean;
+  from_version: string;
+  to_version: string;
+  changed: boolean;
+  changes: PluginUpgradeChange[];
+}
+
 export interface PluginUninstallPreview {
   plugin_id: string;
   name: string;

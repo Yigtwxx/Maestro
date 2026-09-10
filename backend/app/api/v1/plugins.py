@@ -15,7 +15,7 @@ not communicate on its own.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.v1._outbound import reject_private_host
 from app.core.config import settings
@@ -29,9 +29,11 @@ from app.schemas.plugin import (
     PluginDetail,
     PluginImport,
     PluginInstallPublic,
+    PluginManifest,
     PluginPublic,
     PluginPublish,
     PluginUninstallPreview,
+    PluginUpgradeResult,
 )
 from app.services import plugin_service
 from app.services.agent_service import AgentValidationError
@@ -150,6 +152,66 @@ async def import_plugin(payload: PluginImport, user: VerifiedUser) -> dict:
         )
     except (PluginValidationError, PluginSecurityError, AgentValidationError) as exc:
         raise _bad_request(exc) from exc
+
+
+@router.post(
+    "/installed/{install_id}/upgrade",
+    response_model=PluginUpgradeResult,
+    dependencies=[_write_rate_limit],
+)
+async def upgrade_plugin(
+    install_id: str,
+    user: VerifiedUser,
+    dry_run: bool = Query(default=False),
+) -> PluginUpgradeResult:
+    """Apply the newest version of an installed bundle.
+
+    ``dry_run=true`` returns the same result without writing, so the UI can show
+    exactly what will change and what it will leave alone. One code path for
+    both: a separate preview endpoint is a preview that can drift from what
+    actually happens.
+
+    A bundle installed from a URL is re-fetched from that URL, which needs the
+    import switch — re-reading an unreviewed source is the same act as importing
+    one, not a lesser one.
+    """
+    _require_enabled()
+    row = await plugin_service.get_install(user.id, install_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Plugin not installed."
+        )
+
+    try:
+        if row.get("source") == "url":
+            if not settings.plugin_external_import_enabled:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "Re-reading a plugin from a URL is disabled on this deployment."
+                    ),
+                )
+            origin = row.get("origin_url") or ""
+            await reject_private_host(origin)
+            manifest = await plugin_service.fetch_manifest(origin)
+        else:
+            item = await plugin_service.get_plugin(row.get("catalog_item_id") or "")
+            if item is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="That plugin is no longer available in the catalog.",
+                )
+            manifest = PluginManifest(**item["manifest"])
+        result = await plugin_service.upgrade(
+            user.id, install_id, manifest, dry_run=dry_run
+        )
+    except (PluginValidationError, PluginSecurityError, AgentValidationError) as exc:
+        raise _bad_request(exc) from exc
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Plugin not installed."
+        )
+    return result
 
 
 @router.get(

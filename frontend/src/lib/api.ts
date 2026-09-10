@@ -51,6 +51,7 @@ import type {
   PluginInstall,
   PluginManifest,
   PluginUninstallPreview,
+  PluginUpgradeResult,
   RecoveryCodes,
   ReportInput,
   ReportStatus,
@@ -858,6 +859,15 @@ export const api = {
 
   listInstalledPlugins() {
     return request<PluginInstall[]>('/api/v1/plugins/installed');
+  },
+
+  // `dryRun` returns exactly what a real upgrade would do, without writing —
+  // same code path, so the preview cannot drift from what happens.
+  upgradePlugin(installId: string, dryRun = false) {
+    return request<PluginUpgradeResult>(
+      `/api/v1/plugins/installed/${installId}/upgrade?dry_run=${dryRun}`,
+      { method: 'POST' },
+    );
   },
 
   // Always call before uninstalling: it flags records the user has since

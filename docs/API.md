@@ -79,6 +79,7 @@ GET    /api/v1/plugins/{id}                 # with the manifest, for the confirm
 POST   /api/v1/plugins/{id}/install
 POST   /api/v1/plugins/import               # own switch; outbound-probe limit
 GET    /api/v1/plugins/installed
+POST   /api/v1/plugins/installed/{id}/upgrade  # ?dry_run=true previews the merge
 GET    /api/v1/plugins/installed/{id}/uninstall-preview
 DELETE /api/v1/plugins/installed/{id}
 

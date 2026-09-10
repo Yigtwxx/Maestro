@@ -10,6 +10,7 @@ import { Stagger, StaggerItem } from '@/components/effects/Stagger';
 import { PageShell } from '@/components/layout/PageShell';
 import { PluginInstallDialog } from '@/components/plugins/PluginInstallDialog';
 import { PluginUninstallDialog } from '@/components/plugins/PluginUninstallDialog';
+import { PluginUpgradeDialog } from '@/components/plugins/PluginUpgradeDialog';
 import { api, ApiError } from '@/lib/api';
 import { toast } from '@/stores/toast';
 import type { Plugin, PluginDetail, PluginInstall } from '@/types';
@@ -26,6 +27,7 @@ export default function PluginsPage() {
   const [error, setError] = useState<string | undefined>();
   const [detail, setDetail] = useState<PluginDetail | undefined>();
   const [removing, setRemoving] = useState<PluginInstall | undefined>();
+  const [upgrading, setUpgrading] = useState<PluginInstall | undefined>();
   const [importUrl, setImportUrl] = useState('');
   const [importing, setImporting] = useState(false);
 
@@ -126,13 +128,22 @@ export default function PluginsPage() {
                     </p>
                   )}
                 </div>
-                <Button
-                  variant="ghost"
-                  onClick={() => setRemoving(row)}
-                  aria-label={`Remove ${row.name}`}
-                >
-                  Remove
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => setUpgrading(row)}
+                    aria-label={`Check for an update to ${row.name}`}
+                  >
+                    Check for update
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setRemoving(row)}
+                    aria-label={`Remove ${row.name}`}
+                  >
+                    Remove
+                  </Button>
+                </div>
               </li>
             ))}
           </ul>
@@ -221,6 +232,14 @@ export default function PluginsPage() {
         onClose={() => setDetail(undefined)}
         onInstalled={async () => {
           setDetail(undefined);
+          await load();
+        }}
+      />
+      <PluginUpgradeDialog
+        install={upgrading}
+        onClose={() => setUpgrading(undefined)}
+        onUpgraded={async () => {
+          setUpgrading(undefined);
           await load();
         }}
       />

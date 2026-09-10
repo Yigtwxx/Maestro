@@ -258,3 +258,34 @@ class PluginUninstallPreview(BaseModel):
     plugin_id: str
     name: str
     members: list[PluginInstallMember] = Field(default_factory=list)
+
+
+class PluginUpgradeChange(BaseModel):
+    """One member's fate in an upgrade, and why."""
+
+    kind: Literal["skill", "mcp_server", "agent"]
+    slug: str
+    name: str = ""
+    action: Literal["created", "updated", "unchanged", "removed", "conflict"]
+    # Fields the new version changed and this upgrade applied.
+    applied: list[str] = Field(default_factory=list)
+    # Fields the new version changed that the *user* had also changed, so they
+    # were left alone. This is the whole reason the upgrade is a three-way merge
+    # rather than an overwrite.
+    conflicted: list[str] = Field(default_factory=list)
+    note: str = ""
+
+
+class PluginUpgradeResult(BaseModel):
+    """What an upgrade did, or would do when ``dry_run`` was set.
+
+    One shape for both, so the preview a user approves is produced by the same
+    code that applies it — a separate preview path is a preview that can drift
+    from what happens.
+    """
+
+    dry_run: bool
+    from_version: str
+    to_version: str
+    changed: bool
+    changes: list[PluginUpgradeChange] = Field(default_factory=list)

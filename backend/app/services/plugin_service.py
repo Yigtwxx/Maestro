@@ -61,6 +61,8 @@ from app.schemas.plugin import (
     PluginInstallMember,
     PluginManifest,
     PluginUninstallPreview,
+    PluginUpgradeChange,
+    PluginUpgradeResult,
 )
 from app.schemas.skill import SkillCreate
 from app.services import (
@@ -296,6 +298,7 @@ async def install(
     created: dict[str, list[str]] = {"skills": [], "mcp_servers": [], "agents": []}
     skill_ids: dict[str, str] = {}
     server_ids: dict[str, str] = {}
+    agent_ids: dict[str, str] = {}
     needs_credentials: list[str] = []
     plugin_row_id = str(uuid.uuid4())
 
@@ -357,6 +360,7 @@ async def install(
                 source="plugin",
                 plugin_id=plugin_row_id,
             )
+            agent_ids[member.slug] = record["id"]
             created["agents"].append(record["id"])
     except Exception:
         await _rollback(user_id, created)
@@ -373,6 +377,18 @@ async def install(
         "catalog_item_id": catalog_item_id,
         "origin_url": origin_url,
         "manifest_digest": manifest_digest(manifest),
+        # The baseline a later upgrade diffs against. Kept whole rather than as
+        # per-field digests: an upgrade has to answer "did the *plugin* change
+        # this field, or did the *user*", and only the installed values can
+        # answer the first half. Bounded by PLUGIN_MANIFEST_MAX_BYTES.
+        "installed_manifest": manifest.model_dump(mode="json"),
+        # Manifest slug -> the record this install created for it. Without this
+        # an upgrade can only match by name, which the user is free to change.
+        "member_ids": {
+            "skill": skill_ids,
+            "mcp_server": server_ids,
+            "agent": agent_ids,
+        },
         "created_skill_ids": created["skills"],
         "created_mcp_server_ids": created["mcp_servers"],
         "created_agent_ids": created["agents"],
@@ -555,6 +571,283 @@ async def uninstall(user_id: uuid.UUID, install_id: str) -> bool:
 
     await _installs().delete_one({"id": install_id, "user_id": str(user_id)})
     return True
+
+
+# --- upgrading --------------------------------------------------------------
+#
+# An upgrade is a **three-way merge**, not an overwrite. Comparing the new
+# manifest against the *record* cannot tell "the plugin changed this" from "the
+# user changed this", and comparing timestamps cannot either — a record touched
+# once looks edited forever, even if the user changed a field and changed it
+# back. The installed manifest is kept precisely to be the third point: a field
+# is applied when the plugin changed it and the user did not, and reported as a
+# conflict when both did.
+
+# The fields an upgrade may carry, per member kind. Everything absent is either
+# the user's alone (an MCP server's credential and its discovered catalog) or
+# not a manifest concern (ids, timestamps, provenance).
+_UPGRADE_FIELDS: dict[str, tuple[str, ...]] = {
+    "skill": ("name", "description", "instructions", "output_format", "required_tools"),
+    "mcp_server": (
+        "name",
+        "description",
+        "url",
+        "transport",
+        "auth_mode",
+        "auth_name",
+        "timeout_seconds",
+    ),
+    "agent": (
+        "name",
+        "domain",
+        "system_prompt",
+        "tools",
+        "description",
+        "routing_hint",
+        "output_format",
+        "routable",
+    ),
+}
+
+_MANIFEST_GROUP = {"skill": "skills", "mcp_server": "mcp_servers", "agent": "agents"}
+
+
+def _by_slug(manifest_group: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {member["slug"]: member for member in manifest_group}
+
+
+def _merge_fields(
+    kind: str,
+    installed: dict[str, Any],
+    incoming: dict[str, Any],
+    record: dict[str, Any],
+) -> tuple[dict[str, Any], list[str], list[str]]:
+    """Three-way merge one member. Returns (changes, applied, conflicted)."""
+    changes: dict[str, Any] = {}
+    applied: list[str] = []
+    conflicted: list[str] = []
+    for name in _UPGRADE_FIELDS[kind]:
+        base = installed.get(name)
+        new = incoming.get(name)
+        current = record.get(name)
+        if new == base:
+            continue  # The plugin did not touch it; nothing to apply.
+        if current != base:
+            # Both moved. Leaving the user's value is the only answer that
+            # cannot lose work they did deliberately.
+            conflicted.append(name)
+            continue
+        changes[name] = new
+        applied.append(name)
+    return changes, applied, conflicted
+
+
+async def upgrade(
+    user_id: uuid.UUID,
+    install_id: str,
+    manifest: PluginManifest,
+    *,
+    dry_run: bool = False,
+) -> PluginUpgradeResult | None:
+    """Apply a newer version of an installed bundle. Returns None if not found.
+
+    ``dry_run`` produces the same result without writing, so the preview a user
+    approves comes from the code that applies it — a separate preview path is a
+    preview that can drift.
+
+    A member the new version dropped is **left in place** and reported, never
+    deleted. Deleting is what uninstall does, behind its own confirmation; an
+    upgrade quietly removing an agent someone uses every day would be the worst
+    kind of surprise.
+    """
+    row = await get_install(user_id, install_id)
+    if row is None:
+        return None
+    _scan(manifest)
+
+    installed_manifest = row.get("installed_manifest") or {}
+    member_ids: dict[str, dict[str, str]] = row.get("member_ids") or {}
+    changes: list[PluginUpgradeChange] = []
+
+    for kind, group in _MANIFEST_GROUP.items():
+        installed_members = _by_slug(installed_manifest.get(group) or [])
+        incoming_members = _by_slug(
+            [m.model_dump(mode="json") for m in getattr(manifest, group)]
+        )
+        ids = member_ids.get(kind) or {}
+
+        for slug in sorted(set(installed_members) | set(incoming_members)):
+            incoming = incoming_members.get(slug)
+            installed = installed_members.get(slug)
+
+            if incoming is None:
+                changes.append(
+                    PluginUpgradeChange(
+                        kind=kind,
+                        slug=slug,
+                        name=(installed or {}).get("name", slug),
+                        action="removed",
+                        note="dropped by the new version; left in place",
+                    )
+                )
+                continue
+
+            record_id = ids.get(slug)
+            record = await _fetch_member(user_id, kind, record_id)
+            if record is None:
+                # New in this version, or the user deleted it. Either way the
+                # honest answer is to create it — through the same insert point
+                # an install uses, so every cap and scan still applies.
+                if not dry_run:
+                    await _create_member(user_id, kind, incoming, install_id, ids)
+                changes.append(
+                    PluginUpgradeChange(
+                        kind=kind, slug=slug, name=incoming["name"], action="created"
+                    )
+                )
+                continue
+
+            field_changes, applied, conflicted = _merge_fields(
+                kind, installed or {}, incoming, record
+            )
+            if kind == "mcp_server" and "url" in applied:
+                # Non-negotiable. Letting an upgrade repoint a server while its
+                # stored credential travels along would send the user's token to
+                # a host they never authorized. The catalog goes too: those tool
+                # descriptions describe whatever used to answer at the old
+                # address.
+                field_changes |= {
+                    "encrypted_secret": None,
+                    "secret_hint": None,
+                    "enabled": False,
+                    "tools": [],
+                    "tools_fetched_at": None,
+                    "tools_stale": True,
+                }
+                applied.append("credential cleared")
+
+            if not applied and not conflicted:
+                changes.append(
+                    PluginUpgradeChange(
+                        kind=kind,
+                        slug=slug,
+                        name=record.get("name", slug),
+                        action="unchanged",
+                    )
+                )
+                continue
+
+            if field_changes and not dry_run:
+                await _write_member(user_id, kind, record_id, field_changes)
+            changes.append(
+                PluginUpgradeChange(
+                    kind=kind,
+                    slug=slug,
+                    name=record.get("name", slug),
+                    action="conflict" if conflicted else "updated",
+                    applied=applied,
+                    conflicted=conflicted,
+                    note=(
+                        "you had changed these, so they were left alone"
+                        if conflicted
+                        else ""
+                    ),
+                )
+            )
+
+    changed = any(c.action in ("created", "updated", "conflict") for c in changes)
+    if not dry_run and changed:
+        await _installs().update_one(
+            {"id": install_id, "user_id": str(user_id)},
+            {
+                "$set": {
+                    "version": manifest.version,
+                    "manifest_digest": manifest_digest(manifest),
+                    "installed_manifest": manifest.model_dump(mode="json"),
+                    "member_ids": member_ids,
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+    return PluginUpgradeResult(
+        dry_run=dry_run,
+        from_version=row.get("version", ""),
+        to_version=manifest.version,
+        changed=changed,
+        changes=changes,
+    )
+
+
+async def _fetch_member(
+    user_id: uuid.UUID, kind: str, record_id: str | None
+) -> dict[str, Any] | None:
+    if not record_id:
+        return None
+    if kind == "skill":
+        return await skill_service.get_skill(user_id, record_id)
+    if kind == "mcp_server":
+        return await mcp_service.get_server(user_id, record_id)
+    return await agent_service.get_agent(user_id, record_id)
+
+
+async def _write_member(
+    user_id: uuid.UUID, kind: str, record_id: str, changes: dict[str, Any]
+) -> None:
+    """Apply merged fields straight to the document.
+
+    Deliberately not through the ``*Update`` schemas: those are the shape of a
+    *user's* PATCH, and two of the fields an upgrade writes for a repointed MCP
+    server — clearing the stored credential, emptying the tool cache — have no
+    representation there precisely because a user must not be able to ask for
+    them. The values themselves were already validated as a manifest.
+    """
+    collection = {
+        "skill": skill_service._collection,
+        "mcp_server": mcp_service._collection,
+        "agent": agent_service._collection,
+    }[kind]()
+    await collection.update_one(
+        {"id": record_id, "user_id": str(user_id)},
+        {"$set": {**changes, "updated_at": datetime.now(UTC)}},
+    )
+
+
+async def _create_member(
+    user_id: uuid.UUID,
+    kind: str,
+    member: dict[str, Any],
+    install_id: str,
+    ids: dict[str, str],
+) -> None:
+    """Create a member an upgrade added, recording its new id."""
+    if kind == "skill":
+        record = await skill_service.create_skill(
+            user_id, SkillCreate(**member), source="plugin", plugin_id=install_id
+        )
+    elif kind == "mcp_server":
+        record = await mcp_service.create_server(
+            user_id,
+            McpServerCreate(
+                **member, secret=None, enabled=member.get("auth_mode") == "none"
+            ),
+            source="plugin",
+            plugin_id=install_id,
+        )
+    else:
+        record = await agent_service.create_agent(
+            user_id,
+            AgentConfigCreate(
+                **{
+                    k: v
+                    for k, v in member.items()
+                    if k not in ("slug", "skill_slugs", "mcp_server_slugs")
+                },
+                custom_api_tool_ids=[],
+            ),
+            source="plugin",
+            plugin_id=install_id,
+        )
+    ids[member["slug"]] = record["id"]
 
 
 # --- admin ------------------------------------------------------------------

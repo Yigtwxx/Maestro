@@ -486,6 +486,25 @@ one another bundle has since adopted, survives. `plugin_installs` carries `user_
 unlike `marketplace_installs`, which deliberately does not — because that is what lets an
 uninstall know exactly what it owns and an incident enumerate who is affected.
 
+**Upgrading** is a **three-way merge**, never an overwrite, and the install row keeps the
+manifest it was installed from precisely to be the third point. Comparing a new manifest
+against the *record* cannot tell "the plugin changed this" from "the user changed this",
+and comparing `updated_at` cannot either — a record touched once looks edited forever,
+even if the user changed a field and changed it back. So a field is applied when the new
+version changed it and the user did not, and reported as a conflict, with the user's value
+kept, when both did. `dry_run` produces the identical result without writing, so the
+preview a user approves comes from the code that applies it; a separate preview endpoint
+is a preview that can drift.
+
+Two rules sit on top. A member the new version *dropped* is left in place and reported,
+never deleted — deleting is what uninstall does, behind its own confirmation, and an
+upgrade quietly removing an agent someone uses daily would be the worst kind of surprise.
+And an MCP server whose **address** the upgrade moves has its stored credential cleared,
+is disabled, and loses its cached catalog: letting a token follow a server to a host the
+user never authorized is a genuine attack, and those cached tool descriptions described
+whatever used to answer at the old address. Renaming the same server keeps the credential
+— only the address moving invalidates it.
+
 **Importing from a URL** (`PLUGIN_EXTERNAL_IMPORT_ENABLED`, off, a *separate* switch from
 `PLUGINS_ENABLED`) is the one path that reaches a host nobody vetted, over content that
 passed no publish scan and can change after it is installed. `url_guard` runs three times
