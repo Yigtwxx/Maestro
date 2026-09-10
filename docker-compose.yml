@@ -52,7 +52,17 @@ services:
       # "Command update requires authentication" from the seed script.
       - "27018:27017"
     volumes:
-      - ./.data/mongo:/data/db
+      # A named volume, unlike its bind-mounted siblings. WiredTiger cannot open
+      # an *existing* data file over Docker Desktop's VirtioFS share on macOS:
+      # `/data/db/WiredTiger.wt: handle-open: open` returns EPERM ("Operation not
+      # permitted") and mongod turns that into a fatal assertion, so the
+      # container crash-loops. A fresh dbpath initialises fine, which is why the
+      # failure only appears on the *second* start, once the files exist — and
+      # why it looks like a connection error from the seed script rather than a
+      # storage one. Postgres, Qdrant and Redis keep their bind mounts; none of
+      # them touches the file in the way that trips this. This also matches
+      # docker-compose.prod.yml, which has always used a named `mongodata`.
+      - mongodata:/data/db
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -101,3 +111,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+# Only MongoDB needs one — see the comment on the mongo service. The bind-mounted
+# services keep their data under ./.data, which is gitignored and safe to delete.
+volumes:
+  mongodata:

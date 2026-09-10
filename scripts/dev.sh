@@ -30,17 +30,42 @@ FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
 step() { printf '\n==> %s\n' "$1"; }
 
+port_holders() { lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null || true; }
+
+# Poll until nothing listens on $1, for up to $2 tenths of a second. Neither
+# `kill` nor `kill -9` is synchronous: the signal is delivered, but the listening
+# socket is only released once the process actually dies, and a uvicorn reloader
+# is a parent plus a child sharing that socket. The old fixed `sleep 0.5` was
+# therefore a race, and losing it surfaced as an opaque `[Errno 48] Address
+# already in use` from uvicorn with no WARN line above it.
+wait_port_free() {
+  local port="$1" tries="$2"
+  while [ "$tries" -gt 0 ]; do
+    [ -z "$(port_holders "$port")" ] && return 0
+    sleep 0.1
+    tries=$((tries - 1))
+  done
+  [ -z "$(port_holders "$port")" ]
+}
+
 free_port() {
   local port="$1" pids
-  pids="$(lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null || true)"
-  [ -z "$pids" ] && return 0
-  echo "WARN: port $port is in use (PID(s): $pids); killing."
-  # shellcheck disable=SC2086
-  kill $pids 2>/dev/null || true
-  sleep 0.5
-  pids="$(lsof -ti "tcp:$port" -sTCP:LISTEN 2>/dev/null || true)"
-  # shellcheck disable=SC2086
-  [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+  pids="$(port_holders "$port")"
+  if [ -n "$pids" ]; then
+    echo "WARN: port $port is in use (PID(s): $pids); killing."
+    # shellcheck disable=SC2086
+    kill $pids 2>/dev/null || true
+    if ! wait_port_free "$port" 20; then
+      pids="$(port_holders "$port")"
+      # shellcheck disable=SC2086
+      [ -n "$pids" ] && kill -9 $pids 2>/dev/null || true
+    fi
+  fi
+  # Runs even when no holder was found: a process that is mid-bind or mid-exit
+  # shows up in neither `lsof -sTCP:LISTEN` nor a successful bind.
+  wait_port_free "$port" 30 && return 0
+  echo "WARN: port $port is still held by PID(s) $(port_holders "$port") after 5s;"
+  echo "      the service below will fail to bind. Free it, or set BACKEND_PORT/FRONTEND_PORT."
 }
 
 # --- 1. Infra (Docker) ----------------------------------------------------
