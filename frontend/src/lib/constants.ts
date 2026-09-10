@@ -338,6 +338,20 @@ export const AGENT_LIMITS = {
   // a schema and a usage rule to the subagent's system prompt, which is what the
   // cap is protecting.
   customApiToolsPerAgent: 5,
+  // Mirrors backend SKILLS_PER_AGENT_MAX. Each attached bundle adds its whole
+  // instruction text to the subagent's system prompt, which is what the cap is
+  // protecting.
+  skillsPerAgent: 5,
+} as const;
+
+// Field limits for a skill, mirroring backend schemas/skill.py SkillCreate.
+// Same contract as AGENT_LIMITS above: the wizard validates before the
+// round-trip, and test_domain_frontend_parity.py fails on a drift.
+export const SKILL_LIMITS = {
+  name: 80,
+  description: 280,
+  instructions: 6000,
+  outputFormat: 2000,
 } as const;
 
 // Agent tools backed by a BYOK service key, and which providers each can use.

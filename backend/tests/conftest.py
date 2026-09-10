@@ -38,6 +38,7 @@ from app.core.metrics import metrics  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import Base  # noqa: E402
 from app.services import (  # noqa: E402
+    agent_service,
     alert_service,
     checkpoint_store,
     code_execution_service,
@@ -53,6 +54,7 @@ from app.services import (  # noqa: E402
     reconcile,
     repo_intel_service,
     service_key_service,
+    skill_service,
     social_search_service,
     task_run_store,
     usage_service,
@@ -455,6 +457,11 @@ class FakeMongoCollection:
         for doc in self.docs:
             if _mongo_matches(doc, criteria):
                 doc.update(update.get("$set", {}))
+                # $inc is honoured rather than ignored: skill_service bumps a
+                # version with it, and a fake that dropped the operator would
+                # report "version never changes" as a passing test.
+                for field, delta in update.get("$inc", {}).items():
+                    doc[field] = doc.get(field, 0) + delta
                 return SimpleNamespace(matched_count=1)
         return SimpleNamespace(matched_count=0)
 
@@ -471,6 +478,27 @@ def custom_api_db(monkeypatch) -> FakeMongoCollection:
     """Point custom_api_service at an in-memory collection."""
     collection = FakeMongoCollection()
     monkeypatch.setattr(custom_api_service, "_collection", lambda: collection)
+    return collection
+
+
+@pytest.fixture
+def skill_db(monkeypatch) -> FakeMongoCollection:
+    """Point skill_service at an in-memory collection."""
+    collection = FakeMongoCollection()
+    monkeypatch.setattr(skill_service, "_collection", lambda: collection)
+    return collection
+
+
+@pytest.fixture
+def agents_db(monkeypatch) -> FakeMongoCollection:
+    """Point agent_service at an in-memory configuration collection.
+
+    Lives here rather than being re-declared per file: three suites now drive
+    agent CRUD, and a route test that forgets it reaches the real Motor client
+    and fails on a closed event loop rather than on the thing it asserts.
+    """
+    collection = FakeMongoCollection()
+    monkeypatch.setattr(agent_service, "_collection", lambda: collection)
     return collection
 
 

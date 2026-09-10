@@ -80,8 +80,9 @@ async def test_install_never_attaches_the_publishers_api_tools(monkeypatch):
             "system_prompt": "You are helpful.",
             "tools": ["web_search"],
             "description": "A team.",
-            # Even if an item somehow carried this, it must not travel.
+            # Even if an item somehow carried these, they must not travel.
             "custom_api_tool_ids": ["publishers-private-endpoint"],
+            "skill_ids": ["publishers-private-skill"],
         }
 
     monkeypatch.setattr(
@@ -95,6 +96,30 @@ async def test_install_never_attaches_the_publishers_api_tools(monkeypatch):
     await marketplace_service.install(uuid.uuid4(), "item-1")
 
     assert captured["payload"].custom_api_tool_ids == [], captured["payload"]
+    assert captured["payload"].skill_ids == [], captured["payload"]
+
+
+def test_publish_refuses_a_payload_naming_per_user_records():
+    """Exclusion by omission: the field does not exist, so it is a 422.
+
+    A silent drop would be weaker — a publisher would believe the skill or the
+    endpoint travelled, and only the installer would find out it had not.
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.marketplace import MarketplacePublish
+
+    base = {
+        "name": "Team",
+        "description": "d",
+        "domain": "finance",
+        "system_prompt": "p",
+        "tools": ["web_search"],
+    }
+    for field in ("skill_ids", "custom_api_tool_ids"):
+        with pytest.raises(ValidationError):
+            MarketplacePublish(**base, **{field: ["x"]})
 
 
 class _NoopCollection:

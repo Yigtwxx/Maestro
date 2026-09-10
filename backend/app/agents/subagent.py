@@ -44,6 +44,7 @@ from app.agents.prompts import (
     SUBAGENT_NO_RETRIEVAL_NUDGE,
     SUBAGENT_OBJECTIVE_HEADER,
     SUBAGENT_REQUEST_TOOL_RULE,
+    SUBAGENT_SKILLS_HEADER,
     SUBAGENT_SYSTEM,
     SUBAGENT_TOOLS_RULE,
     SUBAGENT_UPSTREAM_HEADER,
@@ -342,6 +343,11 @@ async def _run_subtask(
         domain=domain,
         role=member.role,
         instructions=format_optional_block("How you work:", member.instructions),
+        # ``member.skills`` is already a finished, sandboxed block built by
+        # registry._skill_blocks. It is passed as a *value* here; the block text
+        # itself is never run through str.format, which is what keeps a bundle
+        # containing "{0.__class__}" from being an attribute-traversal surface.
+        skills=format_optional_block(SUBAGENT_SKILLS_HEADER, member.skills),
         output_format=format_optional_block(
             "Format your output as:", member.output_format
         ),

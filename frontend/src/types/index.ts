@@ -536,6 +536,12 @@ export interface AgentConfig {
   output_format: string;
   routable: boolean;
   custom_api_tool_ids: string[];
+  skill_ids: string[];
+  // Catalog tools an attached skill says it needs but this agent does not
+  // enable. Computed by the backend on every read, never stored: the answer
+  // changes when either side changes. Advisory — nothing at run time reads it,
+  // because attached text must never widen an agent's tool set.
+  missing_tools: string[];
   type: string;
   created_at: string;
   updated_at: string;
@@ -598,6 +604,39 @@ export interface AgentConfigInput {
   // `tools`: those are catalog ids shared by everyone, these are per-user
   // records, and the backend rejects one appearing in the other's list.
   custom_api_tool_ids: string[];
+  // Ids of the user's own skills, separate from `tools` for the same reason.
+  skill_ids: string[];
+}
+
+// --- Agent skills (reusable instruction bundles) ---
+
+export interface Skill {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  instructions: string;
+  output_format: string;
+  // Advisory: catalog tool ids this skill expects an attaching agent to enable.
+  required_tools: string[];
+  version: number;
+  source: string;
+  marketplace_item_id?: string | null;
+  plugin_id?: string | null;
+  // False when the bundle trips the current injection scanner. Such a skill is
+  // withheld from every run, so the UI has to be able to say why.
+  security_scan_passed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SkillInput {
+  slug: string;
+  name: string;
+  description: string;
+  instructions: string;
+  output_format: string;
+  required_tools: string[];
 }
 
 // --- Custom API tools (user-registered HTTP endpoints) ---

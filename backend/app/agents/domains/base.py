@@ -31,6 +31,15 @@ class SubagentSpec:
     instructions: str = ""
     # Deliverable structure this member's output must follow.
     output_format: str = ""
+    # Already-rendered, already-sandboxed skill bundles the user attached to a
+    # custom agent. Deliberately its own field rather than appended to
+    # ``instructions``: that field is first-party prompt text we wrote, and the
+    # 43 built-in domain modules must be structurally incapable of carrying
+    # community-authored text. Keeping them apart also means the only boundary
+    # between our methodology and someone else's is a named block with its own
+    # preamble, rather than whatever delimiters happened to be concatenated.
+    # Built by ``registry._skill_blocks``; empty for every built-in domain.
+    skills: str = ""
 
 
 @dataclass(frozen=True)

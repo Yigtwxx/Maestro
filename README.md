@@ -459,7 +459,8 @@ deletion and data export; containerization behind a single-origin Caddy stack; R
 rate limiting; the SEO surface; Backend v2 (durable execution, distributed runtime, LLM
 layer v2, dynamic agent registry, span tracing, the quality layer); email verification;
 TOTP two-factor auth and session management; marketplace reviews; the admin and moderation
-surface; off-site backups; fully pinned dependency lockfiles.
+surface; off-site backups; fully pinned dependency lockfiles; agent skills (reusable,
+sandboxed instruction bundles attached to a custom agent).
 
 **Next.** A real payment processor, the pre-purge reminder email, i18n (starting with the
 Turkish KVKK notice), and GraphQL if REST performance ever requires it.

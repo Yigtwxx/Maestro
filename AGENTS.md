@@ -233,6 +233,7 @@ agent_logs             Step-by-step agent execution history (seq-ordered)
 marketplace_items      Published agent teams, ratings, install counts
 task_sessions          Task sessions and analytics
 agent_configurations   Custom agent prompts, tools, provenance
+agent_skills           Reusable instruction bundles attached to custom agents
 trace_spans            Execution spans with TTL
 ```
 
@@ -259,6 +260,7 @@ users         me (GET/PATCH), password, sessions (list/revoke/revoke-others),
 api-keys      list, create, delete
 tasks         create, get, cancel, answer, WS stream
 agents        CRUD, system-prompt patch
+skills        CRUD (reusable instruction bundles)
 documents     upload, list, delete, storage (usage vs plan allowance)
 marketplace   list, publish, install, reviews (submit/list), report
 billing       plans, subscription, subscribe, cancel, payment-method
@@ -345,6 +347,40 @@ never fall back to a global default — this is the load-bearing property that k
 user's documents and conversation memory out of another's context (§6). The Main Agent's
 discovery pass is restricted to exactly these two tools, so no external or action tool
 can ever run at the main tier.
+
+**Agent skills.** A skill is a reusable instruction bundle a user attaches to their own
+custom agent. It carries no runtime — no action id, no budget, no outbound reach — and
+contributes exactly one thing: a delimited block in that member's system prompt. Because
+the text may have been written by someone else (a marketplace or plugin install), it is
+treated as untrusted throughout. It is scanned by `prompt_guard` at write time *and*
+re-scanned with the current pattern set on every load, so nothing is grandfathered by
+having been clean when it was saved. A bundle that now fails is **withheld from the run
+rather than failing it** — deliberately unlike `resolve_domain_info`, which refuses a
+poisoned *system prompt* outright: a persona makes the whole agent unsafe, while a skill
+is one of at most `SKILLS_PER_AGENT_MAX` optional method blocks, and a scanner bump must
+not become an outage. The API surfaces `security_scan_passed` so a silently withheld
+bundle is visible rather than merely absent.
+
+At composition the text lands in `SubagentSpec.skills`, its own field — never merged into
+`instructions`, which is first-party prompt text we wrote and which the 43 built-in domain
+modules must be structurally incapable of using to carry community text. Both closing tags
+are stripped from every body, because a bundle containing a literal `</agent_skills>`
+would otherwise end the sandbox and have everything after it read as top-level system
+prompt. The block is built with f-strings and never `str.format` (the `ToolSpec.rule`
+argument), the name is collapsed to one line at write time, and the whole section is
+capped at `SKILL_BLOCK_MAX_CHARS` by dropping *whole* bundles from the end — a
+half-instruction is worse than a missing one, because the model cannot tell it was cut.
+The slot sits between `{instructions}` and `{output_format}`: a skill may shape method,
+but the domain's output contract keeps the last word.
+
+A skill's `required_tools` is **advisory and does nothing at run time**. Widening an
+agent's tool set from attached text would break the one-way narrowing
+`resolve_enabled_tools` depends on, and would let a marketplace skill hand its installer a
+tool their agent never declared. The gap is surfaced instead, as a computed
+`missing_tools` on the agent response. Skills follow the same marketplace
+exclusion-by-omission as registered endpoints: `MarketplacePublish` has no `skill_ids`
+field at all (`extra="forbid"`, so a 422 rather than a silent drop), `install` passes a
+literal `[]`, and `agent_service` re-validates ownership on attach.
 
 **Prompt injection.** Marketplace submissions are security-scanned on publish. Custom
 system prompts are scanned on write and sandboxed inside `<agent_persona>` at execution

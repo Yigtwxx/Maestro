@@ -237,6 +237,11 @@ async def install(user_id: uuid.UUID, item_id: str) -> dict[str, Any] | None:
             # theirs. Written explicitly rather than left to the default so the
             # invariant is visible at the point it matters (CLAUDE.md §8).
             custom_api_tool_ids=[],
+            # Same rule, same reason. A skill is text the *publisher* wrote, and
+            # it lands verbatim in the installer's subagent prompt — so it must
+            # travel as a published copy that ``publish`` scanned, never as a
+            # reference to a record in the publisher's account.
+            skill_ids=[],
         ),
         source="marketplace",
         marketplace_item_id=item_id,

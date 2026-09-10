@@ -182,6 +182,7 @@ async def ensure_indexes() -> None:
     reports = MongoCollection.MODERATION_REPORTS.value
     actions = MongoCollection.MODERATION_ACTIONS.value
     custom_api_tools = MongoCollection.CUSTOM_API_TOOLS.value
+    skills = MongoCollection.AGENT_SKILLS.value
     try:
         db = get_mongo_db()
     except Exception:  # noqa: BLE001 - a bad Mongo URL must not block startup
@@ -215,6 +216,8 @@ async def ensure_indexes() -> None:
         (actions, [("created_at", DESCENDING)]),
         # Backs the custom API tool list and the per-run load at the engine edge.
         (custom_api_tools, [("user_id", ASCENDING), ("created_at", DESCENDING)]),
+        # Backs the skill list and the per-run load at the engine edge.
+        (skills, [("user_id", ASCENDING), ("created_at", DESCENDING)]),
     ):
         try:
             await db[collection].create_index(keys)
@@ -248,6 +251,19 @@ async def ensure_indexes() -> None:
             "Failed to create the unique slug index on %s",
             custom_api_tools,
             exc_info=True,
+        )
+
+    # Same pattern again: the backstop for "one skill slug per user". A slug is
+    # the stable handle a plugin manifest matches on when it upgrades a bundle it
+    # installed, so a duplicate would make an upgrade ambiguous. skill_service
+    # checks explicitly before writing, because this build is allowed to fail.
+    try:
+        await db[skills].create_index(
+            [("user_id", ASCENDING), ("slug", ASCENDING)], unique=True
+        )
+    except Exception:  # noqa: BLE001 - a missing index only costs the backstop
+        logger.warning(
+            "Failed to create the unique skill slug index on %s", skills, exc_info=True
         )
 
     # Kept separate: retention must still be attempted if an index above failed.

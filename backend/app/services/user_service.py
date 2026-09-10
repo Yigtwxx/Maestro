@@ -52,6 +52,9 @@ _USER_SCOPED_COLLECTIONS = (
     MongoCollection.TRACE_SPANS,
     # Registered endpoints, each holding an encrypted credential of the user's.
     MongoCollection.CUSTOM_API_TOOLS,
+    # Reusable instruction bundles. No credential, but the text is the user's
+    # own authored content and carries user_id, so it is erased like the rest.
+    MongoCollection.AGENT_SKILLS,
 )
 
 
@@ -197,6 +200,9 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
         "custom_api_tools": await _find(
             MongoCollection.CUSTOM_API_TOOLS, exclude=("encrypted_secret",)
         ),
+        # No exclusions: a skill is text the user wrote, holds no credential,
+        # and is exactly the kind of thing Art.20 portability is for.
+        "skills": await _find(MongoCollection.AGENT_SKILLS),
         "conversation_memories": await memory_service.export_user_texts(
             user.id, QDRANT_CONVERSATION_MEMORIES
         ),

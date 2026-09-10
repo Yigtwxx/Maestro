@@ -15,6 +15,7 @@ from app.core.constants import EventType, SubagentStatus
 from app.services.custom_api_service import CustomApiTool
 from app.services.llm_service import LLMAdapter
 from app.services.service_key_service import ServiceCredentials
+from app.services.skill_service import Skill
 
 if TYPE_CHECKING:
     from app.agents.domains import DomainInfo
@@ -108,6 +109,12 @@ class AgentContext:
     # still bounds the total (CLAUDE.md §9.2).
     custom_api_tools: tuple[CustomApiTool, ...] = ()
     max_custom_api_calls: int = 3
+    # This user's skills, loaded and re-scanned at the engine edge alongside the
+    # endpoints above. Deliberately budget-less, unlike every other per-run
+    # source on this context: a skill has no executor to spend a call on, it
+    # only contributes a delimited block to a custom agent's prompt. Its cost is
+    # prompt length, which ``SKILLS_PER_AGENT_MAX`` bounds at attach time.
+    skills: tuple[Skill, ...] = ()
 
     def role_adapter(self, role: str) -> LLMAdapter:
         """The adapter an agent role should use: its pooled per-role model when a

@@ -20,8 +20,13 @@ from pathlib import Path
 import pytest
 
 from app.agents.registry import DOMAIN_CATALOG, DOMAIN_GROUP_CATALOG
-from app.core.constants import CONNECTED_TOOL_IDS, CUSTOM_API_TOOLS_PER_AGENT_MAX
+from app.core.constants import (
+    CONNECTED_TOOL_IDS,
+    CUSTOM_API_TOOLS_PER_AGENT_MAX,
+    SKILLS_PER_AGENT_MAX,
+)
 from app.schemas.agent import AgentConfigCreate
+from app.schemas.skill import SkillCreate
 
 _FRONTEND_LIB = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib"
 
@@ -119,9 +124,40 @@ def test_frontend_agent_limits_match_backend_schema():
         # Not a string length: the cap on how many registered endpoints one
         # agent may attach, which the wizard enforces before the round-trip.
         "customApiToolsPerAgent": CUSTOM_API_TOOLS_PER_AGENT_MAX,
+        # Same kind of cap, for attached skills. Each one spends prompt budget.
+        "skillsPerAgent": SKILLS_PER_AGENT_MAX,
     }
     assert limits == expected, (
         f"AGENT_LIMITS mismatch: frontend={limits}, backend={expected}"
+    )
+
+
+def _parse_skill_limits(source: str) -> dict[str, int]:
+    match = re.search(
+        r"export const SKILL_LIMITS = \{(?P<body>.*?)\} as const",
+        source,
+        re.DOTALL,
+    )
+    assert match, "SKILL_LIMITS object not found in constants.ts"
+    return {k: int(v) for k, v in re.findall(r"(\w+): (\d+)", match.group("body"))}
+
+
+def test_frontend_skill_limits_match_backend_schema():
+    """The skill form caps its fields client-side against these numbers.
+
+    Same contract as AGENT_LIMITS above: a drift below the backend is a field
+    the user cannot fill, one above turns a caught mistake into a 422.
+    """
+    limits = _parse_skill_limits(_read_frontend_file("constants.ts"))
+    fields = SkillCreate.model_fields
+    expected = {
+        "name": _max_length(fields["name"]),
+        "description": _max_length(fields["description"]),
+        "instructions": _max_length(fields["instructions"]),
+        "outputFormat": _max_length(fields["output_format"]),
+    }
+    assert limits == expected, (
+        f"SKILL_LIMITS mismatch: frontend={limits}, backend={expected}"
     )
 
 

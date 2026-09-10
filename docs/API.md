@@ -57,6 +57,13 @@ PUT    /api/v1/agents/{id}
 PATCH  /api/v1/agents/{id}/system-prompt
 DELETE /api/v1/agents/{id}
 
+# Agent skills (reusable instruction bundles)
+GET    /api/v1/skills
+POST   /api/v1/skills
+GET    /api/v1/skills/{id}
+PATCH  /api/v1/skills/{id}                  # a content change bumps `version`
+DELETE /api/v1/skills/{id}
+
 # Task management
 POST   /api/v1/tasks
 GET    /api/v1/tasks                        # task history
@@ -138,8 +145,8 @@ Reviewer feedback:
   append-only `usage_records` quota ledger, and the durable task engine tables
   `task_runs` / `task_checkpoints` / `task_questions`.
 - **MongoDB** — dynamic data: `agent_logs`, `marketplace_items` plus reviews, moderation
-  reports and the admin audit log, `task_sessions`, `agent_configurations`, `trace_spans`
-  (TTL-bound).
+  reports and the admin audit log, `task_sessions`, `agent_configurations`, `agent_skills`,
+  `trace_spans` (TTL-bound).
 - **Qdrant** — vector data: `conversation_memories`, `document_chunks`.
 
 Memory and vectors are partitioned per user; data never crosses accounts.

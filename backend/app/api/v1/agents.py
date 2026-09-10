@@ -68,7 +68,9 @@ async def list_agents(user: ActiveUser) -> dict:
         }
         for group in DOMAIN_GROUP_CATALOG
     ]
-    custom = await agent_service.list_agents(user.id)
+    custom = await agent_service.annotate_missing_tools(
+        user.id, await agent_service.list_agents(user.id)
+    )
     return {"builtin": builtin, "groups": groups, "custom": custom}
 
 
@@ -96,11 +98,12 @@ async def list_tools(user: ActiveUser) -> list[ToolCatalogEntry]:
 async def create_agent(payload: AgentConfigCreate, user: ActiveUser) -> dict:
     """Create a new custom agent."""
     try:
-        return await agent_service.create_agent(user.id, payload)
+        agent = await agent_service.create_agent(user.id, payload)
     except AgentValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
+    return (await agent_service.annotate_missing_tools(user.id, [agent]))[0]
 
 
 @router.get(
@@ -113,7 +116,7 @@ async def get_agent(agent_id: str, user: ActiveUser) -> dict:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found."
         )
-    return agent
+    return (await agent_service.annotate_missing_tools(user.id, [agent]))[0]
 
 
 @router.put(
@@ -133,7 +136,7 @@ async def update_agent(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found."
         )
-    return agent
+    return (await agent_service.annotate_missing_tools(user.id, [agent]))[0]
 
 
 @router.patch(
@@ -157,7 +160,7 @@ async def update_system_prompt(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found."
         )
-    return agent
+    return (await agent_service.annotate_missing_tools(user.id, [agent]))[0]
 
 
 @router.delete(

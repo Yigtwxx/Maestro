@@ -29,7 +29,7 @@ from app.core.constants import (
 )
 from app.core.database import get_mongo_db
 from app.schemas.agent import AgentConfigCreate, AgentConfigUpdate, ToolCatalogEntry
-from app.services import custom_api_service, service_key_service
+from app.services import custom_api_service, service_key_service, skill_service
 from app.utils import prompt_guard
 
 
@@ -70,6 +70,49 @@ async def _validate_custom_api_tool_ids(
     if unknown:
         raise AgentValidationError(f"Unknown API tools: {', '.join(unknown)}")
     return deduped
+
+
+async def _validate_skill_ids(user_id: uuid.UUID, skill_ids: list[str]) -> list[str]:
+    """Keep only skill ids this user owns; reject the rest.
+
+    The ownership gate for attaching a skill, and the exact twin of
+    :func:`_validate_custom_api_tool_ids` — including its choice to refuse
+    rather than silently drop, so a payload naming someone else's id is told no
+    instead of yielding an agent that is quietly missing what it claims.
+    """
+    if not skill_ids:
+        return []
+    deduped = list(dict.fromkeys(skill_ids))
+    owned = await skill_service.get_skill_ids(user_id, deduped)
+    unknown = [s for s in deduped if s not in owned]
+    if unknown:
+        raise AgentValidationError(f"Unknown skills: {', '.join(unknown)}")
+    return deduped
+
+
+async def annotate_missing_tools(
+    user_id: uuid.UUID, docs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Add ``missing_tools`` to each agent document, in one round trip.
+
+    A skill's ``required_tools`` is advisory: nothing at run time reads it,
+    because letting attached text widen an agent's tool set would break the
+    one-way narrowing ``resolve_enabled_tools`` relies on. The requirement is
+    only useful if the wizard can *show* it, which is what this computes.
+
+    Deliberately not folded into :func:`get_agent`: that is on the task-execution
+    path (``registry.resolve_domain_info``), and a run has no use for advice
+    aimed at the editor.
+    """
+    wanted = sorted({sid for doc in docs for sid in doc.get("skill_ids") or []})
+    requirements = await skill_service.get_required_tools(user_id, wanted)
+    for doc in docs:
+        declared = set(doc.get("tools") or [])
+        needed: list[str] = []
+        for skill_id in doc.get("skill_ids") or []:
+            needed.extend(requirements.get(skill_id, ()))
+        doc["missing_tools"] = sorted({t for t in needed if t not in declared})
+    return docs
 
 
 def _guard_prompt(system_prompt: str) -> None:
@@ -188,6 +231,7 @@ async def create_agent(
     custom_api_tool_ids = await _validate_custom_api_tool_ids(
         user_id, payload.custom_api_tool_ids
     )
+    skill_ids = await _validate_skill_ids(user_id, payload.skill_ids)
     now = datetime.now(UTC)
     document = {
         "id": str(uuid.uuid4()),
@@ -201,6 +245,7 @@ async def create_agent(
         "output_format": payload.output_format,
         "routable": payload.routable,
         "custom_api_tool_ids": custom_api_tool_ids,
+        "skill_ids": skill_ids,
         "source": source,
         "marketplace_item_id": marketplace_item_id,
         "security_scan": {"version": prompt_guard.SCANNER_VERSION, "passed": True},
@@ -242,6 +287,8 @@ async def update_agent(
         changes["custom_api_tool_ids"] = await _validate_custom_api_tool_ids(
             user_id, payload.custom_api_tool_ids
         )
+    if payload.skill_ids is not None:
+        changes["skill_ids"] = await _validate_skill_ids(user_id, payload.skill_ids)
     if not changes:
         return await get_agent(user_id, agent_id)
 

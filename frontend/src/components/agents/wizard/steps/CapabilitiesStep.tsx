@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { toolWarning } from '@/lib/agent-wizard';
 import { ConnectedKeysPanel } from '@/components/agents/wizard/ConnectedKeysPanel';
 import { CustomApiToolList } from '@/components/agents/wizard/CustomApiToolList';
+import { SkillList } from '@/components/agents/wizard/SkillList';
 import { AGENT_LIMITS } from '@/lib/constants';
 import type { AgentDraft } from '@/lib/agent-wizard';
 import type { ToolCatalogItem } from '@/types';
@@ -104,6 +105,17 @@ export function CapabilitiesStep({
         selected={draft.customApiToolIds}
         onChange={(customApiToolIds) => onChange({ customApiToolIds })}
         max={AGENT_LIMITS.customApiToolsPerAgent}
+      />
+
+      {/* Sits beside the endpoint list rather than in the Behavior step: both
+          are per-user records attached by id, and a skill's tool requirements
+          only make sense next to the tools they refer to. */}
+      <SkillList
+        selected={draft.skillIds}
+        onChange={(skillIds) => onChange({ skillIds })}
+        max={AGENT_LIMITS.skillsPerAgent}
+        tools={tools}
+        agentTools={draft.tools}
       />
 
       {draft.tools.length === 0 && draft.customApiToolIds.length === 0 && (

@@ -810,6 +810,11 @@ class MongoCollection(StrEnum):
     # Carries user_id *and* an encrypted credential, so it joins the
     # account-purge contract and must never be read without a projection.
     CUSTOM_API_TOOLS = "custom_api_tools"
+    # Reusable instruction bundles a user attaches to their own agents. Carries
+    # user_id and text that may have been authored by someone else (a
+    # marketplace install), so it joins the account-purge contract and is
+    # re-scanned by prompt_guard every time it is loaded for a run.
+    AGENT_SKILLS = "agent_skills"
 
 
 # --- Qdrant collection names ---
@@ -1430,6 +1435,55 @@ CUSTOM_API_PREVIEW_MAX_CHARS = 500
 CUSTOM_API_FORBIDDEN_HEADERS = frozenset(
     {"authorization", "cookie", "host", "content-length", "content-encoding"}
 )
+
+
+# --- Agent skills (reusable instruction bundles) ---
+# A skill is not a tool and never becomes an action id: it carries no runtime,
+# it only contributes a delimited block to the subagent's system prompt. That is
+# why nothing here touches TOOL_CATALOG / TOOL_IDS, and why a skill has no
+# per-run budget the way custom_api and the connected tools do.
+#
+# The slug exists for the same reason custom_api's does: it is the stable handle
+# a plugin manifest names, so re-installing an upgraded bundle updates the skill
+# it already created rather than growing a second copy.
+SKILL_SLUG_PATTERN = r"^[a-z][a-z0-9_-]{1,40}$"
+
+# Per-account ceiling. Higher than CUSTOM_AGENTS_MAX because a skill is cheap to
+# hold — one document, no credential, no outbound reach — and a user is expected
+# to collect more of them than agents.
+AGENT_SKILLS_MAX = 50
+
+# Per-agent ceiling, and the load-bearing one. Every attached skill adds its full
+# instruction text to the member's system prompt, and Ollama truncates a long
+# prompt *from the front* (see OLLAMA_NUM_CTX in CLAUDE.md §11), which is where
+# the member's role and output contract live. Five bundles at the length cap
+# below already spend a meaningful share of a small model's context.
+SKILLS_PER_AGENT_MAX = 5
+
+SKILL_NAME_MAX_CHARS = 80
+SKILL_DESCRIPTION_MAX_CHARS = 280
+SKILL_INSTRUCTIONS_MAX_CHARS = 6000
+SKILL_OUTPUT_FORMAT_MAX_CHARS = 2000
+
+# Delimiters for the sandboxed prompt block. Named here rather than inlined in
+# app.agents.registry so a test can assert the rendered prompt without importing
+# a private helper. Two levels: one wrapper around the whole section, one per
+# bundle. The wrapper is what gives the preamble something to point at, and it
+# is what a skill body must not be able to close early -- both closing tags are
+# stripped from every body at composition time, not at write time, because a
+# bundle installed before the tags existed would otherwise carry one.
+SKILLS_BLOCK_OPEN = "<agent_skills>"
+SKILLS_BLOCK_CLOSE = "</agent_skills>"
+SKILL_BLOCK_OPEN = "<agent_skill>"
+SKILL_BLOCK_CLOSE = "</agent_skill>"
+
+# Ceiling on the whole rendered section, independent of the per-agent count.
+# SKILLS_PER_AGENT_MAX bundles at SKILL_INSTRUCTIONS_MAX_CHARS is 30k characters
+# -- roughly 7.5k tokens on top of an already-large subagent prompt, against a
+# local model's 16k window. Over the cap, whole bundles are dropped from the end
+# and the section says how many: a half-instruction is worse than a missing one,
+# because the model cannot tell it was cut.
+SKILL_BLOCK_MAX_CHARS = 12_000
 
 
 # --- View original request (built-in subagent JSON directive) ---

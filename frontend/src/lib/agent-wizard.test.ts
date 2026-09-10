@@ -174,6 +174,7 @@ describe('draftToInput', () => {
       system_prompt: 'Watch it.',
       tools: ['repo_intel'],
       custom_api_tool_ids: [],
+      skill_ids: [],
       description: 'Tracks releases.',
       output_format: '',
       routable: false,
@@ -210,6 +211,10 @@ describe('draftFromAgent', () => {
       output_format: 'A bullet list.',
       routable: true,
       custom_api_tool_ids: ['endpoint-1'],
+      skill_ids: ['skill-1'],
+      // Computed server-side on every read and never sent back, so it must not
+      // survive the round-trip into an update payload.
+      missing_tools: ['code_execution'],
       type: 'custom',
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-01T00:00:00Z',
@@ -220,6 +225,7 @@ describe('draftFromAgent', () => {
       system_prompt: 'Watch it.',
       tools: ['repo_intel'],
       custom_api_tool_ids: ['endpoint-1'],
+      skill_ids: ['skill-1'],
       description: 'Tracks releases.',
       output_format: 'A bullet list.',
       routable: true,

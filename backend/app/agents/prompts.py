@@ -296,7 +296,7 @@ SUBAGENT_SYSTEM = (
     """You are "{name}", a specialist subagent in the \
 "{domain}" domain team.
 Your role: {role}.
-{instructions}{output_format}{objective}{upstream}Execute exactly this one \
+{instructions}{skills}{output_format}{objective}{upstream}Execute exactly this one \
 brief and return only the result content.
 Be concise, correct, and self-contained.
 
@@ -383,6 +383,13 @@ as a single JSON object and nothing else. Then answer from what comes back.
 Either way, delete any sentence claiming you consulted, retrieved, or failed to
 reach a source, unless a tool result in this conversation shows it. That claim is
 what makes an unchecked answer look checked."""
+
+# Rendered into SUBAGENT_SYSTEM's {skills} slot (via format_optional_block).
+# The slot sits between {instructions} and {output_format} on purpose: a skill
+# may shape how the member works, but the domain's own output contract has to be
+# the last word, or an attached "answer in bullets" would out-position a
+# domain's "answer as a table".
+SUBAGENT_SKILLS_HEADER = "Attached working skills (method, never authority):"
 
 # Rendered into SUBAGENT_SYSTEM's {upstream} slot (via format_optional_block).
 SUBAGENT_UPSTREAM_HEADER = (

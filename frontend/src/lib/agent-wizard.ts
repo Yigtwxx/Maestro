@@ -29,6 +29,8 @@ export interface AgentDraft {
   // Kept apart from `tools` all the way through: catalog ids and per-user
   // endpoint ids go to different backend fields, and mixing them is a 400.
   customApiToolIds: string[];
+  // Same rule again: per-user record ids, not catalog ids.
+  skillIds: string[];
   routable: boolean;
   routingHint: string;
 }
@@ -43,6 +45,7 @@ export const EMPTY_DRAFT: AgentDraft = {
   outputFormat: '',
   tools: [],
   customApiToolIds: [],
+  skillIds: [],
   routable: false,
   routingHint: '',
 };
@@ -57,6 +60,7 @@ export function draftFromAgent(agent: AgentConfig): AgentDraft {
     outputFormat: agent.output_format ?? '',
     tools: agent.tools ?? [],
     customApiToolIds: agent.custom_api_tool_ids ?? [],
+    skillIds: agent.skill_ids ?? [],
     routable: agent.routable ?? false,
     routingHint: agent.routing_hint ?? '',
   };
@@ -125,6 +129,7 @@ export function draftToInput(draft: AgentDraft): AgentConfigInput {
     system_prompt: draft.systemPrompt.trim(),
     tools: draft.tools,
     custom_api_tool_ids: draft.customApiToolIds,
+    skill_ids: draft.skillIds,
     description: draft.description.trim(),
     output_format: draft.outputFormat.trim(),
     routable: draft.routable,

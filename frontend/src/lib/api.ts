@@ -47,6 +47,8 @@ import type {
   ReportInput,
   ReportStatus,
   SessionInfo,
+  Skill,
+  SkillInput,
   SubscriptionPlan,
   SubscriptionPublic,
   TaskCreated,
@@ -790,6 +792,29 @@ export const api = {
       `/api/v1/custom-api-tools/${id}/test`,
       { method: 'POST', body: { args } },
     );
+  },
+
+  // --- Agent skills (reusable instruction bundles) ---
+
+  listSkills() {
+    return request<Skill[]>('/api/v1/skills');
+  },
+
+  createSkill(input: SkillInput) {
+    return request<Skill>('/api/v1/skills', { method: 'POST', body: input });
+  },
+
+  // Partial: the backend bumps the stored version only when the content
+  // changes, so a rename is not a new revision.
+  updateSkill(id: string, input: Partial<SkillInput>) {
+    return request<Skill>(`/api/v1/skills/${id}`, {
+      method: 'PATCH',
+      body: input,
+    });
+  },
+
+  deleteSkill(id: string) {
+    return request<void>(`/api/v1/skills/${id}`, { method: 'DELETE' });
   },
 
   // --- Marketplace ---

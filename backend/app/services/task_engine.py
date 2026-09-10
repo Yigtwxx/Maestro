@@ -41,6 +41,7 @@ from app.services import (
     checkpoint_store,
     custom_api_service,
     quota_service,
+    skill_service,
     task_run_store,
     usage_service,
 )
@@ -268,6 +269,10 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
     # Same edge, same contract: loaded and decrypted once, handed down as plain
     # values. Never raises — an unreadable credential skips that one endpoint.
     custom_api_tools = await custom_api_service.load_tools(rc.user_id)
+    # Third load at the same edge. Also never raises: a bundle whose text now
+    # trips the injection scanner is withheld from this run rather than failing
+    # it, so an agent loses one attachment instead of the whole task.
+    skills = await skill_service.load_skills(rc.user_id)
     ctx = AgentContext(
         adapter=pool.for_role("main"),
         adapter_pool=pool,
@@ -293,6 +298,7 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
         service_credentials=service_credentials,
         custom_api_tools=custom_api_tools,
         max_custom_api_calls=settings.custom_api_max_uses_per_subtask,
+        skills=skills,
         user_id=rc.user_id,
     )
 
@@ -344,7 +350,7 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
     # (``custom:{id}``) agent this loads and sandboxes the user's config; raises
     # CustomAgentUnavailable (a normal task failure) if it is gone or now unsafe.
     ctx.domain_info = await resolve_domain_info(
-        rc.user_id, domain, ctx.custom_api_tools
+        rc.user_id, domain, ctx.custom_api_tools, ctx.skills
     )
 
     # Step-boundary quota re-check (D19): cap this task's spend at the remaining

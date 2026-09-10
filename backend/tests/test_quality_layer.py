@@ -411,6 +411,7 @@ def test_subagent_prompt_forbids_deliberating_in_the_answer():
         domain="general",
         role="r",
         instructions="",
+        skills="",
         output_format="",
         objective="",
         upstream="",
