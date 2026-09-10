@@ -57,6 +57,10 @@ _USER_SCOPED_COLLECTIONS = (
     MongoCollection.AGENT_SKILLS,
     # Registered MCP servers, each holding an encrypted credential of the user's.
     MongoCollection.MCP_SERVERS,
+    # Install records. The bundles they were installed *from* are catalog
+    # entries other people may hold, so those are anonymized rather than deleted
+    # (see below) — but which records this account created is the account's own.
+    MongoCollection.PLUGIN_INSTALLS,
 )
 
 
@@ -76,21 +80,26 @@ async def _purge_agent_logs(db: Any, user_id: uuid.UUID) -> None:
     await db[MongoCollection.AGENT_LOGS.value].delete_many({"$or": criteria})
 
 
-async def _anonymize_marketplace_items(db: Any, user_id: uuid.UUID) -> None:
-    """Sever the author link on published items instead of deleting them.
+async def _anonymize_published_content(db: Any, user_id: uuid.UUID) -> None:
+    """Sever the author link on published content instead of deleting it.
 
     Erasure (GDPR Art.17) is satisfied once the content can no longer be tied to
     an identified person (Recital 26). The items themselves stay: other users
-    have installed them, and deleting their agent teams to honour someone else's
-    erasure request would be disproportionate.
+    have installed them, and deleting their agent teams — or their plugins — to
+    honour someone else's erasure request would be disproportionate.
+
+    Takes the ``db`` handle rather than fetching its own, like every other step
+    of the purge: the caller resolved it once, and a helper that reaches for a
+    second one is a helper a test cannot substitute.
     """
-    await db[MongoCollection.MARKETPLACE_ITEMS.value].update_many(
-        {"author_id": str(user_id)},
-        {
-            "$unset": {"author_id": ""},
-            "$set": {"author_label": MARKETPLACE_COMMUNITY_AUTHOR},
-        },
-    )
+    for collection in (MongoCollection.MARKETPLACE_ITEMS, MongoCollection.PLUGINS):
+        await db[collection.value].update_many(
+            {"author_id": str(user_id)},
+            {
+                "$unset": {"author_id": ""},
+                "$set": {"author_label": MARKETPLACE_COMMUNITY_AUTHOR},
+            },
+        )
 
 
 async def purge_user_data(user_id: uuid.UUID) -> None:
@@ -105,7 +114,7 @@ async def purge_user_data(user_id: uuid.UUID) -> None:
     for collection in _USER_SCOPED_COLLECTIONS:
         await db[collection.value].delete_many({"user_id": str(user_id)})
     await marketplace_service.purge_user_reviews(user_id)
-    await _anonymize_marketplace_items(db, user_id)
+    await _anonymize_published_content(db, user_id)
 
     await memory_service.purge_user_vectors(user_id)
     logger.info("Purged Mongo + Qdrant data for user %s", user_id)
@@ -210,6 +219,7 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
         "mcp_servers": await _find(
             MongoCollection.MCP_SERVERS, exclude=("encrypted_secret",)
         ),
+        "plugin_installs": await _find(MongoCollection.PLUGIN_INSTALLS),
         "conversation_memories": await memory_service.export_user_texts(
             user.id, QDRANT_CONVERSATION_MEMORIES
         ),

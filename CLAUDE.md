@@ -235,6 +235,8 @@ task_sessions          Task sessions and analytics
 agent_configurations   Custom agent prompts, tools, provenance
 agent_skills           Reusable instruction bundles attached to custom agents
 mcp_servers            Registered remote MCP servers + their sanitized tool cache
+plugins                Published plugin manifests (catalog; author anonymized on purge)
+plugin_installs        One row per installed bundle: what it created, per user
 trace_spans            Execution spans with TTL
 ```
 
@@ -263,6 +265,7 @@ tasks         create, get, cancel, answer, WS stream
 agents        CRUD, system-prompt patch
 skills        CRUD (reusable instruction bundles)
 mcp-servers   CRUD, discover (remote MCP servers)
+plugins       list, publish, install, import, installed, uninstall-preview
 documents     upload, list, delete, storage (usage vs plan allowance)
 marketplace   list, publish, install, reviews (submit/list), report
 billing       plans, subscription, subscribe, cancel, payment-method
@@ -445,6 +448,60 @@ add tools after the attachment was validated.
 Marketplace exclusion by omission holds for the third time: `MarketplacePublish` has no
 `mcp_server_ids` field (`extra="forbid"`, a 422), `install` passes a literal `[]`, and
 `agent_service` re-validates ownership on attach.
+
+**Plugins.** A plugin bundles skills, MCP server *definitions* and agents so a whole way
+of working installs in one action. It is a bundle of **declarations** — no code, no hooks,
+no commands — and the moment it grows an executable member it is a different security
+review rather than a feature increment.
+
+Three rules are enforced by *omission*, so naming one is a 422 with a field path rather
+than a silent drop a publisher would never learn about. **A manifest never carries a
+credential**: there is no `secret` field anywhere in it, so a bundle's credentialed MCP
+server is created with `encrypted_secret=None` and `enabled=False` for the installer to
+fill in — the plugin-era restatement of `marketplace_service.install` passing a literal
+`mcp_server_ids=[]`. **A manifest never ships tool schemas**: those are prompt text
+written by a third party and may only enter through discovery, which scans and rebuilds
+them. And an agent references its siblings by *manifest-local slug*, resolved to freshly
+created ids at install, so a bundle cannot name a record it does not own.
+
+Every member is created through its own service's create function rather than a direct
+insert, so `CUSTOM_AGENTS_MAX`, `AGENT_SKILLS_MAX`, `MCP_SERVERS_MAX` and the injection
+scan apply to an install exactly as to the wizard; a pre-flight check refuses a bundle
+that cannot fit before anything is written, so the failure is one useful message rather
+than a half-built install. The scan is all-or-nothing, unlike a skill dropped at load time
+or an MCP tool withheld at discovery: those are one attachment among several in an account
+the user already controls, while a bundle is a single thing someone chose to trust, and
+"installed, but three parts are missing" is not a state anyone can reason about.
+
+Mongo gives no transaction here, so a failure **compensates** — it deletes what it created
+— and the `plugin_installs` row is written **last**. Until that row exists the install is
+unclaimed, so a crash before it leaves records the rollback owns rather than a plugin
+nobody can remove. That is the same ordering argument as rule 10's "the PostgreSQL row is
+deleted last".
+
+Uninstalling deletes what the plugin created, and asks first: `/uninstall-preview` lists
+every record by name and flags the ones the user edited after installing. Only records
+still carrying *this* install's `plugin_id` are removed, so a record the user detached, or
+one another bundle has since adopted, survives. `plugin_installs` carries `user_id` —
+unlike `marketplace_installs`, which deliberately does not — because that is what lets an
+uninstall know exactly what it owns and an incident enumerate who is affected.
+
+**Importing from a URL** (`PLUGIN_EXTERNAL_IMPORT_ENABLED`, off, a *separate* switch from
+`PLUGINS_ENABLED`) is the one path that reaches a host nobody vetted, over content that
+passed no publish scan and can change after it is installed. `url_guard` runs three times
+as it does everywhere else, the body is size-capped while streaming
+(`PLUGIN_MANIFEST_MAX_BYTES`), the shared client follows no redirect, only the *first*
+validation error is echoed back — a full pydantic dump is a lot of a stranger's text
+reflected into our UI — and the install records the origin host so an incident can
+enumerate who fetched from where. There is deliberately **no signature verification**: a
+signature is worth its complexity only with a key-distribution and revocation story, and
+there is none. What ships instead is the digest pin, the host shown verbatim in the install
+confirmation next to a list of exactly what will be created, and the switch being off.
+
+Admin takedown reuses the marketplace machinery unchanged: a hidden or removed catalog
+entry stops being installable, and **copies already installed keep working** — the records
+live in the installer's own account. That is the same behaviour a taken-down marketplace
+agent has, and it is stated here because the opposite is easy to assume.
 
 **Prompt injection.** Marketplace submissions are security-scanned on publish. Custom
 system prompts are scanned on write and sandboxed inside `<agent_persona>` at execution
@@ -1039,6 +1096,14 @@ See `.env.example` for the full list. The settings whose behavior is not obvious
 - `MCP_TOOLS_ENABLED` does not exist on purpose: there is one switch, and it is the
   whole-feature rollback. A per-server toggle is `enabled` on the record, and a per-tool
   one is the server's `tool_allowlist`.
+- `PLUGINS_ENABLED` / `PLUGIN_EXTERNAL_IMPORT_ENABLED` / `PLUGIN_IMPORT_TIMEOUT_SECONDS`
+  — plugins (§8). Two switches on purpose. The first is the feature, and it ships off
+  because a bundle's members are skills and MCP servers, and turning plugins on without
+  those is a catalog whose contents cannot run. The second additionally allows importing
+  a manifest from a URL the caller names, which is a categorically different trust story
+  from installing something the publish scan and moderation queue have seen — the
+  operator should have to say yes to it separately. Uninstalling is deliberately *not*
+  gated on either: turning the feature off must never strand records a user cannot remove.
 - `CODE_EXECUTION_ENABLED` — the one tool whose blast radius is the *host*, so it defaults
   to `false` and must stay there in production: enabling it requires mounting the Docker
   socket, which hands agent-authored code the ability to start privileged containers

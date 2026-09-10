@@ -46,6 +46,11 @@ import type {
   MfaChallenge,
   PlanPublic,
   PlanPublicListing,
+  Plugin,
+  PluginDetail,
+  PluginInstall,
+  PluginManifest,
+  PluginUninstallPreview,
   RecoveryCodes,
   ReportInput,
   ReportStatus,
@@ -818,6 +823,55 @@ export const api = {
 
   deleteSkill(id: string) {
     return request<void>(`/api/v1/skills/${id}`, { method: 'DELETE' });
+  },
+
+  // --- Plugins ---
+
+  listPlugins() {
+    return request<Plugin[]>('/api/v1/plugins');
+  },
+
+  getPlugin(id: string) {
+    return request<PluginDetail>(`/api/v1/plugins/${id}`);
+  },
+
+  publishPlugin(manifest: PluginManifest) {
+    return request<Plugin>('/api/v1/plugins', {
+      method: 'POST',
+      body: { manifest },
+    });
+  },
+
+  installPlugin(id: string) {
+    return request<PluginInstall>(`/api/v1/plugins/${id}/install`, {
+      method: 'POST',
+    });
+  },
+
+  // Behind its own backend switch: this fetches a manifest nobody reviewed.
+  importPlugin(url: string) {
+    return request<PluginInstall>('/api/v1/plugins/import', {
+      method: 'POST',
+      body: { url },
+    });
+  },
+
+  listInstalledPlugins() {
+    return request<PluginInstall[]>('/api/v1/plugins/installed');
+  },
+
+  // Always call before uninstalling: it flags records the user has since
+  // edited, which is what the confirmation exists to show.
+  previewUninstallPlugin(installId: string) {
+    return request<PluginUninstallPreview>(
+      `/api/v1/plugins/installed/${installId}/uninstall-preview`,
+    );
+  },
+
+  uninstallPlugin(installId: string) {
+    return request<void>(`/api/v1/plugins/installed/${installId}`, {
+      method: 'DELETE',
+    });
   },
 
   // --- Remote MCP servers ---

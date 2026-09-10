@@ -16,6 +16,7 @@ from app.api.v1 import (
     documents,
     marketplace,
     mcp_servers,
+    plugins,
     skills,
     tasks,
     users,
@@ -36,6 +37,7 @@ api_router.include_router(agents.router, prefix=API_V1_PREFIX)
 api_router.include_router(custom_api_tools.router, prefix=API_V1_PREFIX)
 api_router.include_router(skills.router, prefix=API_V1_PREFIX)
 api_router.include_router(mcp_servers.router, prefix=API_V1_PREFIX)
+api_router.include_router(plugins.router, prefix=API_V1_PREFIX)
 api_router.include_router(documents.router, prefix=API_V1_PREFIX)
 api_router.include_router(admin.router, prefix=API_V1_PREFIX)
 

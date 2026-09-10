@@ -184,6 +184,8 @@ async def ensure_indexes() -> None:
     custom_api_tools = MongoCollection.CUSTOM_API_TOOLS.value
     skills = MongoCollection.AGENT_SKILLS.value
     mcp_servers = MongoCollection.MCP_SERVERS.value
+    plugins = MongoCollection.PLUGINS.value
+    plugin_installs = MongoCollection.PLUGIN_INSTALLS.value
     try:
         db = get_mongo_db()
     except Exception:  # noqa: BLE001 - a bad Mongo URL must not block startup
@@ -221,6 +223,12 @@ async def ensure_indexes() -> None:
         (skills, [("user_id", ASCENDING), ("created_at", DESCENDING)]),
         # Backs the MCP server list and the per-run cache load.
         (mcp_servers, [("user_id", ASCENDING), ("created_at", DESCENDING)]),
+        # Backs plugin catalog lookups by id (detail, install, moderation).
+        (plugins, [("id", ASCENDING)]),
+        # Backs the catalog browse: visible entries, newest first.
+        (plugins, [("status", ASCENDING), ("created_at", DESCENDING)]),
+        # Backs the installed-plugin list and every uninstall lookup.
+        (plugin_installs, [("user_id", ASCENDING), ("installed_at", DESCENDING)]),
     ):
         try:
             await db[collection].create_index(keys)
@@ -280,6 +288,20 @@ async def ensure_indexes() -> None:
         logger.warning(
             "Failed to create the unique MCP slug index on %s",
             mcp_servers,
+            exc_info=True,
+        )
+
+    # And for "one install of a given plugin per account". Two installs of the
+    # same bundle would each claim the other's records on uninstall, so the
+    # service pre-checks and this is the backstop under a concurrent double-POST.
+    try:
+        await db[plugin_installs].create_index(
+            [("user_id", ASCENDING), ("plugin_id", ASCENDING)], unique=True
+        )
+    except Exception:  # noqa: BLE001 - a missing index only costs the backstop
+        logger.warning(
+            "Failed to create the unique plugin install index on %s",
+            plugin_installs,
             exc_info=True,
         )
 

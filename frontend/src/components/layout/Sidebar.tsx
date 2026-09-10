@@ -8,6 +8,7 @@ import {
   Activity,
   CreditCard,
   LayoutDashboard,
+  Package,
   Store,
   Bot,
   FileText,
@@ -33,15 +34,53 @@ export const NAV: {
   /** Rendered as a non-clickable "Soon" row instead of a link. */
   comingSoon?: boolean;
 }[] = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, module: 'dashboard' },
-  { href: '/marketplace', label: 'Marketplace', icon: Store, module: 'marketplace' },
-  { href: '/architect', label: 'Architect', icon: Workflow, module: 'architect' },
+  {
+    href: '/dashboard',
+    label: 'Dashboard',
+    icon: LayoutDashboard,
+    module: 'dashboard',
+  },
+  {
+    href: '/marketplace',
+    label: 'Marketplace',
+    icon: Store,
+    module: 'marketplace',
+  },
+  // Shares the marketplace hue: a plugin catalog is a marketplace surface, and
+  // a new ModuleKey costs a hand-written Tailwind literal set mirrored twice.
+  { href: '/plugins', label: 'Plugins', icon: Package, module: 'marketplace' },
+  {
+    href: '/architect',
+    label: 'Architect',
+    icon: Workflow,
+    module: 'architect',
+  },
   { href: '/traces', label: 'Traces', icon: Activity, module: 'traces' },
   { href: '/agents', label: 'Agents', icon: Bot, module: 'agents' },
-  { href: '/documents', label: 'Documents', icon: FileText, module: 'documents' },
-  { href: '/settings/api-keys', label: 'API Keys', icon: KeyRound, module: 'api-keys' },
-  { href: '/settings/billing', label: 'Billing', icon: CreditCard, module: 'billing' },
-  { href: '/settings/profile', label: 'Profile', icon: UserRound, module: 'profile' },
+  {
+    href: '/documents',
+    label: 'Documents',
+    icon: FileText,
+    module: 'documents',
+  },
+  {
+    href: '/settings/api-keys',
+    label: 'API Keys',
+    icon: KeyRound,
+    module: 'api-keys',
+  },
+  {
+    href: '/settings/billing',
+    label: 'Billing',
+    icon: CreditCard,
+    module: 'billing',
+  },
+  {
+    href: '/settings/profile',
+    label: 'Profile',
+    icon: UserRound,
+    module: 'profile',
+  },
 ];
 
 // The admin surface is appended to the nav only for admins. Exported so TopBar
@@ -68,7 +107,8 @@ export function Sidebar() {
       ? { ...item, comingSoon: true }
       : item,
   );
-  const nav = user?.role === 'admin' ? [...withBilling, ADMIN_LINK] : withBilling;
+  const nav =
+    user?.role === 'admin' ? [...withBilling, ADMIN_LINK] : withBilling;
 
   const onLogout = () => {
     // Not awaited: local state is cleared synchronously inside `logout`, and
@@ -83,7 +123,10 @@ export function Sidebar() {
       {/* `h-14` mirrors the TopBar so the two bottom borders meet across the
           sidebar seam. Padding-driven height drifted 12px out of line. */}
       <div className="flex h-14 items-center gap-3 border-b border-border px-5">
-        <BrandMark className="h-9 w-9 shrink-0 rounded" glyphClassName="h-5 w-5" />
+        <BrandMark
+          className="h-9 w-9 shrink-0 rounded"
+          glyphClassName="h-5 w-5"
+        />
         <div className="leading-tight">
           <span className="block font-sans text-base font-bold tracking-wide text-white">
             MAESTRO
@@ -129,7 +172,9 @@ export function Sidebar() {
               }
               className={cn(
                 'group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
-                active ? 'text-black' : 'text-muted hover:bg-surface-2 hover:text-white',
+                active
+                  ? 'text-black'
+                  : 'text-muted hover:bg-surface-2 hover:text-white',
               )}
             >
               {/* Module-colored pill slides between nav items via shared layoutId. */}
@@ -137,7 +182,11 @@ export function Sidebar() {
                 <motion.span
                   layoutId="nav-active"
                   aria-hidden
-                  className={cn('absolute inset-0 rounded-md', mc.bgSolid, mc.glow)}
+                  className={cn(
+                    'absolute inset-0 rounded-md',
+                    mc.bgSolid,
+                    mc.glow,
+                  )}
                   transition={reduced ? { duration: 0 } : SPRING.pop}
                 />
               )}
@@ -176,7 +225,9 @@ export function Sidebar() {
                 {user.display_name || user.email}
               </span>
               <span className="block truncate text-micro capitalize text-muted">
-                {user.subscription_tier ? `${user.subscription_tier} plan` : 'No plan'}
+                {user.subscription_tier
+                  ? `${user.subscription_tier} plan`
+                  : 'No plan'}
               </span>
             </span>
           </Link>

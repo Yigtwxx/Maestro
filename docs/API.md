@@ -72,6 +72,16 @@ PATCH  /api/v1/mcp-servers/{id}             # changing `url` clears that cache
 DELETE /api/v1/mcp-servers/{id}
 POST   /api/v1/mcp-servers/{id}/discover    # handshake + refresh; outbound-probe limit
 
+# Plugins (bundles of skills + MCP servers + agents)
+GET    /api/v1/plugins                      # catalog; never the author or manifest
+POST   /api/v1/plugins                      # publish; the security scan is never skipped
+GET    /api/v1/plugins/{id}                 # with the manifest, for the confirmation
+POST   /api/v1/plugins/{id}/install
+POST   /api/v1/plugins/import               # own switch; outbound-probe limit
+GET    /api/v1/plugins/installed
+GET    /api/v1/plugins/installed/{id}/uninstall-preview
+DELETE /api/v1/plugins/installed/{id}
+
 # Task management
 POST   /api/v1/tasks
 GET    /api/v1/tasks                        # task history
@@ -154,7 +164,8 @@ Reviewer feedback:
   `task_runs` / `task_checkpoints` / `task_questions`.
 - **MongoDB** — dynamic data: `agent_logs`, `marketplace_items` plus reviews, moderation
   reports and the admin audit log, `task_sessions`, `agent_configurations`, `agent_skills`,
-  `mcp_servers` (encrypted credential + sanitized tool cache), `trace_spans` (TTL-bound).
+  `mcp_servers` (encrypted credential + sanitized tool cache), `plugins` /
+  `plugin_installs`, `trace_spans` (TTL-bound).
 - **Qdrant** — vector data: `conversation_memories`, `document_chunks`.
 
 Memory and vectors are partitioned per user; data never crosses accounts.

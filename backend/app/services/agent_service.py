@@ -246,6 +246,7 @@ async def create_agent(
     *,
     source: str = "custom",
     marketplace_item_id: str | None = None,
+    plugin_id: str | None = None,
 ) -> dict[str, Any]:
     """Create and persist a validated custom agent.
 
@@ -287,6 +288,10 @@ async def create_agent(
         "mcp_server_ids": mcp_server_ids,
         "source": source,
         "marketplace_item_id": marketplace_item_id,
+        # Which installed plugin owns this record, if any. An uninstall only
+        # deletes what still carries its own id, so a record the user detached
+        # survives.
+        "plugin_id": plugin_id,
         "security_scan": {"version": prompt_guard.SCANNER_VERSION, "passed": True},
         "created_at": now,
         "updated_at": now,

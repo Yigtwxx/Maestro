@@ -519,6 +519,27 @@ class Settings(BaseSettings):
     mcp_discovery_timeout_seconds: int = 20
     mcp_max_uses_per_subtask: int = 3
 
+    # --- Plugins (bundles of skills + MCP servers + agents) ---
+    # A plugin installs a whole way of working in one action. It is a bundle of
+    # *declarations* — no code, no hooks, no commands — and it never carries a
+    # credential: an MCP server it creates lands with no secret, and disabled if
+    # it needs one, for the installer to supply.
+    #
+    # Off by default because a bundle's members are skills and MCP servers, and
+    # those two features ship off themselves. Turning plugins on without them is
+    # a catalog whose contents cannot run.
+    plugins_enabled: bool = False
+
+    # A *separate* switch, and deliberately so. A catalog manifest passed
+    # Maestro's publish scan and is subject to moderation and takedown. This one
+    # turns an authenticated session into a fetcher of arbitrary user-named
+    # URLs, over content nobody reviewed, which can change after it is
+    # installed. url_guard runs three times on that URL and the manifest is
+    # size-capped and re-scanned, but the trust story is categorically different
+    # and the operator should have to say yes to it separately.
+    plugin_external_import_enabled: bool = False
+    plugin_import_timeout_seconds: int = 15
+
     # --- Code execution tool (Docker sandbox; degrades gracefully if absent) ---
     # Off by default, and deliberately so: this is the one tool whose blast
     # radius is the *host*. Running it means the backend can reach a Docker

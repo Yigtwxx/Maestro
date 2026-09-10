@@ -102,9 +102,21 @@ class McpServerCreate(_McpServerBase):
     enabled: bool = True
 
     @model_validator(mode="after")
-    def _require_secret_for_auth(self) -> McpServerCreate:
-        if self.auth_mode != "none" and not self.secret:
-            raise ValueError(f"secret is required for auth_mode {self.auth_mode!r}.")
+    def _require_secret_for_an_enabled_server(self) -> McpServerCreate:
+        """A credentialed server needs its credential — unless it is disabled.
+
+        The exception is not a loophole, it is the state a plugin install lands
+        in: a manifest cannot carry a secret, so a bundle's credentialed server
+        is created disabled for the installer to fill in. A user registering by
+        hand can reach the same state deliberately ("register now, paste the
+        token later"), and an *enabled* server with no secret is still refused,
+        because that one would fail every call for a reason nobody can guess.
+        """
+        if self.enabled and self.auth_mode != "none" and not self.secret:
+            raise ValueError(
+                f"secret is required to enable a server using auth_mode "
+                f"{self.auth_mode!r}."
+            )
         return self
 
 

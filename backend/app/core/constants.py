@@ -820,6 +820,14 @@ class MongoCollection(StrEnum):
     # advertised, so it joins the account-purge contract and must never be read
     # without a projection.
     MCP_SERVERS = "mcp_servers"
+    # Published plugin manifests: the catalog entry, parallel to
+    # marketplace_items. Carries author_id, which is anonymized rather than
+    # deleted on account purge — other people have installed these.
+    PLUGINS = "plugins"
+    # One row per installed plugin, per user. Unlike marketplace_installs this
+    # DOES carry user_id: it records which records the install created, so an
+    # uninstall knows what it owns and an incident can enumerate who is affected.
+    PLUGIN_INSTALLS = "plugin_installs"
 
 
 # --- Qdrant collection names ---
@@ -1440,6 +1448,31 @@ CUSTOM_API_PREVIEW_MAX_CHARS = 500
 CUSTOM_API_FORBIDDEN_HEADERS = frozenset(
     {"authorization", "cookie", "host", "content-length", "content-encoding"}
 )
+
+
+# --- Plugins (bundles of skills + MCP servers + agents) ---
+# A plugin is a bundle of *declarations*, never of code. It ships no executable
+# member, no hook and no command, and the moment it grows one it is a different
+# security review — say so here rather than discovering it in a diff.
+PLUGIN_MANIFEST_VERSION = 1
+PLUGIN_ID_PATTERN = r"^[a-z0-9][a-z0-9.-]{2,63}$"
+PLUGIN_VERSION_PATTERN = r"^\d{1,4}\.\d{1,4}\.\d{1,6}$"
+
+PLUGINS_MAX = 20  # installed per account
+
+# Structural caps, expressed as schema max_length so an oversized list is a 422
+# naming the field rather than a partial install that fails halfway.
+PLUGIN_MAX_SKILLS = 10
+PLUGIN_MAX_MCP_SERVERS = 5
+PLUGIN_MAX_AGENTS = 10
+
+PLUGIN_NAME_MAX_CHARS = 80
+PLUGIN_DESCRIPTION_MAX_CHARS = 280
+
+# A maximal manifest is well under 100 KB; this is generous and bounded. The cap
+# is enforced while streaming, so an endpoint answering with a gigabyte is
+# abandoned rather than buffered.
+PLUGIN_MANIFEST_MAX_BYTES = 256_000
 
 
 # --- Remote MCP servers (Model Context Protocol, Streamable HTTP only) ---

@@ -93,6 +93,9 @@ boot until the variable is set explicitly, while development and the test suite 
 | `MCP_TIMEOUT_SECONDS` | Deadline for one whole tool call (three requests), not per request | `30` |
 | `MCP_DISCOVERY_TIMEOUT_SECONDS` | Bounds the handshake plus a paginated `tools/list` | `20` |
 | `MCP_MAX_USES_PER_SUBTASK` | Calls per remote tool per subtask | `3` |
+| `PLUGINS_ENABLED` | Plugins: bundles of skills + MCP servers + agents, installed in one action. Off by default because its members are the two features that themselves ship off | `false` |
+| `PLUGIN_EXTERNAL_IMPORT_ENABLED` | Additionally allows importing a manifest from a user-named URL — content that passed no publish scan and can change after install. A separate decision from the switch above | `false` |
+| `PLUGIN_IMPORT_TIMEOUT_SECONDS` | Per-fetch timeout for a manifest import | `15` |
 | `CODE_EXECUTION_ENABLED` | Docker code sandbox. Off by default and self-host only: it needs access to the Docker daemon, so enabling it on a hosted deployment puts the host in the tool's blast radius | `false` |
 | `CODE_EXECUTION_IMAGE` | Sandbox container image | `python:3.12-slim` |
 | `CODE_EXECUTION_TIMEOUT_SECONDS` | Per-run timeout | `30` |

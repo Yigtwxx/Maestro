@@ -381,13 +381,19 @@ def _reset_metrics():
 
 
 def _mongo_matches(doc: dict, criteria: dict) -> bool:
-    """The subset of Motor's query language the custom-API paths use."""
+    """The subset of Motor's query language these paths use."""
     for key, value in criteria.items():
         actual = doc.get(key)
         if isinstance(value, dict):
             for operator, operand in value.items():
                 if operator == "$in":
                     if actual not in operand:
+                        return False
+                elif operator == "$nin":
+                    # Matches a document with the field *absent* too, which is
+                    # the load-bearing half: the visibility filters rely on it
+                    # to keep entries written before `status` existed visible.
+                    if actual in operand:
                         return False
                 else:  # pragma: no cover - unmodelled operator
                     raise NotImplementedError(operator)

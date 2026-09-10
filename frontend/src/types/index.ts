@@ -642,6 +642,107 @@ export interface SkillInput {
   required_tools: string[];
 }
 
+// --- Plugins (bundles of skills + MCP servers + agents) ---
+
+// A manifest declares members; it never carries a credential and never ships
+// tool schemas. Both are absences the backend enforces with `extra="forbid"`,
+// so naming either is a 422 rather than a silent drop.
+export interface PluginManifestSkill {
+  slug: string;
+  name: string;
+  description: string;
+  instructions: string;
+  output_format: string;
+  required_tools: string[];
+}
+
+export interface PluginManifestMcpServer {
+  slug: string;
+  name: string;
+  description: string;
+  url: string;
+  transport: McpTransport;
+  auth_mode: McpAuthMode;
+  auth_name: string;
+  timeout_seconds: number;
+}
+
+export interface PluginManifestAgent {
+  slug: string;
+  name: string;
+  domain: string;
+  system_prompt: string;
+  tools: string[];
+  description: string;
+  routing_hint: string;
+  output_format: string;
+  routable: boolean;
+  // Manifest-local slugs, resolved to freshly created ids at install.
+  skill_slugs: string[];
+  mcp_server_slugs: string[];
+}
+
+export interface PluginManifest {
+  manifest_version: number;
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  homepage: string;
+  // A display label only — a manifest cannot assert who wrote it.
+  author: string;
+  skills: PluginManifestSkill[];
+  mcp_servers: PluginManifestMcpServer[];
+  agents: PluginManifestAgent[];
+}
+
+export interface Plugin {
+  id: string;
+  plugin_id: string;
+  name: string;
+  description: string;
+  version: string;
+  author_label: string;
+  installs: number;
+  featured: boolean;
+  created_at: string;
+}
+
+export interface PluginDetail extends Plugin {
+  manifest: PluginManifest;
+}
+
+export interface PluginInstall {
+  id: string;
+  plugin_id: string;
+  name: string;
+  version: string;
+  source: 'catalog' | 'url';
+  origin_url?: string | null;
+  created_skill_ids: string[];
+  created_mcp_server_ids: string[];
+  created_agent_ids: string[];
+  // Servers that landed disabled because the manifest could not carry their
+  // credential. The one thing the user must do after installing.
+  needs_credentials: string[];
+  installed_at: string;
+  updated_at: string;
+}
+
+export interface PluginInstallMember {
+  kind: 'skill' | 'mcp_server' | 'agent';
+  id: string;
+  name: string;
+  // True when the user changed it after installing.
+  edited: boolean;
+}
+
+export interface PluginUninstallPreview {
+  plugin_id: string;
+  name: string;
+  members: PluginInstallMember[];
+}
+
 // --- Remote MCP servers ---
 
 // Only Streamable HTTP is supported. Local stdio is not a transport and never

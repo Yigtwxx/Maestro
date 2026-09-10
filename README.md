@@ -461,7 +461,7 @@ layer v2, dynamic agent registry, span tracing, the quality layer); email verifi
 TOTP two-factor auth and session management; marketplace reviews; the admin and moderation
 surface; off-site backups; fully pinned dependency lockfiles; agent skills (reusable,
 sandboxed instruction bundles attached to a custom agent); remote MCP servers as a
-BYOK tool source.
+BYOK tool source; plugins that install skills, MCP servers and agents as one bundle.
 
 **Next.** A real payment processor, the pre-purge reminder email, i18n (starting with the
 Turkish KVKK notice), and GraphQL if REST performance ever requires it.
