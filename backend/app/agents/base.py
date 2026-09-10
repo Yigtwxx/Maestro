@@ -14,6 +14,7 @@ from app.agents.prompts import CURRENT_DATE_LINE
 from app.core.constants import EventType, SubagentStatus
 from app.services.custom_api_service import CustomApiTool
 from app.services.llm_service import LLMAdapter
+from app.services.mcp_service import McpServer
 from app.services.service_key_service import ServiceCredentials
 from app.services.skill_service import Skill
 
@@ -115,6 +116,13 @@ class AgentContext:
     # only contributes a delimited block to a custom agent's prompt. Its cost is
     # prompt length, which ``SKILLS_PER_AGENT_MAX`` bounds at attach time.
     skills: tuple[Skill, ...] = ()
+    # This user's registered remote MCP servers, loaded from the *discovery
+    # cache* and decrypted at the engine edge like ``custom_api_tools``. No
+    # network call happens here: refreshing a catalog is an explicit, bounded
+    # action, never something a task start waits on. The budget is shared across
+    # every tool on every server, exactly like ``max_custom_api_calls``.
+    mcp_servers: tuple[McpServer, ...] = ()
+    max_mcp_calls: int = 3
 
     def role_adapter(self, role: str) -> LLMAdapter:
         """The adapter an agent role should use: its pooled per-role model when a

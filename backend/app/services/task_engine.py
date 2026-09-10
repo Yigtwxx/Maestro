@@ -40,6 +40,7 @@ from app.schemas.task import TaskCreate
 from app.services import (
     checkpoint_store,
     custom_api_service,
+    mcp_service,
     quota_service,
     skill_service,
     task_run_store,
@@ -273,6 +274,12 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
     # trips the injection scanner is withheld from this run rather than failing
     # it, so an agent loses one attachment instead of the whole task.
     skills = await skill_service.load_skills(rc.user_id)
+    # Fourth load at the same edge, and the only one reading a cache rather than
+    # a live source. A ``tools/list`` here would put a network round trip per
+    # server on the critical path of every task, and this call may not raise —
+    # so a discovery timeout would degrade into "this agent silently has no
+    # tools", which is the worst failure mode available.
+    mcp_servers = await mcp_service.load_servers(rc.user_id)
     ctx = AgentContext(
         adapter=pool.for_role("main"),
         adapter_pool=pool,
@@ -299,6 +306,8 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
         custom_api_tools=custom_api_tools,
         max_custom_api_calls=settings.custom_api_max_uses_per_subtask,
         skills=skills,
+        mcp_servers=mcp_servers,
+        max_mcp_calls=settings.mcp_max_uses_per_subtask,
         user_id=rc.user_id,
     )
 
@@ -350,7 +359,7 @@ async def _walk(rc: TaskRunContext, pool: AdapterPool, emit) -> dict[str, Any]: 
     # (``custom:{id}``) agent this loads and sandboxes the user's config; raises
     # CustomAgentUnavailable (a normal task failure) if it is gone or now unsafe.
     ctx.domain_info = await resolve_domain_info(
-        rc.user_id, domain, ctx.custom_api_tools, ctx.skills
+        rc.user_id, domain, ctx.custom_api_tools, ctx.skills, ctx.mcp_servers
     )
 
     # Step-boundary quota re-check (D19): cap this task's spend at the remaining

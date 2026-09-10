@@ -89,6 +89,10 @@ boot until the variable is set explicitly, while development and the test suite 
 | `SOCIAL_SEARCH_ENABLED` | X post search for the Social Listening squad. Needs the user's X key; withheld without one | `true` |
 | `COMMUNITY_READ_ENABLED` | Discord / Slack / Telegram channel reading for the Community squad. Needs the user's key for that platform | `true` |
 | `PLACES_INTEL_ENABLED` | Google Places lookup for the Local Market squad. Needs the user's Maps key | `true` |
+| `MCP_ENABLED` | Remote MCP servers as a BYOK tool source (Streamable HTTP only; no local stdio, no OAuth). Off by default: the host is user-supplied *and* the tool descriptions that shape a subagent's prompt are written by a third party | `false` |
+| `MCP_TIMEOUT_SECONDS` | Deadline for one whole tool call (three requests), not per request | `30` |
+| `MCP_DISCOVERY_TIMEOUT_SECONDS` | Bounds the handshake plus a paginated `tools/list` | `20` |
+| `MCP_MAX_USES_PER_SUBTASK` | Calls per remote tool per subtask | `3` |
 | `CODE_EXECUTION_ENABLED` | Docker code sandbox. Off by default and self-host only: it needs access to the Docker daemon, so enabling it on a hosted deployment puts the host in the tool's blast radius | `false` |
 | `CODE_EXECUTION_IMAGE` | Sandbox container image | `python:3.12-slim` |
 | `CODE_EXECUTION_TIMEOUT_SECONDS` | Per-run timeout | `30` |

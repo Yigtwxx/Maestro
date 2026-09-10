@@ -55,6 +55,8 @@ _USER_SCOPED_COLLECTIONS = (
     # Reusable instruction bundles. No credential, but the text is the user's
     # own authored content and carries user_id, so it is erased like the rest.
     MongoCollection.AGENT_SKILLS,
+    # Registered MCP servers, each holding an encrypted credential of the user's.
+    MongoCollection.MCP_SERVERS,
 )
 
 
@@ -203,6 +205,11 @@ async def export_user_data(db: AsyncSession, user: User) -> dict[str, Any]:
         # No exclusions: a skill is text the user wrote, holds no credential,
         # and is exactly the kind of thing Art.20 portability is for.
         "skills": await _find(MongoCollection.AGENT_SKILLS),
+        # Same rule as the endpoints above: the definition travels, the stored
+        # credential does not. `secret_hint` still goes, so a key is identifiable.
+        "mcp_servers": await _find(
+            MongoCollection.MCP_SERVERS, exclude=("encrypted_secret",)
+        ),
         "conversation_memories": await memory_service.export_user_texts(
             user.id, QDRANT_CONVERSATION_MEMORIES
         ),

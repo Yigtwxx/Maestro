@@ -176,6 +176,8 @@ async def _handle_grant_request(
         user_id=ctx.user_id,
         custom_api_tools=ctx.custom_api_tools,
         custom_api_budget=ctx.max_custom_api_calls,
+        mcp_servers=ctx.mcp_servers,
+        mcp_budget=ctx.max_mcp_calls,
     )[tool]
     grants.used += 1
     logger.info(
@@ -274,6 +276,7 @@ async def _run_subtask(
         credentials=ctx.service_credentials,
         assigned=assigned_tools,
         custom_api_tools=ctx.custom_api_tools,
+        mcp_servers=ctx.mcp_servers,
     )
     # Per-run directive registry: domain tools plus the built-in original-
     # request viewer (available whenever this run carries an objective, even
@@ -286,6 +289,8 @@ async def _run_subtask(
         user_id=ctx.user_id,
         custom_api_tools=ctx.custom_api_tools,
         custom_api_budget=ctx.max_custom_api_calls,
+        mcp_servers=ctx.mcp_servers,
+        mcp_budget=ctx.max_mcp_calls,
     )
     if objective.strip():
         specs[VIEW_ORIGINAL_REQUEST_ACTION] = (
@@ -303,6 +308,7 @@ async def _run_subtask(
             credentials=ctx.service_credentials,
             assigned=None,
             custom_api_tools=ctx.custom_api_tools,
+            mcp_servers=ctx.mcp_servers,
         )
         - enabled
     )

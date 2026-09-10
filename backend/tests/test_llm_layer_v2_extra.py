@@ -13,7 +13,6 @@ from app.agents.tools import (
     TOOL_SPECS,
     ToolDirective,
     ToolSpec,
-    builtin_tool_provider,
     tool_defs_for,
 )
 from app.core.constants import PROVIDER_TIER_MODELS, EventType, LLMProvider
@@ -30,11 +29,26 @@ from app.services.llm_service import (
 SOFTWARE = get_domain_info("software")
 
 
-# --- ToolProvider seam -----------------------------------------------------
+# --- The tool-source seam --------------------------------------------------
 
 
-def test_builtin_tool_provider_exposes_the_registry() -> None:
-    assert builtin_tool_provider.specs() is TOOL_SPECS
+def test_specs_for_is_the_single_merge_point() -> None:
+    """Everything the loop can execute is assembled here and nowhere else.
+
+    Replaces a test of the old ``ToolProvider`` Protocol, which was deleted: it
+    took no arguments, so it could never carry the run state (credentials, a
+    user id, decrypted servers) that three of the four sources need, and it
+    pointed readers at an extension point production never used.
+    """
+    from app.agents.tools import specs_for
+    from app.services.service_key_service import ServiceCredentials
+
+    enabled = frozenset({"web_search", "not_a_real_action"})
+    specs = specs_for(enabled, ServiceCredentials())
+    # A built-in resolves; an action no source can build is dropped rather than
+    # raising, so a stale assignment cannot fail a run.
+    assert set(specs) == {"web_search"}
+    assert specs["web_search"] is TOOL_SPECS["web_search"]
 
 
 def test_tool_defs_for_builds_native_schemas() -> None:

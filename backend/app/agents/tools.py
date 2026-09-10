@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
 from app.agents.prompts import TOOL_RULE_LINES
 from app.agents.registry import DomainInfo, get_domain_info
@@ -35,6 +35,11 @@ from app.core.constants import (
     DOCUMENT_SEARCH_RESULTS_OPEN,
     EXECUTABLE_TOOL_IDS,
     KEYLESS_CONNECTED_TOOL_IDS,
+    MCP_ACTION_PREFIX,
+    MCP_ARG_MAX_CHARS,
+    MCP_ARG_MAX_DEPTH,
+    MCP_MAX_ARGUMENTS,
+    MCP_MAX_ITEMS,
     MEMORY_RECALL_ACTION,
     MEMORY_RECALL_RESULTS_CLOSE,
     MEMORY_RECALL_RESULTS_OPEN,
@@ -62,6 +67,7 @@ from app.services import (
     community_read_service,
     custom_api_service,
     data_fetch_service,
+    mcp_service,
     memory_service,
     places_intel_service,
     repo_intel_service,
@@ -69,6 +75,7 @@ from app.services import (
     web_search_service,
 )
 from app.services.custom_api_service import CustomApiTool
+from app.services.mcp_service import McpServer, McpTool
 from app.services.service_key_service import ServiceCredentials
 
 from .base import extract_json, truncate_text
@@ -420,27 +427,96 @@ def make_custom_api_tool_specs(
     return specs
 
 
+def make_mcp_tool_specs(
+    servers: Sequence[McpServer], budget: int
+) -> dict[str, ToolSpec]:
+    """Build one spec per enabled tool on every MCP server this run loaded.
+
+    Takes already-loaded, already-decrypted servers rather than a ``user_id``,
+    mirroring ``make_custom_api_tool_specs``: decryption stays at the engine
+    edge and this module never touches the database or the master key.
+
+    The schema, description and rule are per-run values on the spec, never
+    entries in the process-wide tables, for the reason ``ToolSpec.parameters``
+    documents — this text belongs to one user's server and would otherwise leak
+    its shape to every other user's run in a multi-worker process.
+    """
+    specs: dict[str, ToolSpec] = {}
+    for server in servers:
+        for tool in server.tools:
+
+            def _run(
+                directive: ToolDirective,
+                _s: McpServer = server,
+                _t: McpTool = tool,
+            ) -> Any:
+                return mcp_service.call(_s, _t, directive.args)
+
+            def _describe(
+                directive: ToolDirective,
+                done: bool,
+                _s: McpServer = server,
+                _t: McpTool = tool,
+            ) -> str:
+                # Registration-validated, length-capped, newline-stripped names
+                # only. Never the URL, never the model-supplied arguments.
+                label = f"{_s.name} / {_t.display_name}"
+                return f"MCP call done: {label}" if done else f"Calling: {label}"
+
+            specs[tool.action] = ToolSpec(
+                action=tool.action,
+                budget_attr="max_mcp_calls",
+                # Per tool, not per server: ``_run_subtask`` writes
+                # ``metadata[spec.metadata_key]``, so a key shared across a
+                # server's tools would have the last spec in dict order clobber
+                # every other tool's count.
+                metadata_key=(
+                    f"mcp_{server.slug}_{tool.action.rsplit('__', 1)[-1]}_used"
+                ),
+                # None, and this is load-bearing: ``_parse_mcp`` keeps nested
+                # objects precisely because MCP arguments never reach an
+                # Architect event payload. A test pins the pair.
+                event_arg=None,
+                executor=_run,
+                describe=_describe,
+                # No provider_of: the Architect rail is keyed to LLMProvider
+                # values and a remote MCP server has none (like custom_api).
+                parameters=mcp_service.build_parameter_schema(tool),
+                description=mcp_service.tool_description(server, tool),
+                rule=mcp_service.build_rule_line(server, tool, budget),
+            )
+    return specs
+
+
 def specs_for(
     enabled: frozenset[str],
     credentials: ServiceCredentials,
     user_id: uuid.UUID | None = None,
     custom_api_tools: Sequence[CustomApiTool] = (),
     custom_api_budget: int = 3,
+    mcp_servers: Sequence[McpServer] = (),
+    mcp_budget: int = 3,
 ) -> dict[str, ToolSpec]:
     """Assemble one run's specs: stateless built-ins plus per-run ones.
 
-    The single place the four registries are merged, so the subagent loop never
-    has to know that some specs are process-wide (``TOOL_SPECS``), some close
-    over BYOK credentials (connected), some close over the user's id (RAG), and
-    some close over one of the user's own registered endpoints (custom API).
+    **The single extension point for a new tool source.** Everything the
+    subagent loop can execute is merged here, so the loop never has to know that
+    some specs are process-wide (``TOOL_SPECS``), some close over BYOK
+    credentials (connected), some close over the user's id (RAG), some close
+    over one of the user's own registered endpoints (custom API), and some close
+    over a remote MCP server they registered. Adding a sixth source is a
+    ``make_*_specs`` function and one line here.
+
     RAG specs are only built when ``user_id`` is known; without it those actions
     resolve to nothing and are dropped, so a run with no user id simply has no
-    RAG tools.
+    RAG tools. Prefixed action namespaces make a collision between the sources
+    impossible, so the merge order below is documentation rather than policy.
     """
     connected = make_connected_tool_specs(credentials)
     rag = make_rag_tool_specs(user_id) if user_id is not None else {}
     custom = make_custom_api_tool_specs(custom_api_tools, custom_api_budget)
-    per_run = {**connected, **rag, **custom}
+    mcp = make_mcp_tool_specs(mcp_servers, mcp_budget)
+    per_run = {**connected, **rag, **custom, **mcp}
     return {
         action: TOOL_SPECS[action] if action in TOOL_SPECS else per_run[action]
         for action in enabled
@@ -501,6 +577,48 @@ def _parse_custom_api(action: str, parsed: dict) -> ToolDirective:
     return ToolDirective(action, args)
 
 
+def _sanitize_mcp_value(value: Any, depth: int = 0) -> Any:
+    """Cap one model-supplied argument, keeping its JSON structure."""
+    if depth >= MCP_ARG_MAX_DEPTH:
+        return None
+    if isinstance(value, bool | int | float) or value is None:
+        return value
+    if isinstance(value, str):
+        return value[:MCP_ARG_MAX_CHARS]
+    if isinstance(value, list):
+        shaped = [
+            _sanitize_mcp_value(item, depth + 1) for item in value[:MCP_MAX_ITEMS]
+        ]
+        return [item for item in shaped if item is not None]
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in list(value.items())[:MCP_MAX_ARGUMENTS]:
+            shaped = _sanitize_mcp_value(item, depth + 1)
+            if shaped is not None:
+                out[str(key)[:MCP_ARG_MAX_CHARS]] = shaped
+        return out
+    return str(value)[:MCP_ARG_MAX_CHARS]
+
+
+def _parse_mcp(action: str, parsed: dict) -> ToolDirective:
+    """Sanitize an MCP directive, PRESERVING nested objects and arrays.
+
+    Unlike ``_parse_custom_api`` this keeps structure. MCP input schemas
+    routinely declare object and array parameters, and flattening them to
+    strings would make those tools uncallable on every provider that is not
+    using native function calling.
+
+    That is safe only because every spec ``make_mcp_tool_specs`` builds sets
+    ``event_arg=None``. ``ToolDirective.args`` is annotated ``dict[str, str]``
+    because its values reach an Architect event payload verbatim, and an MCP
+    directive never does. ``tests/test_mcp_tool_runtime.py`` pins that pair; if
+    it ever breaks, this function has to go back to stringifying.
+    """
+    raw = parsed.get("args")
+    args = _sanitize_mcp_value(raw) if isinstance(raw, dict) else {}
+    return ToolDirective(action=action, args=args)
+
+
 def parse_directive(content: str, enabled: frozenset[str]) -> ToolDirective | None:
     """Parse a reply as a tool directive, or None if it is a final answer.
 
@@ -530,6 +648,8 @@ def parse_directive(content: str, enabled: frozenset[str]) -> ToolDirective | No
 
     if action.startswith(CUSTOM_API_ACTION_PREFIX):
         return _parse_custom_api(action, parsed)
+    if action.startswith(MCP_ACTION_PREFIX):
+        return _parse_mcp(action, parsed)
 
     if action == VIEW_ORIGINAL_REQUEST_ACTION:
         return ToolDirective(action)
@@ -657,6 +777,7 @@ async def resolve_enabled_tools(
     credentials: ServiceCredentials | None = None,
     assigned: frozenset[str] | None = None,
     custom_api_tools: Sequence[CustomApiTool] = (),
+    mcp_servers: Sequence[McpServer] = (),
 ) -> frozenset[str]:
     """Executable tools this domain may use, filtered by runtime switches.
 
@@ -679,9 +800,15 @@ async def resolve_enabled_tools(
     # the universe is widened by exactly the endpoints this run actually loaded,
     # which is also what stops one user's action name resolving for another.
     custom_actions = {tool.action for tool in custom_api_tools}
-    declared = set(info.tools) & (EXECUTABLE_TOOL_IDS | custom_actions)
+    # Same property, same reason, for a remote MCP tool: the universe is widened
+    # by exactly the servers this run loaded, which is what stops one user's
+    # action name resolving for another.
+    mcp_actions = {tool.action for server in mcp_servers for tool in server.tools}
+    declared = set(info.tools) & (EXECUTABLE_TOOL_IDS | custom_actions | mcp_actions)
     if not settings.custom_api_tools_enabled:
         declared -= custom_actions
+    if not settings.mcp_enabled:
+        declared -= mcp_actions
     if assigned is not None:
         declared &= assigned
     if not settings.web_search_enabled:
@@ -718,26 +845,12 @@ async def resolve_enabled_tools(
     return frozenset(declared)
 
 
-# --- ToolProvider seam (Backend v2 §4.4) ----------------------------------
-# An indirection over where tool specs come from, so a future MCP/plugin source
-# can supply tools without touching the subagent loop. Only the built-in
-# provider exists today; the loop resolves specs through this interface.
-
-
-class ToolProvider(Protocol):
-    """Supplies the executable tool specs available to a subagent run."""
-
-    def specs(self) -> dict[str, ToolSpec]: ...
-
-
-class BuiltinToolProvider:
-    """The default provider: the process-wide built-in ``TOOL_SPECS``."""
-
-    def specs(self) -> dict[str, ToolSpec]:
-        return TOOL_SPECS
-
-
-builtin_tool_provider: ToolProvider = BuiltinToolProvider()
+# A ``ToolProvider`` Protocol used to sit here, written as the seam a future
+# MCP or plugin source would plug into. That source now exists, and it turned
+# out to need run state — decrypted servers, credentials, a user id — which a
+# zero-argument ``specs()`` cannot carry. Every source plugs into ``specs_for``
+# instead, which is called from exactly one place. The Protocol was deleted
+# rather than reshaped so nothing points at the wrong extension point.
 
 # JSON-schema parameter shapes for native function calling, one per tool. Mirrors
 # the directive args each executor already expects.

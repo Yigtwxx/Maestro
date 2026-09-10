@@ -342,6 +342,10 @@ export const AGENT_LIMITS = {
   // instruction text to the subagent's system prompt, which is what the cap is
   // protecting.
   skillsPerAgent: 5,
+  // Mirrors backend MCP_SERVERS_PER_AGENT_MAX. The backend additionally refuses
+  // an attachment whose servers offer more than MCP_TOOLS_PER_AGENT_MAX tools
+  // between them — the server count alone does not bound the prompt cost.
+  mcpServersPerAgent: 3,
 } as const;
 
 // Field limits for a skill, mirroring backend schemas/skill.py SkillCreate.

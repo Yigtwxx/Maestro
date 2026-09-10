@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { toolWarning } from '@/lib/agent-wizard';
 import { ConnectedKeysPanel } from '@/components/agents/wizard/ConnectedKeysPanel';
 import { CustomApiToolList } from '@/components/agents/wizard/CustomApiToolList';
+import { McpServerList } from '@/components/agents/wizard/McpServerList';
 import { SkillList } from '@/components/agents/wizard/SkillList';
 import { AGENT_LIMITS } from '@/lib/constants';
 import type { AgentDraft } from '@/lib/agent-wizard';
@@ -118,12 +119,21 @@ export function CapabilitiesStep({
         agentTools={draft.tools}
       />
 
-      {draft.tools.length === 0 && draft.customApiToolIds.length === 0 && (
-        <p className="text-xs text-muted/80">
-          An agent with no tools still works — it answers from the model&apos;s own
-          knowledge. Add tools when it needs facts it cannot already have.
-        </p>
-      )}
+      <McpServerList
+        selected={draft.mcpServerIds}
+        onChange={(mcpServerIds) => onChange({ mcpServerIds })}
+        max={AGENT_LIMITS.mcpServersPerAgent}
+      />
+
+      {draft.tools.length === 0 &&
+        draft.customApiToolIds.length === 0 &&
+        draft.mcpServerIds.length === 0 && (
+          <p className="text-xs text-muted/80">
+            An agent with no tools still works — it answers from the
+            model&apos;s own knowledge. Add tools when it needs facts it cannot
+            already have.
+          </p>
+        )}
     </div>
   );
 }

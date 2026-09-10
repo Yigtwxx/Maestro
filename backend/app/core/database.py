@@ -183,6 +183,7 @@ async def ensure_indexes() -> None:
     actions = MongoCollection.MODERATION_ACTIONS.value
     custom_api_tools = MongoCollection.CUSTOM_API_TOOLS.value
     skills = MongoCollection.AGENT_SKILLS.value
+    mcp_servers = MongoCollection.MCP_SERVERS.value
     try:
         db = get_mongo_db()
     except Exception:  # noqa: BLE001 - a bad Mongo URL must not block startup
@@ -218,6 +219,8 @@ async def ensure_indexes() -> None:
         (custom_api_tools, [("user_id", ASCENDING), ("created_at", DESCENDING)]),
         # Backs the skill list and the per-run load at the engine edge.
         (skills, [("user_id", ASCENDING), ("created_at", DESCENDING)]),
+        # Backs the MCP server list and the per-run cache load.
+        (mcp_servers, [("user_id", ASCENDING), ("created_at", DESCENDING)]),
     ):
         try:
             await db[collection].create_index(keys)
@@ -264,6 +267,20 @@ async def ensure_indexes() -> None:
     except Exception:  # noqa: BLE001 - a missing index only costs the backstop
         logger.warning(
             "Failed to create the unique skill slug index on %s", skills, exc_info=True
+        )
+
+    # And once more for an MCP server's slug, which sits in the middle of every
+    # action id that server's tools produce. A duplicate would make two servers
+    # generate colliding actions, so one of them would be unreachable.
+    try:
+        await db[mcp_servers].create_index(
+            [("user_id", ASCENDING), ("slug", ASCENDING)], unique=True
+        )
+    except Exception:  # noqa: BLE001 - a missing index only costs the backstop
+        logger.warning(
+            "Failed to create the unique MCP slug index on %s",
+            mcp_servers,
+            exc_info=True,
         )
 
     # Kept separate: retention must still be attempted if an index above failed.

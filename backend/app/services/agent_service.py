@@ -21,6 +21,7 @@ from app.core.constants import (
     CUSTOM_AGENTS_MAX,
     EXECUTABLE_TOOL_IDS,
     KEYLESS_CONNECTED_TOOL_IDS,
+    MCP_TOOLS_PER_AGENT_MAX,
     ROUTING_CUSTOM_AGENTS_MAX,
     TOOL_CATALOG,
     TOOL_DESCRIPTIONS,
@@ -29,7 +30,12 @@ from app.core.constants import (
 )
 from app.core.database import get_mongo_db
 from app.schemas.agent import AgentConfigCreate, AgentConfigUpdate, ToolCatalogEntry
-from app.services import custom_api_service, service_key_service, skill_service
+from app.services import (
+    custom_api_service,
+    mcp_service,
+    service_key_service,
+    skill_service,
+)
 from app.utils import prompt_guard
 
 
@@ -87,6 +93,37 @@ async def _validate_skill_ids(user_id: uuid.UUID, skill_ids: list[str]) -> list[
     unknown = [s for s in deduped if s not in owned]
     if unknown:
         raise AgentValidationError(f"Unknown skills: {', '.join(unknown)}")
+    return deduped
+
+
+async def _validate_mcp_server_ids(
+    user_id: uuid.UUID, server_ids: list[str]
+) -> list[str]:
+    """Keep only server ids this user owns, and refuse an oversized tool total.
+
+    Two checks, not one. Ownership is the twin of the other two validators. The
+    second is the per-agent *tool* cap: three servers advertising forty tools
+    each would put 120 schemas and 120 rule lines into one member's system
+    prompt, crowding out the role that prompt exists to state. The server count
+    alone does not bound that, so it is counted here — and truncated again at
+    composition time, because a server can add tools after this ran.
+    """
+    if not server_ids:
+        return []
+    deduped = list(dict.fromkeys(server_ids))
+    owned = await mcp_service.get_server_ids(user_id, deduped)
+    unknown = [s for s in deduped if s not in owned]
+    if unknown:
+        raise AgentValidationError(f"Unknown MCP servers: {', '.join(unknown)}")
+
+    servers = await mcp_service.load_servers(user_id, deduped)
+    total = sum(len(server.tools) for server in servers)
+    if total > MCP_TOOLS_PER_AGENT_MAX:
+        raise AgentValidationError(
+            f"Those servers offer {total} tools together, above the "
+            f"{MCP_TOOLS_PER_AGENT_MAX} an agent may hold. Disable some tools "
+            "on a server, or attach fewer servers."
+        )
     return deduped
 
 
@@ -232,6 +269,7 @@ async def create_agent(
         user_id, payload.custom_api_tool_ids
     )
     skill_ids = await _validate_skill_ids(user_id, payload.skill_ids)
+    mcp_server_ids = await _validate_mcp_server_ids(user_id, payload.mcp_server_ids)
     now = datetime.now(UTC)
     document = {
         "id": str(uuid.uuid4()),
@@ -246,6 +284,7 @@ async def create_agent(
         "routable": payload.routable,
         "custom_api_tool_ids": custom_api_tool_ids,
         "skill_ids": skill_ids,
+        "mcp_server_ids": mcp_server_ids,
         "source": source,
         "marketplace_item_id": marketplace_item_id,
         "security_scan": {"version": prompt_guard.SCANNER_VERSION, "passed": True},
@@ -289,6 +328,10 @@ async def update_agent(
         )
     if payload.skill_ids is not None:
         changes["skill_ids"] = await _validate_skill_ids(user_id, payload.skill_ids)
+    if payload.mcp_server_ids is not None:
+        changes["mcp_server_ids"] = await _validate_mcp_server_ids(
+            user_id, payload.mcp_server_ids
+        )
     if not changes:
         return await get_agent(user_id, agent_id)
 

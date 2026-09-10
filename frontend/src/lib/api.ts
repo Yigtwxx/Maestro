@@ -40,6 +40,9 @@ import type {
   MarketplaceReviewInput,
   MarketplaceReviewList,
   MarketplaceStatus,
+  McpDiscoverResult,
+  McpServer,
+  McpServerInput,
   MfaChallenge,
   PlanPublic,
   PlanPublicListing,
@@ -815,6 +818,40 @@ export const api = {
 
   deleteSkill(id: string) {
     return request<void>(`/api/v1/skills/${id}`, { method: 'DELETE' });
+  },
+
+  // --- Remote MCP servers ---
+
+  listMcpServers() {
+    return request<McpServer[]>('/api/v1/mcp-servers');
+  },
+
+  createMcpServer(input: McpServerInput) {
+    return request<McpServer>('/api/v1/mcp-servers', {
+      method: 'POST',
+      body: input,
+    });
+  },
+
+  // Partial by design: omitting `secret` leaves the stored credential in place.
+  // Changing `url` clears the cached catalog server-side.
+  updateMcpServer(id: string, input: Partial<McpServerInput>) {
+    return request<McpServer>(`/api/v1/mcp-servers/${id}`, {
+      method: 'PATCH',
+      body: input,
+    });
+  },
+
+  deleteMcpServer(id: string) {
+    return request<void>(`/api/v1/mcp-servers/${id}`, { method: 'DELETE' });
+  },
+
+  // Leaves the building: handshakes with the server and refreshes its cached
+  // tool catalog. Reports failure in the body rather than throwing.
+  discoverMcpServer(id: string) {
+    return request<McpDiscoverResult>(`/api/v1/mcp-servers/${id}/discover`, {
+      method: 'POST',
+    });
   },
 
   // --- Marketplace ---

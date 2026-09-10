@@ -537,6 +537,7 @@ export interface AgentConfig {
   routable: boolean;
   custom_api_tool_ids: string[];
   skill_ids: string[];
+  mcp_server_ids: string[];
   // Catalog tools an attached skill says it needs but this agent does not
   // enable. Computed by the backend on every read, never stored: the answer
   // changes when either side changes. Advisory — nothing at run time reads it,
@@ -606,6 +607,8 @@ export interface AgentConfigInput {
   custom_api_tool_ids: string[];
   // Ids of the user's own skills, separate from `tools` for the same reason.
   skill_ids: string[];
+  // And of their registered MCP servers. Same rule a third time.
+  mcp_server_ids: string[];
 }
 
 // --- Agent skills (reusable instruction bundles) ---
@@ -637,6 +640,86 @@ export interface SkillInput {
   instructions: string;
   output_format: string;
   required_tools: string[];
+}
+
+// --- Remote MCP servers ---
+
+// Only Streamable HTTP is supported. Local stdio is not a transport and never
+// will be: Maestro is hosted, and a stdio server means a process on the host.
+export type McpTransport = 'streamable_http';
+// No `query` mode, unlike a custom API tool: an MCP endpoint is called
+// repeatedly, and a credential in the URL would land in every intermediary log.
+export type McpAuthMode = 'none' | 'bearer' | 'header';
+
+export interface McpTool {
+  // The sanitized id the model names, `mcp__{server}__{tool}`.
+  action: string;
+  // The server's own spelling, which is what `tools/call` sends.
+  remote_name: string;
+  display_name: string;
+  description: string;
+  // Rebuilt from the server's inputSchema, never passed through.
+  parameters: Record<string, unknown>;
+  enabled: boolean;
+  // Set when the tool was withheld: a failed injection scan, an unusable name,
+  // or a schema that could not be rebuilt within the caps.
+  blocked_reason?: string | null;
+}
+
+export interface McpServer {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  url: string;
+  transport: McpTransport;
+  headers: Record<string, string>;
+  auth_mode: McpAuthMode;
+  auth_name: string;
+  // Masked tail only — the stored credential is never returned.
+  secret_hint?: string;
+  timeout_seconds: number;
+  enabled: boolean;
+  tool_allowlist: string[];
+  tools: McpTool[];
+  tools_fetched_at?: string | null;
+  // True once the cache has aged past its TTL, or once a call named a tool the
+  // server no longer has. Drives the "rediscover" prompt.
+  tools_stale: boolean;
+  protocol_version: string;
+  server_name: string;
+  server_version: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface McpServerInput {
+  slug: string;
+  name: string;
+  description: string;
+  url: string;
+  transport: McpTransport;
+  headers: Record<string, string>;
+  auth_mode: McpAuthMode;
+  auth_name: string;
+  // Write-only. Omit on update to leave the stored credential untouched.
+  secret?: string;
+  timeout_seconds: number;
+  enabled: boolean;
+  tool_allowlist?: string[];
+}
+
+export interface McpDiscoverResult {
+  ok: boolean;
+  server_name: string;
+  server_version: string;
+  protocol_version: string;
+  tools: McpTool[];
+  // How many tools the server advertised but Maestro refused to expose.
+  withheld: number;
+  duration_ms: number;
+  error?: string | null;
 }
 
 // --- Custom API tools (user-registered HTTP endpoints) ---

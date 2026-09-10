@@ -36,7 +36,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
@@ -200,6 +200,71 @@ async def request_api(
         return ApiResult(status=response.status_code)
 
 
+@dataclass(slots=True)
+class TextResult:
+    """A response body kept as text, for the one protocol that is not plain JSON.
+
+    ``headers`` carries only the names the caller asked for in
+    ``capture_headers`` — an allowlist, never the response's whole header map.
+    Handing a caller every header is how a ``Set-Cookie`` or an echoed
+    credential ends up somewhere it should not be.
+    """
+
+    text: str = ""
+    content_type: str = ""
+    status: int = 0
+    headers: dict[str, str] = field(default_factory=dict)
+    oversized: bool = False
+
+
+async def request_text(
+    url: str,
+    *,
+    method: str = "POST",
+    headers: dict[str, str] | None = None,
+    json_body: Any | None = None,
+    timeout: float,
+    log_target: str,
+    max_bytes: int,
+    capture_headers: tuple[str, ...] = (),
+) -> TextResult:
+    """Call ``url`` and return the body as text. Never raises, never logs a body.
+
+    The one caller is the MCP transport: Streamable HTTP answers a single POST
+    with either ``application/json`` or ``text/event-stream``, and
+    :func:`request_api` can only report the first. It is a sibling rather than a
+    mode flag on ``request_api`` on purpose — every caller of that function
+    reads ``.data``, and a flag would hand all of them a way past the parse.
+
+    ``log_target`` and ``max_bytes`` are required, unlike on ``request_api``:
+    this path only ever talks to a host the *user* named, so neither a derived
+    label nor an unbounded read is a safe default.
+    """
+    streamed = await _stream_capped(
+        method, url, headers, None, json_body, timeout, log_target, max_bytes
+    )
+    response = streamed.response
+    if response is None:
+        return TextResult()
+    captured = {
+        name: response.headers[name]
+        for name in capture_headers
+        if name in response.headers
+    }
+    result = TextResult(
+        content_type=response.headers.get("content-type", "").split(";")[0].strip(),
+        status=response.status_code,
+        headers=captured,
+        oversized=streamed.oversized,
+    )
+    if response.status_code >= 400 or streamed.oversized:
+        return result
+    result.text = bytes(streamed.body).decode(
+        response.charset_encoding or "utf-8", errors="replace"
+    )
+    return result
+
+
 async def _send(
     method: str,
     url: str,
@@ -224,7 +289,16 @@ async def _send(
         return None
 
 
-async def _send_capped(
+@dataclass(slots=True)
+class _Streamed:
+    """The raw outcome of one capped, streamed call. Internal to this module."""
+
+    response: httpx.Response | None = None
+    body: bytearray = field(default_factory=bytearray)
+    oversized: bool = False
+
+
+async def _stream_capped(
     method: str,
     url: str,
     headers: dict[str, str] | None,
@@ -233,13 +307,17 @@ async def _send_capped(
     timeout: float,
     target: str,
     max_bytes: int,
-) -> ApiResult:
+) -> _Streamed:
     """One HTTP call whose body is abandoned past ``max_bytes``.
 
     Streamed rather than read-then-measured: an endpoint answering with a
     gigabyte would otherwise be fully buffered before anyone could object, which
     is the failure mode the cap exists to prevent. Never raises, like
     :func:`_send`.
+
+    Shared by :func:`request_api` and :func:`request_text` so the cap and the
+    never-raises discipline have exactly one implementation. A second copy of
+    this loop would be two implementations of one invariant.
     """
     try:
         client = get_client()
@@ -250,23 +328,47 @@ async def _send_capped(
         try:
             if response.status_code >= 400:
                 logger.warning("API returned %s: %s", response.status_code, target)
-                return ApiResult(
-                    status=response.status_code, rate_limited=_is_rate_limited(response)
-                )
+                return _Streamed(response=response)
             body = bytearray()
             async for chunk in response.aiter_bytes():
                 body.extend(chunk)
                 if len(body) > max_bytes:
                     logger.warning("API response exceeded the size cap: %s", target)
-                    return ApiResult(status=response.status_code, oversized=True)
+                    return _Streamed(response=response, oversized=True)
         finally:
             await response.aclose()
     except Exception:  # noqa: BLE001 - httpx raises assorted types; best-effort
         logger.warning("API request failed: %s", target)
+        return _Streamed()
+    return _Streamed(response=response, body=body)
+
+
+async def _send_capped(
+    method: str,
+    url: str,
+    headers: dict[str, str] | None,
+    params: dict[str, Any] | None,
+    json_body: Any | None,
+    timeout: float,
+    target: str,
+    max_bytes: int,
+) -> ApiResult:
+    """A capped call whose body is parsed as JSON."""
+    streamed = await _stream_capped(
+        method, url, headers, params, json_body, timeout, target, max_bytes
+    )
+    response = streamed.response
+    if response is None:
         return ApiResult()
+    if response.status_code >= 400:
+        return ApiResult(
+            status=response.status_code, rate_limited=_is_rate_limited(response)
+        )
+    if streamed.oversized:
+        return ApiResult(status=response.status_code, oversized=True)
 
     try:
-        return ApiResult(data=json.loads(body), status=response.status_code)
+        return ApiResult(data=json.loads(streamed.body), status=response.status_code)
     except Exception:  # noqa: BLE001 - a non-JSON body is the endpoint's choice
         logger.warning("API returned non-JSON: %s", target)
         return ApiResult(status=response.status_code)

@@ -64,6 +64,14 @@ GET    /api/v1/skills/{id}
 PATCH  /api/v1/skills/{id}                  # a content change bumps `version`
 DELETE /api/v1/skills/{id}
 
+# Remote MCP servers
+GET    /api/v1/mcp-servers
+POST   /api/v1/mcp-servers
+GET    /api/v1/mcp-servers/{id}             # includes the cached tool catalog
+PATCH  /api/v1/mcp-servers/{id}             # changing `url` clears that cache
+DELETE /api/v1/mcp-servers/{id}
+POST   /api/v1/mcp-servers/{id}/discover    # handshake + refresh; outbound-probe limit
+
 # Task management
 POST   /api/v1/tasks
 GET    /api/v1/tasks                        # task history
@@ -146,7 +154,7 @@ Reviewer feedback:
   `task_runs` / `task_checkpoints` / `task_questions`.
 - **MongoDB** — dynamic data: `agent_logs`, `marketplace_items` plus reviews, moderation
   reports and the admin audit log, `task_sessions`, `agent_configurations`, `agent_skills`,
-  `trace_spans` (TTL-bound).
+  `mcp_servers` (encrypted credential + sanitized tool cache), `trace_spans` (TTL-bound).
 - **Qdrant** — vector data: `conversation_memories`, `document_chunks`.
 
 Memory and vectors are partitioned per user; data never crosses accounts.

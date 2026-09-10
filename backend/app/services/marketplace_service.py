@@ -242,6 +242,12 @@ async def install(user_id: uuid.UUID, item_id: str) -> dict[str, Any] | None:
             # travel as a published copy that ``publish`` scanned, never as a
             # reference to a record in the publisher's account.
             skill_ids=[],
+            # And a third time. A registered MCP server is the publisher's
+            # address *and* their encrypted credential; an installer must never
+            # inherit either. A plugin ships a server *definition* the installer
+            # then credentials themselves — a different path, added in its own
+            # phase. This one stays closed.
+            mcp_server_ids=[],
         ),
         source="marketplace",
         marketplace_item_id=item_id,

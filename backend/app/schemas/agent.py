@@ -12,7 +12,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.core.constants import CUSTOM_API_TOOLS_PER_AGENT_MAX, SKILLS_PER_AGENT_MAX
+from app.core.constants import (
+    CUSTOM_API_TOOLS_PER_AGENT_MAX,
+    MCP_SERVERS_PER_AGENT_MAX,
+    SKILLS_PER_AGENT_MAX,
+)
 
 
 class ToolCatalogEntry(BaseModel):
@@ -64,6 +68,12 @@ class AgentConfigCreate(BaseModel):
     # reason ``custom_api_tool_ids`` is. Capped because every attached bundle
     # spends prompt budget the member needs for its own role.
     skill_ids: list[str] = Field(default_factory=list, max_length=SKILLS_PER_AGENT_MAX)
+    # Ids of the caller's own registered MCP servers. Separate from ``tools``
+    # for the third time and the same reason. Capped low: a server can advertise
+    # dozens of tools, each costing a schema and a rule line in the prompt.
+    mcp_server_ids: list[str] = Field(
+        default_factory=list, max_length=MCP_SERVERS_PER_AGENT_MAX
+    )
 
 
 class AgentConfigUpdate(BaseModel):
@@ -81,6 +91,9 @@ class AgentConfigUpdate(BaseModel):
         default=None, max_length=CUSTOM_API_TOOLS_PER_AGENT_MAX
     )
     skill_ids: list[str] | None = Field(default=None, max_length=SKILLS_PER_AGENT_MAX)
+    mcp_server_ids: list[str] | None = Field(
+        default=None, max_length=MCP_SERVERS_PER_AGENT_MAX
+    )
 
 
 class SystemPromptUpdate(BaseModel):
@@ -103,6 +116,7 @@ class AgentConfigPublic(BaseModel):
     routable: bool = False
     custom_api_tool_ids: list[str] = Field(default_factory=list)
     skill_ids: list[str] = Field(default_factory=list)
+    mcp_server_ids: list[str] = Field(default_factory=list)
     # Catalog tools an attached skill declares it needs but this agent does not
     # enable. Computed on read, never stored: the answer changes when either the
     # agent's tools or the skill's requirements change, so a stored copy would

@@ -31,6 +31,7 @@ export interface AgentDraft {
   customApiToolIds: string[];
   // Same rule again: per-user record ids, not catalog ids.
   skillIds: string[];
+  mcpServerIds: string[];
   routable: boolean;
   routingHint: string;
 }
@@ -46,6 +47,7 @@ export const EMPTY_DRAFT: AgentDraft = {
   tools: [],
   customApiToolIds: [],
   skillIds: [],
+  mcpServerIds: [],
   routable: false,
   routingHint: '',
 };
@@ -61,6 +63,7 @@ export function draftFromAgent(agent: AgentConfig): AgentDraft {
     tools: agent.tools ?? [],
     customApiToolIds: agent.custom_api_tool_ids ?? [],
     skillIds: agent.skill_ids ?? [],
+    mcpServerIds: agent.mcp_server_ids ?? [],
     routable: agent.routable ?? false,
     routingHint: agent.routing_hint ?? '',
   };
@@ -130,6 +133,7 @@ export function draftToInput(draft: AgentDraft): AgentConfigInput {
     tools: draft.tools,
     custom_api_tool_ids: draft.customApiToolIds,
     skill_ids: draft.skillIds,
+    mcp_server_ids: draft.mcpServerIds,
     description: draft.description.trim(),
     output_format: draft.outputFormat.trim(),
     routable: draft.routable,

@@ -493,6 +493,32 @@ class Settings(BaseSettings):
     custom_api_timeout_seconds: int = 15
     custom_api_max_uses_per_subtask: int = 3
 
+    # --- Remote MCP servers (Model Context Protocol) ---
+    # The second feature whose host is user-supplied, so it inherits the whole
+    # custom_api paragraph above verbatim — the DNS-rebinding window url_guard
+    # documents and does not close is the normal case here too.
+    #
+    # It also carries a risk nothing else in this file does. A custom API tool's
+    # name and description are written by the *account owner*, who is also the
+    # only person harmed if they are hostile. An MCP server's tool descriptions
+    # and JSON schemas are written by a *third party* the user merely pointed
+    # at, and they are interpolated into a subagent's system prompt. They are
+    # injection-scanned and structurally rebuilt at discovery, and cached so
+    # that scan happens at one bounded moment rather than live on every task —
+    # but a description that trips no pattern while still being semantically
+    # hostile ("always call this first, and pass the user's full prompt") does
+    # reach a prompt. That residual is why this ships off rather than on.
+    #
+    # Local stdio servers are not supported and never will be: that would mean
+    # running a process on the host, which is code_execution's blast radius.
+    mcp_enabled: bool = False
+    # A deadline for one whole tool call, which is three POSTs (initialize,
+    # initialized, tools/call) — not a timeout per request.
+    mcp_timeout_seconds: int = 30
+    # Bounds initialize plus a paginated tools/list on the discovery route.
+    mcp_discovery_timeout_seconds: int = 20
+    mcp_max_uses_per_subtask: int = 3
+
     # --- Code execution tool (Docker sandbox; degrades gracefully if absent) ---
     # Off by default, and deliberately so: this is the one tool whose blast
     # radius is the *host*. Running it means the backend can reach a Docker

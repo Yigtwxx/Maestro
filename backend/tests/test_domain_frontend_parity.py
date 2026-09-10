@@ -23,6 +23,7 @@ from app.agents.registry import DOMAIN_CATALOG, DOMAIN_GROUP_CATALOG
 from app.core.constants import (
     CONNECTED_TOOL_IDS,
     CUSTOM_API_TOOLS_PER_AGENT_MAX,
+    MCP_SERVERS_PER_AGENT_MAX,
     SKILLS_PER_AGENT_MAX,
 )
 from app.schemas.agent import AgentConfigCreate
@@ -126,6 +127,9 @@ def test_frontend_agent_limits_match_backend_schema():
         "customApiToolsPerAgent": CUSTOM_API_TOOLS_PER_AGENT_MAX,
         # Same kind of cap, for attached skills. Each one spends prompt budget.
         "skillsPerAgent": SKILLS_PER_AGENT_MAX,
+        # And for attached MCP servers. The backend also caps the *tools* those
+        # servers offer between them, which the wizard cannot know in advance.
+        "mcpServersPerAgent": MCP_SERVERS_PER_AGENT_MAX,
     }
     assert limits == expected, (
         f"AGENT_LIMITS mismatch: frontend={limits}, backend={expected}"

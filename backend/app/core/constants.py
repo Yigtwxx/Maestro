@@ -815,6 +815,11 @@ class MongoCollection(StrEnum):
     # marketplace install), so it joins the account-purge contract and is
     # re-scanned by prompt_guard every time it is loaded for a run.
     AGENT_SKILLS = "agent_skills"
+    # User-registered remote MCP servers. Carries user_id, an encrypted
+    # credential *and* a cached copy of the tool descriptions a third party
+    # advertised, so it joins the account-purge contract and must never be read
+    # without a projection.
+    MCP_SERVERS = "mcp_servers"
 
 
 # --- Qdrant collection names ---
@@ -1435,6 +1440,115 @@ CUSTOM_API_PREVIEW_MAX_CHARS = 500
 CUSTOM_API_FORBIDDEN_HEADERS = frozenset(
     {"authorization", "cookie", "host", "content-length", "content-encoding"}
 )
+
+
+# --- Remote MCP servers (Model Context Protocol, Streamable HTTP only) ---
+# The second tool source whose host is user-supplied, and the first whose *tool
+# descriptions and schemas* are written by a third party. Both facts shape every
+# constant below.
+#
+# Local stdio is deliberately not a transport and never will be: Maestro is a
+# hosted platform, and a stdio server means running a process on our host.
+MCP_TRANSPORTS = ("streamable_http",)
+
+# The revision we advertise in ``initialize``. A server answering with a
+# different one is accepted and the value recorded, not refused -- the four
+# methods this client uses have been stable across revisions, and failing closed
+# on a version string would break more servers than it protects.
+MCP_PROTOCOL_VERSION = "2025-06-18"
+
+# Double underscore, not a colon, for the reason CUSTOM_API_ACTION_PREFIX gives:
+# native function-calling tool names must match ^[a-zA-Z0-9_-]{1,64} on every
+# provider. The action is never parsed back apart -- a spec closes over its
+# server and the remote name -- so a slug containing "__" is harmless, and the
+# only consumer of the prefix is parse_directive's startswith check.
+MCP_ACTION_PREFIX = "mcp__"
+MCP_SERVER_SLUG_PATTERN = r"^[a-z][a-z0-9_]{1,16}$"
+# A remote name is sanitized into this shape at discovery; the verbatim original
+# is stored separately, because that is what ``tools/call`` has to send.
+MCP_TOOL_NAME_PATTERN = r"^[a-zA-Z0-9_-]{1,38}$"
+# 5 (prefix) + 16 (slug) + 2 (separator) + 38 (tool) = 61, inside the provider
+# ceiling with room to spare. A tool whose action would exceed it is dropped at
+# discovery rather than silently renamed: a renamed action needs a reverse map,
+# and a reverse map drifts.
+MCP_ACTION_MAX_CHARS = 64
+
+MCP_SERVERS_MAX = 10  # per account
+MCP_SERVERS_PER_AGENT_MAX = 3
+# Discovery cap. Extra tools are dropped in server order, which is stable.
+MCP_TOOLS_PER_SERVER_MAX = 40
+# The load-bearing cap. MCP_SERVERS_PER_AGENT_MAX x MCP_TOOLS_PER_SERVER_MAX is
+# 120 rule lines and 120 schemas, which would dwarf the member's own role in the
+# system prompt -- and Ollama truncates an over-long prompt from the FRONT,
+# where that role lives. The per-server cap does not bound this; this one does.
+MCP_TOOLS_PER_AGENT_MAX = 20
+
+# ``tools/list`` is paginated by cursor. Bounded so a server that always returns
+# a cursor cannot spin discovery forever.
+MCP_LIST_PAGES_MAX = 5
+# How long a cached tool list is trusted before the engine edge tries a refresh.
+MCP_TOOLS_CACHE_TTL_SECONDS = 3600
+
+MCP_LIST_MAX_BYTES = 100_000
+MCP_CALL_MAX_BYTES = 200_000
+MCP_MAX_ITEMS = 25
+MCP_ITEM_MAX_CHARS = 2000
+MCP_RESULT_MAX_CHARS = 12_000
+MCP_PREVIEW_MAX_CHARS = 500
+
+# Everything below bounds text a *stranger* wrote that lands in a system prompt.
+MCP_TOOL_DESCRIPTION_MAX_CHARS = 300
+MCP_TOOL_TITLE_MAX_CHARS = 60
+MCP_SCHEMA_DESCRIPTION_MAX_CHARS = 200
+# The remote inputSchema is rebuilt rather than passed through, so these bound
+# the rebuild. Anything richer is refused, which drops the tool.
+MCP_SCHEMA_MAX_DEPTH = 4
+MCP_MAX_PARAMETERS = 12
+MCP_MAX_ENUM_VALUES = 20
+# Only these JSON Schema keywords survive the rebuild. Notably absent: $ref,
+# $defs, allOf/anyOf/oneOf/not, patternProperties, and `pattern` -- a hostile
+# regex is a ReDoS on any client that validates it.
+MCP_SCHEMA_KEYWORDS = frozenset(
+    {
+        "type",
+        "properties",
+        "required",
+        "items",
+        "enum",
+        "description",
+        "title",
+        "default",
+        "minimum",
+        "maximum",
+        "minLength",
+        "maxLength",
+    }
+)
+
+# Directive arguments. Unlike custom_api these keep nested objects and arrays:
+# MCP inputSchemas routinely declare them, and flattening would make those tools
+# uncallable on every provider without native function calling. Safe only
+# because every MCP spec sets ``event_arg=None`` -- see make_mcp_tool_specs.
+MCP_MAX_ARGUMENTS = 20
+MCP_ARG_MAX_CHARS = 2000
+MCP_ARG_MAX_DEPTH = 4
+
+# Platform headers a user may not set on their own server, on top of the
+# custom-API set: overriding Accept or Content-Type breaks the protocol, and
+# overriding the session or protocol headers would let a registration replay
+# another session's id.
+MCP_FORBIDDEN_HEADERS = CUSTOM_API_FORBIDDEN_HEADERS | frozenset(
+    {
+        "accept",
+        "content-type",
+        "mcp-session-id",
+        "mcp-protocol-version",
+        "last-event-id",
+    }
+)
+
+MCP_RESULT_OPEN = "<mcp_result>"
+MCP_RESULT_CLOSE = "</mcp_result>"
 
 
 # --- Agent skills (reusable instruction bundles) ---

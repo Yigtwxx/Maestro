@@ -47,6 +47,7 @@ from app.services import (  # noqa: E402
     custom_api_service,
     data_fetch_service,
     email_service,
+    mcp_service,
     memory_service,
     places_intel_service,
     question_store,
@@ -486,6 +487,14 @@ def skill_db(monkeypatch) -> FakeMongoCollection:
     """Point skill_service at an in-memory collection."""
     collection = FakeMongoCollection()
     monkeypatch.setattr(skill_service, "_collection", lambda: collection)
+    return collection
+
+
+@pytest.fixture
+def mcp_db(monkeypatch) -> FakeMongoCollection:
+    """Point mcp_service at an in-memory collection."""
+    collection = FakeMongoCollection()
+    monkeypatch.setattr(mcp_service, "_collection", lambda: collection)
     return collection
 
 

@@ -26,6 +26,7 @@ from app.agents.domains import (
 )
 from app.core.constants import (
     EXECUTABLE_TOOL_IDS,
+    MCP_TOOLS_PER_AGENT_MAX,
     SKILL_BLOCK_CLOSE,
     SKILL_BLOCK_MAX_CHARS,
     SKILL_BLOCK_OPEN,
@@ -35,6 +36,7 @@ from app.core.constants import (
 
 if TYPE_CHECKING:  # type-only: keeps this early-imported module light
     from app.services.custom_api_service import CustomApiTool
+    from app.services.mcp_service import McpServer
     from app.services.skill_service import Skill
 
 __all__ = [
@@ -209,6 +211,7 @@ def to_domain_info(
     doc: dict,
     custom_api_tools: Sequence[CustomApiTool] = (),
     skills: Sequence[Skill] = (),
+    mcp_servers: Sequence[McpServer] = (),
 ) -> DomainInfo:
     """Adapt a stored custom-agent document into a runnable one-member team.
 
@@ -251,12 +254,25 @@ def to_domain_info(
         skills=_skill_blocks(attached_skills),
     )
     attached = set(doc.get("custom_api_tool_ids") or [])
-    exec_tools = tuple(t for t in doc.get("tools", []) if t in EXECUTABLE_TOOL_IDS) + (
-        tuple(
+    attached_servers = set(doc.get("mcp_server_ids") or [])
+    # Truncated in a deterministic order (server slug, then tool name) rather
+    # than an arbitrary one: the per-agent cap is checked at attach time, but a
+    # server can add tools afterwards, and which ones survive must not depend on
+    # dict ordering. This is the second of the two defences.
+    mcp_actions = tuple(
+        tool.action
+        for server in sorted(mcp_servers, key=lambda s: s.slug)
+        if server.id in attached_servers
+        for tool in sorted(server.tools, key=lambda t: t.action)
+    )[:MCP_TOOLS_PER_AGENT_MAX]
+    exec_tools = (
+        tuple(t for t in doc.get("tools", []) if t in EXECUTABLE_TOOL_IDS)
+        + tuple(
             tool.action
             for tool in sorted(custom_api_tools, key=lambda t: t.slug)
             if tool.id in attached
         )
+        + mcp_actions
     )
     return DomainInfo(
         id=f"{CUSTOM_DOMAIN_PREFIX}{doc['id']}",
@@ -283,6 +299,7 @@ async def resolve_domain_info(
     domain_key: str,
     custom_api_tools: Sequence[CustomApiTool] = (),
     skills: Sequence[Skill] = (),
+    mcp_servers: Sequence[McpServer] = (),
 ) -> DomainInfo:
     """Resolve a domain selector to a runnable ``DomainInfo``.
 
@@ -306,4 +323,4 @@ async def resolve_domain_info(
         raise CustomAgentUnavailable(
             "This custom agent's system prompt failed the current security scan."
         )
-    return to_domain_info(doc, custom_api_tools, skills)
+    return to_domain_info(doc, custom_api_tools, skills, mcp_servers)

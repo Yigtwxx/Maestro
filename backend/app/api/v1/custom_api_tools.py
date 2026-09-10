@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.core.config import settings
+from app.api.v1._outbound import reject_private_host
 from app.core.constants import (
     RATE_LIMIT_OUTBOUND_PROBE,
     RATE_LIMIT_READ,
@@ -26,7 +26,6 @@ from app.schemas.custom_api_tool import (
 from app.services import custom_api_service
 from app.services.custom_api_service import CustomApiValidationError
 from app.utils.rate_limiter import rate_limit
-from app.utils.url_guard import check_public_url
 
 router = APIRouter(prefix="/custom-api-tools", tags=["custom-api-tools"])
 
@@ -35,24 +34,6 @@ _read_rate_limit = rate_limit(RATE_LIMIT_READ, scope="custom-api-tools")
 _write_rate_limit = rate_limit(RATE_LIMIT_WRITE, scope="custom-api-tools")
 # The dry run actually leaves the building. See RATE_LIMIT_OUTBOUND_PROBE.
 _probe_rate_limit = rate_limit(RATE_LIMIT_OUTBOUND_PROBE, scope="custom-api-tools")
-
-
-async def _reject_private_host(base_url: str) -> None:
-    """Refuse a host that does not resolve to a globally routable address.
-
-    The schema already ran the DNS-free shape check; this is the resolving half,
-    kept in the route because it is async. Mirrors ``api_keys.create_api_key``.
-    Registration is only the first of two gates — ``custom_api_service.call``
-    re-checks, because DNS for a host the user owns can change afterwards.
-    """
-    if not settings.llm_ssrf_guard_enabled:
-        return
-    reason = await check_public_url(base_url)
-    if reason is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Endpoint rejected: {reason}.",
-        )
 
 
 @router.get(
@@ -73,7 +54,7 @@ async def create_custom_api_tool(
     payload: CustomApiToolCreate, user: VerifiedUser
 ) -> dict:
     """Register an endpoint this user's agents may call."""
-    await _reject_private_host(payload.base_url)
+    await reject_private_host(payload.base_url)
     try:
         return await custom_api_service.create_tool(user.id, payload)
     except CustomApiValidationError as exc:
@@ -103,7 +84,7 @@ async def update_custom_api_tool(
 ) -> dict:
     """Update one endpoint. Omitting ``secret`` leaves the stored one in place."""
     if payload.base_url is not None:
-        await _reject_private_host(payload.base_url)
+        await reject_private_host(payload.base_url)
     try:
         tool = await custom_api_service.update_tool(user.id, tool_id, payload)
     except CustomApiValidationError as exc:

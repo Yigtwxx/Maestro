@@ -83,6 +83,7 @@ async def test_install_never_attaches_the_publishers_api_tools(monkeypatch):
             # Even if an item somehow carried these, they must not travel.
             "custom_api_tool_ids": ["publishers-private-endpoint"],
             "skill_ids": ["publishers-private-skill"],
+            "mcp_server_ids": ["publishers-private-server"],
         }
 
     monkeypatch.setattr(
@@ -97,6 +98,7 @@ async def test_install_never_attaches_the_publishers_api_tools(monkeypatch):
 
     assert captured["payload"].custom_api_tool_ids == [], captured["payload"]
     assert captured["payload"].skill_ids == [], captured["payload"]
+    assert captured["payload"].mcp_server_ids == [], captured["payload"]
 
 
 def test_publish_refuses_a_payload_naming_per_user_records():
@@ -117,7 +119,7 @@ def test_publish_refuses_a_payload_naming_per_user_records():
         "system_prompt": "p",
         "tools": ["web_search"],
     }
-    for field in ("skill_ids", "custom_api_tool_ids"):
+    for field in ("skill_ids", "custom_api_tool_ids", "mcp_server_ids"):
         with pytest.raises(ValidationError):
             MarketplacePublish(**base, **{field: ["x"]})
 
