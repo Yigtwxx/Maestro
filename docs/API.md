@@ -128,6 +128,8 @@ GET    /api/v1/admin/overview
 GET    /api/v1/admin/users                  # + /{id}, /{id}/suspend, /{id}/unsuspend, /{id}/role
 GET    /api/v1/admin/marketplace/items      # + /{id}/status, /{id}/reviews, review hide
 DELETE /api/v1/admin/agents/{id}            # custom-agent takedown
+GET    /api/v1/admin/plugins
+POST   /api/v1/admin/plugins/{id}/status    # delist; installed copies keep working
 GET    /api/v1/admin/reports                # + /{id}/resolve
 GET    /api/v1/admin/audit
 

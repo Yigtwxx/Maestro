@@ -33,7 +33,7 @@ from app.schemas.admin import (
     RoleRequest,
 )
 from app.schemas.auth import DetailResponse
-from app.services import marketplace_service, moderation_service
+from app.services import marketplace_service, moderation_service, plugin_service
 from app.utils.rate_limiter import rate_limit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -164,6 +164,40 @@ async def set_item_status(
     """Hide, remove, or reinstate a marketplace item."""
     item = await moderation_service.set_item_status(
         item_id, payload.status, moderator_id=admin.id, reason=payload.reason
+    )
+    if item is None:
+        raise _NOT_FOUND
+    return item
+
+
+@router.get(
+    "/plugins",
+    dependencies=[_read_rate_limit],
+)
+async def list_admin_plugins(
+    admin: AdminUser,
+    limit: int = Query(default=ADMIN_PAGE_SIZE_DEFAULT, ge=1, le=ADMIN_PAGE_SIZE_MAX),
+) -> list:
+    """Every published plugin (any status), with author attribution."""
+    return await plugin_service.admin_list_plugins(limit=limit)
+
+
+@router.post(
+    "/plugins/{catalog_id}/status",
+    dependencies=[_write_rate_limit],
+)
+async def set_plugin_status(
+    admin: AdminUser, catalog_id: str, payload: ItemStatusRequest
+) -> dict:
+    """Hide, remove or reinstate a published plugin.
+
+    Delists the catalog entry. Copies **already installed keep working** — the
+    records live in each installer's own account and are theirs. That matches a
+    taken-down marketplace agent, and is worth knowing before relying on this as
+    a containment lever.
+    """
+    item = await plugin_service.admin_set_status(
+        catalog_id, payload.status, moderator_id=admin.id, reason=payload.reason
     )
     if item is None:
         raise _NOT_FOUND

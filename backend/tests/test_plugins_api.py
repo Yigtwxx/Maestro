@@ -273,3 +273,58 @@ async def test_an_invalid_imported_manifest_is_a_400_with_a_field_path(
     )
     assert resp.status_code == 400
     assert "version" in resp.json()["detail"]
+
+
+# --- admin takedown ---------------------------------------------------------
+
+
+async def test_an_admin_can_delist_a_plugin_and_it_stops_being_installable(
+    client, plugin_db, skill_db, mcp_db, agents_db, _plugins_on, db_session
+):
+    """A hidden entry disappears from the catalog and refuses new installs.
+
+    Copies already installed keep working — the records live in each installer's
+    own account. That matches a taken-down marketplace agent, and is why this is
+    a delisting rather than a containment lever.
+    """
+    from app.models.user import UserRole
+
+    auth = await _register_and_login(client, "plugin-admin-author@example.com")
+    published = await client.post(
+        "/api/v1/plugins", json={"manifest": _MANIFEST}, headers=auth
+    )
+    catalog_id = published.json()["id"]
+
+    admin_auth = await _register_and_login(client, "plugin-admin@example.com")
+    await db_session.execute(
+        __import__("sqlalchemy").text(
+            "UPDATE users SET role = :role WHERE email = :email"
+        ),
+        {"role": UserRole.ADMIN.value, "email": "plugin-admin@example.com"},
+    )
+    await db_session.commit()
+
+    resp = await client.post(
+        f"/api/v1/admin/plugins/{catalog_id}/status",
+        json={"status": "hidden", "reason": "spam"},
+        headers=admin_auth,
+    )
+    assert resp.status_code == 200, resp.text
+
+    assert (await client.get("/api/v1/plugins", headers=auth)).json() == []
+    assert (
+        await client.post(f"/api/v1/plugins/{catalog_id}/install", headers=auth)
+    ).status_code == 404
+
+
+async def test_a_non_admin_cannot_delist_a_plugin(client, plugin_db, _plugins_on):
+    auth = await _register_and_login(client, "plugin-nonadmin@example.com")
+    published = await client.post(
+        "/api/v1/plugins", json={"manifest": _MANIFEST}, headers=auth
+    )
+    resp = await client.post(
+        f"/api/v1/admin/plugins/{published.json()['id']}/status",
+        json={"status": "hidden", "reason": "mine now"},
+        headers=auth,
+    )
+    assert resp.status_code == 403
