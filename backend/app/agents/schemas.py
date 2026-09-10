@@ -15,15 +15,47 @@ from app.core.constants import DEFAULT_TASK_COMPLEXITY, TASK_COMPLEXITIES
 
 
 class RouteDecision(BaseModel):
-    """Orchestrator routing output: ``{"domain", "reason", "complexity"}``.
+    """Stage-two routing output: ``{"domain", "reason"}``.
 
-    ``complexity`` drives effort scaling (Backend v2 §4.6/D15): the Main Agent
-    scales team size, reviewer use, and fallback-plan size to it.
+    ``complexity`` is retained and still validated because the field predates
+    the two-stage split and older callers (and the compatibility wrapper) read
+    it; live routing takes the tier from :class:`GroupDecision` instead, since
+    stage two never sees the whole catalog and would be judging effort from a
+    narrower view. The tier drives effort scaling (Backend v2 §4.6/D15): the
+    Main Agent scales team size, reviewer use, and fallback-plan size to it.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     domain: str = ""
+    reason: str = ""
+    complexity: str = DEFAULT_TASK_COMPLEXITY
+
+    @field_validator("complexity", mode="before")
+    @classmethod
+    def _normalize_complexity(cls, value: object) -> str:
+        """Coerce anything outside the known set to the standard tier."""
+        if isinstance(value, str) and value.strip().lower() in TASK_COMPLEXITIES:
+            return value.strip().lower()
+        return DEFAULT_TASK_COMPLEXITY
+
+
+class GroupDecision(BaseModel):
+    """Stage-one routing output: ``{"group", "reason", "complexity"}``.
+
+    ``complexity`` is judged here rather than in stage two: the effort tier
+    follows from how many kinds of work the answer needs, which is legible at
+    the group level, and asking twice invites two different answers.
+
+    The ``group`` field also carries a ``custom:{id}`` selector when the model
+    routes straight to one of the caller's own agents — those are offered
+    alongside the groups because a custom agent is a whole team of one and there
+    is nothing to narrow afterwards.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    group: str = ""
     reason: str = ""
     complexity: str = DEFAULT_TASK_COMPLEXITY
 

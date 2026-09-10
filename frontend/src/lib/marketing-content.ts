@@ -183,6 +183,76 @@ export const USE_CASES: readonly UseCase[] = [
       'Explain this concept three ways, for three different levels.',
     ],
   },
+  {
+    domain: 'devops',
+    title: 'Turn a system into a runbook',
+    description:
+      'Topology, pipeline and failure modes first, so the procedure at the end is one an on-call engineer can actually follow.',
+    examples: [
+      'Our pods hit CrashLoopBackOff after every deploy. Write the runbook.',
+      'Define the SLOs and the alerts for this checkout service.',
+    ],
+  },
+  {
+    domain: 'security',
+    title: 'Rank findings by exploitability',
+    description:
+      'Attack surface, dependencies and known advisories together — severity has to rest on a named CVE or a described path, never on a vibe.',
+    examples: [
+      'Review this repo for auth and injection issues and rank what you find.',
+      'Which of our dependencies have advisories we actually reach?',
+    ],
+  },
+  {
+    domain: 'product',
+    title: 'Write the PRD with the cut lines in it',
+    description:
+      'The problem and its evidence, then the scope — including what is explicitly not shipping — and the metric that says it worked.',
+    examples: [
+      'Scope an MVP for team billing and say what we are cutting.',
+      'What metric and counter-metric should this feature move?',
+    ],
+  },
+  {
+    domain: 'support',
+    title: 'Triage what users are reporting',
+    description:
+      'Reads the community channels, groups the reports by severity and root cause, and hands back both the fixes and the replies.',
+    examples: [
+      'What are people reporting in our Discord this week, and how bad is it?',
+      'Group the open complaints and draft the macro for each.',
+    ],
+  },
+  {
+    domain: 'travel',
+    title: 'Plan a trip that respects real travel times',
+    description:
+      'Places, transfers, neighbourhoods and a costed budget, assembled into a day-by-day plan rather than a list of sights.',
+    examples: [
+      'Four days in Lisbon in October on a small budget.',
+      'Which neighbourhood should we stay in, and why that one?',
+    ],
+  },
+  {
+    domain: 'scholar',
+    title: 'Read the literature, not the headlines',
+    description:
+      'Papers appraised by design and sample size before they are summarised, so a weak study never gets averaged with a strong one.',
+    examples: [
+      'What does the evidence actually say about intermittent fasting?',
+      'Map the consensus and the open disagreements in this field.',
+    ],
+  },
+  {
+    domain: 'crypto',
+    title: 'Judge an asset by its mechanism',
+    description:
+      'What the protocol does, what the on-chain data shows, and the custody, contract and regulatory risk — before any price talk.',
+    examples: [
+      'Is this token worth holding? Cover the tokenomics and the risks.',
+      'What would falsify the bull case for this protocol?',
+    ],
+  },
 ] as const;
 
 // --- Docs -----------------------------------------------------------------

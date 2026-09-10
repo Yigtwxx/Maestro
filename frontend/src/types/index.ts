@@ -277,6 +277,10 @@ export interface AgentEvent {
   index?: number;
   subtask?: string;
   domain?: string;
+  // Routing stage one's answer. Carried on its own interim node_update, and
+  // again on the terminal one alongside the domain, so the log shows routing as
+  // the two narrowing steps it is.
+  group?: string;
   reason?: string;
   // Routing decision origin: 'user' (manual selection) | 'orchestrator'.
   source?: string;
@@ -557,6 +561,8 @@ export interface BuiltinAgent {
   id: string;
   name: string;
   domain: string;
+  /** The family this domain belongs to; drives the catalog tabs and its hue. */
+  group: string;
   type: string;
   description: string;
   capabilities: string[];
@@ -564,8 +570,16 @@ export interface BuiltinAgent {
   team: TeamMember[];
 }
 
+/** A family of related domains — one tab in the Architect catalog. */
+export interface AgentGroup {
+  id: string;
+  name: string;
+  description: string;
+}
+
 export interface AgentList {
   builtin: BuiltinAgent[];
+  groups: AgentGroup[];
   custom: AgentConfig[];
 }
 

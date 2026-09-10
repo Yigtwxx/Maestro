@@ -348,6 +348,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "debugging or designing code yourself, and NOT a plain web lookup even "
         "when the question sounds like one"
     ),
+    group="build",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

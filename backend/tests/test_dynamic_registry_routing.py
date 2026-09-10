@@ -19,18 +19,32 @@ from app.utils import prompt_guard
 
 
 class _RouteAdapter(LLMAdapter):
-    """Returns a fixed routing decision; records the catalog it was shown."""
+    """Answers both routing stages; records the stage-one catalog it was shown.
+
+    Custom agents are offered in stage one only — a custom selector short-
+    circuits the second call, because a custom agent is a team of one and there
+    is nothing left to narrow. ``system_seen`` therefore holds the stage-one
+    prompt, which is the one that carries the ``custom:`` options.
+    """
 
     provider = LLMProvider.OLLAMA
 
-    def __init__(self, domain: str) -> None:
+    def __init__(self, domain: str, *, group: str = "build") -> None:
         super().__init__()
         self._domain = domain
+        self._group = group
         self.system_seen = ""
+        self.domain_system_seen = ""
 
     async def chat(self, messages, *, temperature=0.2, max_tokens=None, **_):  # noqa: ANN001
-        self.system_seen = messages[0].content
-        content = json.dumps({"domain": self._domain, "reason": "r"})
+        system = messages[0].content
+        if "single group" in system:
+            self.system_seen = system
+            choice = self._domain if self._domain.startswith("custom:") else self._group
+            content = json.dumps({"group": choice, "reason": "r"})
+        else:
+            self.domain_system_seen = system
+            content = json.dumps({"domain": self._domain, "reason": "r"})
         return LLMResponse(content=content, model="fake", tokens_used=1)
 
 

@@ -1,9 +1,15 @@
 """Backend domain catalog must stay in sync with the frontend mirrors.
 
-The frontend hardcodes the domain list (``AGENT_DOMAINS``) and the UI copy
-map (``AGENT_LOCALE``). These tests parse those TypeScript files
-textually and compare them against ``DOMAIN_CATALOG`` so a forgotten
-frontend entry fails CI instead of surfacing as a broken UI.
+The frontend hardcodes the domain list (``AGENT_DOMAINS``), the group list and
+the domain-to-group map (``DOMAIN_GROUPS`` / ``DOMAIN_GROUP_OF``), and the UI
+copy map (``AGENT_LOCALE``). These tests parse those TypeScript files textually
+and compare them against ``DOMAIN_CATALOG`` so a forgotten frontend entry fails
+CI instead of surfacing as a broken UI.
+
+The group mirrors exist even though ``GET /agents`` also serves the grouping:
+colour and motif resolution runs before that response lands, and the Tailwind
+class names it produces have to be static literals, so the mapping cannot come
+from the API.
 """
 
 from __future__ import annotations
@@ -13,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agents.registry import DOMAIN_CATALOG
+from app.agents.registry import DOMAIN_CATALOG, DOMAIN_GROUP_CATALOG
 from app.core.constants import CONNECTED_TOOL_IDS, CUSTOM_API_TOOLS_PER_AGENT_MAX
 from app.schemas.agent import AgentConfigCreate
 
@@ -50,6 +56,27 @@ def _parse_locale_teams(source: str) -> dict[str, set[str]]:
         members = set(re.findall(r"^      ([a-z_]+): \{", block, re.MULTILINE))
         domains[domain_id] = members
     return domains
+
+
+def _parse_domain_groups(source: str) -> list[str]:
+    match = re.search(
+        r"export const DOMAIN_GROUPS = \[(?P<body>.*?)\] as const",
+        source,
+        re.DOTALL,
+    )
+    assert match, "DOMAIN_GROUPS array not found in constants.ts"
+    return re.findall(r"'([a-z_]+)'", match.group("body"))
+
+
+def _parse_domain_group_of(source: str) -> dict[str, str]:
+    match = re.search(
+        r"export const DOMAIN_GROUP_OF: Record<string, string> = \{"
+        r"(?P<body>.*?)\};",
+        source,
+        re.DOTALL,
+    )
+    assert match, "DOMAIN_GROUP_OF map not found in constants.ts"
+    return dict(re.findall(r"(\w+): '([a-z_]+)'", match.group("body")))
 
 
 def _parse_core_connected_tools(source: str) -> dict[str, str]:
@@ -150,4 +177,34 @@ def test_frontend_core_connected_tool_map_matches_catalog():
     assert frontend_map == backend_map, (
         f"SQUAD_CORE_CONNECTED_TOOL mismatch: frontend={frontend_map}, "
         f"backend={backend_map}"
+    )
+
+
+def test_frontend_domain_groups_match_catalog_ids_and_order():
+    """The tab strip is rendered from the API, but the hues are not.
+
+    ``groupColor()`` indexes a record keyed by these ids, so a group missing
+    here renders every one of its squads in the fallback violet instead of
+    failing loudly.
+    """
+    source = _read_frontend_file("constants.ts")
+    frontend_groups = _parse_domain_groups(source)
+    backend_groups = [group.id for group in DOMAIN_GROUP_CATALOG]
+    assert frontend_groups == backend_groups, (
+        f"DOMAIN_GROUPS mismatch: frontend={frontend_groups}, backend={backend_groups}"
+    )
+
+
+def test_frontend_domain_group_map_matches_catalog():
+    """A domain missing from this map silently inherits the fallback hue.
+
+    Nothing else catches it: the map is typed ``Record<string, string>`` so the
+    build is happy, and the catalog card still renders — just in the wrong
+    family colour and under the wrong tab.
+    """
+    source = _read_frontend_file("constants.ts")
+    frontend_map = _parse_domain_group_of(source)
+    backend_map = {entry.id: entry.group for entry in DOMAIN_CATALOG}
+    assert frontend_map == backend_map, (
+        f"DOMAIN_GROUP_OF mismatch: frontend={frontend_map}, backend={backend_map}"
     )

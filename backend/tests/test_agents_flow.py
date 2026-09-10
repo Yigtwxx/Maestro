@@ -47,7 +47,10 @@ class FakeAdapter(LLMAdapter):
         max_tokens: int | None = None,
     ) -> LLMResponse:
         system = messages[0].content
-        if "Orchestrator" in system:
+        if "single group" in system:
+            # Routing is two-stage: the group first, then the expert inside it.
+            content = '{"group": "build", "reason": "coding task"}'
+        elif "single best expert" in system:
             content = '{"domain": "software", "reason": "coding task"}'
         elif "Main Agent, the manager" in system:
             content = json.dumps(
@@ -249,10 +252,10 @@ async def test_full_pipeline_without_reviewer():
     assert result["metadata"]["subtask_count"] == 2
     assert _members(result) == ["coder", "tester"]
 
-    # Billing counts every call -- route, plan, both subagents, synthesis --
-    # at 7 tokens each. Summing only the subagents would report 14 and let the
-    # other three calls run free.
-    assert meter.total_tokens == 35, f"Expected 35 tokens, got {meter.total_tokens}"
+    # Billing counts every call -- both routing stages (group, then expert),
+    # plan, both subagents, synthesis -- at 7 tokens each. Summing only the
+    # subagents would report 14 and let the other four calls run free.
+    assert meter.total_tokens == 42, f"Expected 42 tokens, got {meter.total_tokens}"
 
 
 async def test_pipeline_with_reviewer_approves():
@@ -526,21 +529,60 @@ async def test_run_subagent_prompt_offers_view_original_request_rule():
 
 
 def test_domain_catalog_contains_all_expected_domains():
+    """The catalog is pinned so a domain cannot vanish without a failing test.
+
+    Deleting a module and its catalog line is otherwise invisible: every other
+    guard iterates the catalog, so a shrinking catalog passes them all.
+    """
     expected = {
+        # build
         "software",
-        "finance",
+        "devops",
+        "security",
+        "qa",
+        "cloud",
+        "apidesign",
+        "mobile",
+        "gamedev",
+        "data",
+        "opensource",
+        # market
         "marketing",
         "seo",
+        "content",
+        "product",
+        "sales",
+        "ads",
+        "brand",
+        "ecommerce",
+        "social",
+        # money
+        "finance",
+        "crypto",
+        "econ",
+        "personalfinance",
+        "tax",
+        # operate
+        "legal",
+        "hr",
+        "project",
+        "procurement",
+        "support",
+        "community",
+        # life
+        "local",
+        "travel",
+        "career",
+        "health",
+        "food",
+        # knowledge
         "searching",
         "research",
-        "data",
-        "content",
-        "legal",
+        "scholar",
         "education",
-        "social",
-        "community",
-        "opensource",
-        "local",
+        "journalism",
+        "translation",
+        "climate",
         "general",
     }
     assert set(DOMAINS) == expected, f"Catalog domains mismatch: {set(DOMAINS)}"

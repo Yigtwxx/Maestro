@@ -1,7 +1,8 @@
 'use client';
 
+import { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
-import { domainColor, type DomainColor } from '@/lib/agent-colors';
+import { domainColor, groupColor, type DomainColor } from '@/lib/agent-colors';
 import {
   ACCENT_RGB,
   CONNECTED_TOOL_PROVIDERS,
@@ -12,10 +13,12 @@ import { PROVIDER_MAP } from '@/lib/providers';
 import { ProviderIcon } from '@/components/ProviderIcon';
 import { BorderGlow } from '@/components/effects/BorderGlow';
 import { CardMotif } from '@/components/architect/card-motifs/CardMotif';
-import type { BuiltinAgent, LLMProvider } from '@/types';
+import type { AgentGroup, BuiltinAgent, LLMProvider } from '@/types';
 
 interface AgentCatalogProps {
   agents: BuiltinAgent[];
+  /** Domain families, in backend catalog order; drives the filter tabs. */
+  groups: AgentGroup[];
   /** Selected domain id; null = automatic routing; undefined = no choice yet. */
   selected: string | null | undefined;
   onSelect: (domain: string | null) => void;
@@ -156,114 +159,224 @@ function ApiRow({
   );
 }
 
-/** Domain agent picker: one card per expert plus automatic routing. */
+/** Free-text match over the copy a user would plausibly search by. */
+function matches(agent: BuiltinAgent, query: string): boolean {
+  const haystack = [
+    agent.name,
+    agent.domain,
+    agent.description,
+    ...agent.capabilities,
+    ...agent.team.map((member) => member.name),
+  ]
+    .join(' ')
+    .toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .every((term) => haystack.includes(term));
+}
+
+/**
+ * Domain agent picker: one card per expert plus automatic routing.
+ *
+ * Forty-plus cards is more than a grid can present as a choice, so the list is
+ * filtered two ways. The tabs are the browsing path for someone who knows the
+ * *kind* of work but not the squad name; the search box is the direct path for
+ * someone who does. Both filter client-side over the already-loaded catalog —
+ * the whole list arrives in one request, and re-fetching per tab would only add
+ * latency to a decision the user makes in a second or two.
+ *
+ * Filter state is deliberately local and not persisted: this is step one of a
+ * two-step flow that ends when the task starts, so a remembered filter would
+ * silently hide most of the catalog on the next visit.
+ */
 export function AgentCatalog({
   agents,
+  groups,
   selected,
   onSelect,
   connectedProviders,
   disabled,
 }: AgentCatalogProps) {
+  const [group, setGroup] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+
+  const visible = useMemo(
+    () =>
+      agents.filter(
+        (agent) =>
+          (group === null || agent.group === group) &&
+          (query.trim() === '' || matches(agent, query)),
+      ),
+    [agents, group, query],
+  );
+
+  // The "Automatic" card is a routing mode rather than a squad, so it belongs
+  // only with the unfiltered list: showing it under a group tab would imply the
+  // orchestrator is scoped to that group, and it is not.
+  const showAutomatic = group === null && query.trim() === '';
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <button
-        type="button"
-        aria-pressed={selected === null}
-        disabled={disabled}
-        onClick={() => onSelect(null)}
-        className={cn(
-          cardBase,
-          selected === null
-            ? 'border-accent shadow-glow-cyan'
-            : 'border-border hover:border-border-bright',
-        )}
-      >
-        {!disabled && <BorderGlow rgb={ACCENT_RGB} {...CARD_GLOW} />}
-        <span className="text-base font-bold text-accent">
-          Automatic (Orchestrator)
-        </span>
-        <span className="mt-1 text-[13px] leading-relaxed text-slate-400">
-          If you are not sure which expert to pick, just write your prompt;
-          the Orchestrator analyzes the task and routes it to the best expert.
-        </span>
-      </button>
-
-      {agents.map((agent) => {
-        const isSelected = selected === agent.domain;
-        const dc = domainColor(agent.domain);
-        const apis = apiRequirements(agent, connectedProviders);
-        const degraded = apis.some((req) => req.required && !req.satisfied);
-        return (
-          <button
-            key={agent.id}
-            type="button"
-            aria-pressed={isSelected}
-            disabled={disabled}
-            onClick={() => onSelect(agent.domain)}
-            className={cn(
-              cardBase,
-              isSelected
-                ? cn(dc.borderSelected, dc.glow)
-                : cn('border-border', dc.borderHover, dc.glowHover),
-            )}
-          >
-            {!disabled && <BorderGlow rgb={dc.rgb} {...CARD_GLOW} />}
-            <CardMotif domain={agent.domain} accentHex={dc.accentHex} />
-            <span className="flex items-baseline justify-between gap-2">
-              <span className="text-base font-bold text-white">{agent.name}</span>
+    <>
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          aria-pressed={group === null}
+          onClick={() => setGroup(null)}
+          className={cn(
+            'text-micro rounded border px-3 py-1.5 transition-colors',
+            group === null
+              ? 'border-accent bg-accent/10 text-accent'
+              : 'border-border text-muted hover:border-border-bright hover:text-slate-300',
+          )}
+        >
+          all · {agents.length}
+        </button>
+        {groups.map((g) => {
+          const gc = groupColor(g.id);
+          const count = agents.filter((a) => a.group === g.id).length;
+          const active = group === g.id;
+          return (
+            <button
+              key={g.id}
+              type="button"
+              aria-pressed={active}
+              title={g.description}
+              onClick={() => setGroup(active ? null : g.id)}
+              className={cn(
+                'text-micro inline-flex items-center gap-1.5 rounded border px-3 py-1.5 transition-colors',
+                active
+                  ? cn(gc.borderSelected, gc.bg, gc.text)
+                  : cn('border-border text-muted', gc.borderHover),
+              )}
+            >
               <span
-                className={cn(
-                  'text-micro inline-flex shrink-0 items-center gap-1.5',
-                  dc.text,
-                )}
-              >
-                <span className={cn('h-1.5 w-1.5 rounded-full', dc.dot)} aria-hidden />
-                {agent.domain}
-              </span>
-            </span>
-            <span className="mt-1.5 text-[13px] leading-relaxed text-slate-400">
-              {agent.description}
-            </span>
-            <span className="mt-3 flex flex-wrap gap-1.5">
-              {agent.capabilities.map((capability) => (
+                className={cn('h-1.5 w-1.5 rounded-full', gc.dot)}
+                aria-hidden
+              />
+              {g.name} · {count}
+            </button>
+          );
+        })}
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search experts…"
+          aria-label="Search experts"
+          className="ml-auto w-full rounded border border-border bg-surface px-3 py-1.5 text-sm text-slate-200 placeholder:text-muted focus:border-accent focus:outline-none sm:w-56"
+        />
+      </div>
+
+      {visible.length === 0 && !showAutomatic && (
+        <p className="rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted">
+          No expert matches that. Clear the search, or use Automatic
+          (Orchestrator) and let the platform route it.
+        </p>
+      )}
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <button
+          type="button"
+          aria-pressed={selected === null}
+          disabled={disabled}
+          onClick={() => onSelect(null)}
+          className={cn(
+            cardBase,
+            !showAutomatic && 'hidden',
+            selected === null
+              ? 'border-accent shadow-glow-cyan'
+              : 'border-border hover:border-border-bright',
+          )}
+        >
+          {!disabled && <BorderGlow rgb={ACCENT_RGB} {...CARD_GLOW} />}
+          <span className="text-base font-bold text-accent">
+            Automatic (Orchestrator)
+          </span>
+          <span className="mt-1 text-[13px] leading-relaxed text-slate-400">
+            If you are not sure which expert to pick, just write your prompt;
+            the Orchestrator analyzes the task and routes it to the best expert.
+          </span>
+        </button>
+
+        {visible.map((agent) => {
+          const isSelected = selected === agent.domain;
+          const dc = domainColor(agent.domain);
+          const apis = apiRequirements(agent, connectedProviders);
+          const degraded = apis.some((req) => req.required && !req.satisfied);
+          return (
+            <button
+              key={agent.id}
+              type="button"
+              aria-pressed={isSelected}
+              disabled={disabled}
+              onClick={() => onSelect(agent.domain)}
+              className={cn(
+                cardBase,
+                isSelected
+                  ? cn(dc.borderSelected, dc.glow)
+                  : cn('border-border', dc.borderHover, dc.glowHover),
+              )}
+            >
+              {!disabled && <BorderGlow rgb={dc.rgb} {...CARD_GLOW} />}
+              <CardMotif domain={agent.domain} accentHex={dc.accentHex} />
+              <span className="flex items-baseline justify-between gap-2">
+                <span className="text-base font-bold text-white">{agent.name}</span>
                 <span
-                  key={capability}
-                  className="rounded border border-border bg-surface-2 px-2 py-1 text-[11px] text-slate-300"
+                  className={cn(
+                    'text-micro inline-flex shrink-0 items-center gap-1.5',
+                    dc.text,
+                  )}
                 >
-                  {capability}
+                  <span className={cn('h-1.5 w-1.5 rounded-full', dc.dot)} aria-hidden />
+                  {agent.domain}
                 </span>
-              ))}
-            </span>
-
-            {apis.length > 0 && (
-              <span className="mt-3 flex flex-col gap-2 border-t border-border/60 pt-3">
-                <span className="text-micro text-muted">[ APIS ]</span>
-                {apis.map((req) => (
-                  <ApiRow
-                    key={req.tool}
-                    req={req}
-                    connected={connectedProviders}
-                    dc={dc}
-                  />
-                ))}
-                {degraded && (
-                  <span className="text-[11px] leading-snug text-muted">
-                    Without that key the squad still runs, but on web search only —
-                    and its report says what it could not reach.
+              </span>
+              <span className="mt-1.5 text-[13px] leading-relaxed text-slate-400">
+                {agent.description}
+              </span>
+              <span className="mt-3 flex flex-wrap gap-1.5">
+                {agent.capabilities.map((capability) => (
+                  <span
+                    key={capability}
+                    className="rounded border border-border bg-surface-2 px-2 py-1 text-[11px] text-slate-300"
+                  >
+                    {capability}
                   </span>
-                )}
+                ))}
               </span>
-            )}
 
-            {agent.team.length > 0 && (
-              <span className="mt-auto flex flex-wrap gap-x-1.5 pt-3 text-[11px] text-muted">
-                <span className="text-micro shrink-0 pt-px">[ TEAM ]</span>
-                {agent.team.map((member) => member.name).join(' · ')}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
+              {apis.length > 0 && (
+                <span className="mt-3 flex flex-col gap-2 border-t border-border/60 pt-3">
+                  <span className="text-micro text-muted">[ APIS ]</span>
+                  {apis.map((req) => (
+                    <ApiRow
+                      key={req.tool}
+                      req={req}
+                      connected={connectedProviders}
+                      dc={dc}
+                    />
+                  ))}
+                  {degraded && (
+                    <span className="text-[11px] leading-snug text-muted">
+                      Without that key the squad still runs, but on web search only —
+                      and its report says what it could not reach.
+                    </span>
+                  )}
+                </span>
+              )}
+
+              {agent.team.length > 0 && (
+                <span className="mt-auto flex flex-wrap gap-x-1.5 pt-3 text-[11px] text-muted">
+                  <span className="text-micro shrink-0 pt-px">[ TEAM ]</span>
+                  {agent.team.map((member) => member.name).join(' · ')}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </>
   );
 }

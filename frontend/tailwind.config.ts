@@ -49,30 +49,20 @@ const config: Config = {
         // clears contrast on macOS grayscale antialiasing, not just Windows
         // ClearType. Contrast vs #0a0a10 background ~8:1 (was ~6.2:1).
         muted: '#a0a4ba',
-        // Per-domain neon hues (bright — UI accents, glows, chips, active state).
-        // Opacity modifiers (bg-domain-x/10, border-domain-x/40) supply the dim
-        // fills, so no separate -dim tokens are needed.
+        // Per-group neon hues (bright — UI accents, glows, chips, active state).
+        // One hue per *family* of domains rather than per domain: see the header
+        // of src/lib/agent-colors.ts for why forty-three hues is neither
+        // perceptually honest nor maintainable. Each hue is inherited from the
+        // domain that used to define it, so a family keeps the colour users
+        // already associate with it. Opacity modifiers (bg-domain-x/10,
+        // border-domain-x/40) supply the dim fills, so no -dim tokens are needed.
         domain: {
-          software: '#3b9dff',
-          finance: '#2ee6a6',
-          marketing: '#ff5cc8',
-          seo: '#ffb02e',
-          searching: '#22d3ee',
-          research: '#a78bfa',
-          data: '#ff7a45',
-          content: '#e879f9',
-          legal: '#ff4d5e',
-          education: '#ffe14d',
-          // Connected-API squads. Each is a tonal variant of its functional
-          // sibling rather than a new hue: kinship is the signal, and the
-          // spectrum is already dense at eleven domains. social/community are
-          // the two listening squads (marketing pink), opensource belongs to
-          // the software blue family, local to the seo amber family.
-          social: '#ff8ad8',
-          community: '#d63da6',
-          opensource: '#7ec4ff',
-          local: '#ffcd7a',
-          general: '#a3e635',
+          build: '#3b9dff', // was software
+          market: '#ff5cc8', // was marketing
+          money: '#2ee6a6', // was finance
+          operate: '#ff4d5e', // was legal
+          life: '#ffb02e', // was seo / local
+          knowledge: '#a78bfa', // was research
         },
         // Per-module chrome accents — each app module owns one neon hue so the
         // chrome (buttons, focus, glows, nav) shifts color per section instead
@@ -100,31 +90,6 @@ const config: Config = {
           traces: '#6d7cff',
           brand: '#d3cbc0',
         },
-        // Chart-step hues — the domain hues stepped down into the dark chart
-        // lightness band (OKLCH L 0.48–0.67) for data-viz marks on the surface.
-        // The original eleven were validated as a mutually-distinct set (worst
-        // adjacent CVD ΔE 16.4). That claim does NOT extend to the four
-        // connected-API squads below: they are deliberate tonal variants of
-        // their sibling domain, so social/marketing and community/marketing
-        // read as related rather than distinct. Separation within a family is
-        // lightness, not hue — do not treat these as CVD-separable pairs.
-        chart: {
-          software: '#2f86e6',
-          finance: '#12a074',
-          marketing: '#e23aa0',
-          seo: '#c17d08',
-          searching: '#1594ae',
-          research: '#8b6bf0',
-          data: '#e8641f',
-          content: '#c026d3',
-          legal: '#e0344e',
-          education: '#bfa50f',
-          social: '#e86bb4',
-          community: '#b82d85',
-          opensource: '#5ea8f0',
-          local: '#d69a3a',
-          general: '#749f10',
-        },
       },
       fontFamily: {
         sans: ['var(--font-sans)', 'system-ui', 'sans-serif'],
@@ -136,22 +101,13 @@ const config: Config = {
         'glow-danger': '0 0 24px -6px rgba(255,77,109,0.45)',
         'glow-warning': '0 0 24px -6px rgba(255,122,69,0.45)',
         'glow-sponsor': '0 0 24px -6px rgba(219,97,162,0.45)',
-        // Per-domain neon glows (mirror the domain.* hues).
-        'glow-software': '0 0 24px -6px rgba(59,157,255,0.45)',
-        'glow-finance': '0 0 24px -6px rgba(46,230,166,0.45)',
-        'glow-marketing': '0 0 24px -6px rgba(255,92,200,0.45)',
-        'glow-seo': '0 0 24px -6px rgba(255,176,46,0.45)',
-        'glow-searching': '0 0 24px -6px rgba(34,211,238,0.45)',
-        'glow-research': '0 0 24px -6px rgba(167,139,250,0.45)',
-        'glow-data': '0 0 24px -6px rgba(255,122,69,0.45)',
-        'glow-content': '0 0 24px -6px rgba(232,121,249,0.45)',
-        'glow-legal': '0 0 24px -6px rgba(255,77,94,0.45)',
-        'glow-education': '0 0 24px -6px rgba(255,225,77,0.45)',
-        'glow-social': '0 0 24px -6px rgba(255,138,216,0.45)',
-        'glow-community': '0 0 24px -6px rgba(214,61,166,0.45)',
-        'glow-opensource': '0 0 24px -6px rgba(126,196,255,0.45)',
-        'glow-local': '0 0 24px -6px rgba(255,205,122,0.45)',
-        'glow-general': '0 0 24px -6px rgba(163,230,53,0.45)',
+        // Per-group neon glows (mirror the domain.* hues above).
+        'glow-build': '0 0 24px -6px rgba(59,157,255,0.45)',
+        'glow-market': '0 0 24px -6px rgba(255,92,200,0.45)',
+        'glow-money': '0 0 24px -6px rgba(46,230,166,0.45)',
+        'glow-operate': '0 0 24px -6px rgba(255,77,94,0.45)',
+        'glow-life': '0 0 24px -6px rgba(255,176,46,0.45)',
+        'glow-knowledge': '0 0 24px -6px rgba(167,139,250,0.45)',
         // Per-module neon glows (mirror the module.* hues).
         'glow-mod-dashboard': '0 0 24px -6px rgba(34,211,238,0.45)',
         'glow-mod-marketplace': '0 0 24px -6px rgba(255,92,200,0.45)',

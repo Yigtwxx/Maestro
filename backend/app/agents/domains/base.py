@@ -34,6 +34,36 @@ class SubagentSpec:
 
 
 @dataclass(frozen=True)
+class DomainGroup:
+    """A family of related domains.
+
+    Groups exist because three things stopped scaling one-per-domain once the
+    catalog passed roughly a dozen entries:
+
+    * **Routing.** The orchestrator classifies with a single LLM call over the
+      domains' ``routing_hint`` lines. A 40-way classification is unreliable on
+      a small local model, so routing is two-stage — group first, then the
+      handful of domains inside it (``agents/orchestrator.py``).
+    * **Colour.** The frontend's Tailwind classes are static literals, one set
+      per hue. Hues are allocated per group, not per domain.
+    * **Motifs.** The Architect catalog card animations are hand-drawn SVG. A
+      group carries the default; a domain may still override it.
+
+    ``default_domain`` is where stage-two routing lands when the model answers
+    with something outside the group — a group-scoped ``general``.
+    """
+
+    id: str
+    name: str
+    description: str
+    # One line describing what belongs in this group, rendered into the
+    # stage-one orchestrator prompt. Written contrastively where two groups
+    # sit close together, exactly like ``DomainInfo.routing_hint``.
+    routing_hint: str
+    default_domain: str
+
+
+@dataclass(frozen=True)
 class ReviewCriterion:
     """One weighted acceptance criterion for structured review (Backend v2 §4.6).
 
@@ -97,6 +127,11 @@ class DomainInfo:
     # English prompt fragments (all system prompts are English).
     expertise: str
     routing_hint: str
+    # The ``DomainGroup`` this domain belongs to. Deliberately a required field
+    # rather than a defaulted one: a new domain module that forgets it fails at
+    # import, which is a better failure than a domain that silently renders in
+    # the fallback hue and never appears under any catalog tab.
+    group: str
     # Domain working principles injected into the Main Agent planning prompt.
     methodology: str = ""
     # Final deliverable structure injected into the synthesis prompt.

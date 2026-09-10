@@ -25,7 +25,9 @@ result comes out. Community-built agent teams are shared and installed through a
 User prompt
      │
      ▼
-ORCHESTRATOR   Routing only. Classifies the task domain; produces no work itself.
+ORCHESTRATOR   Routing only; produces no work itself. Two stages: the task is
+     │         classified into a domain *group* first, then into one domain
+     │         inside that group.
      │
      ▼
 MAIN AGENT     Domain expert (finance, software, marketing, …). May first run a
@@ -41,6 +43,49 @@ SUBAGENT       SUBAGENT      One atomic task each (fetch data, analyze, summariz
       REVIEWER     Optional (`reviewer_enabled`). Validates subagent output and
                    sends it back with issues. Bounded by `max_review_iterations`.
 ```
+
+### Domain groups
+
+The 43 built-in domains are partitioned into six groups (`DOMAIN_GROUP_CATALOG`
+in `agents/domains/__init__.py`): `build`, `market`, `money`, `operate`, `life`,
+`knowledge`. A group is not a label — three separate things stopped scaling
+one-per-domain past roughly a dozen entries, and all three key off it:
+
+- **Routing.** The orchestrator classified with a single LLM call over every
+  domain's `routing_hint`. Forty-three near-synonymous hint lines is a forty-
+  three-way classification, which a small local model answers by surface
+  wording; the contrastive "NOT …" clauses that separate neighbouring domains
+  only work when the neighbours are in front of it. Stage one picks one of six
+  groups, stage two one of that group's five to ten domains, so neither call
+  ever exceeds a single digit of options. The cost is one extra call —
+  `temperature=0`, small token cap, no conversation — against a misroute, which
+  spends a whole task on the wrong team.
+- **Colour.** Tailwind class names must be static literals, so a hue costs a
+  hand-written set in `agent-colors.ts` mirrored twice in `tailwind.config.ts`.
+  Six is maintainable; forty-three is a file nobody edits correctly. The dark
+  chart band does not hold forty distinguishable hues either, so per-domain
+  colour had already stopped meaning anything. Within a group, chart marks step
+  lightness so bars stay comparable.
+- **Motifs.** Catalog card animations are hand-drawn SVG. A group carries the
+  default pair; `DOMAIN_MOTIF_OVERRIDES` is the escape hatch for a domain that
+  earns its own.
+
+Both routing stages fail soft. A stage-one failure routes to `general`; a
+stage-two failure keeps the group and takes its `default_domain`, so a task
+correctly identified as finance work still reaches a finance team rather than
+the generalist one. Both emit an `AGENT_WARNING` of kind `degraded`.
+
+A user's custom agents are offered alongside the groups in stage one and
+short-circuit stage two — a custom agent is a team of one, so there is nothing
+left to narrow.
+
+Catalog order is meaningful and grouped: `DOMAIN_CATALOG` lists each group's
+domains in one contiguous block, `general` stays last as the routing fallback,
+and the frontend's `AGENT_DOMAINS` mirrors the same order index for index
+(`tests/test_domain_frontend_parity.py`). `GET /agents` serves both the per-entry
+`group` and a `groups` block, which is what the Architect catalog's tabs render
+from; the colour mapping is duplicated in `constants.ts` and parity-tested,
+because it has to resolve before that response lands.
 
 Contracts between layers are structured JSON, never free text.
 
@@ -60,7 +105,8 @@ Reviewer feedback:
 { "approved": false, "issues": ["..."], "retry_hints": ["..."] }
 ```
 
-Every agent has a `system_prompt`, a `tools` list, and a `max_iterations` bound.
+Every domain declares a `group` (above) and every agent has a `system_prompt`, a
+`tools` list, and a `max_iterations` bound.
 The `tools` list is resolved **per subagent**, not just per domain: the Main
 Agent may assign each member a subset of the domain's tools (an unassigned member
 falls back to the full domain set). A member's effective set is always

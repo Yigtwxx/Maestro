@@ -281,6 +281,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "and market data interpretation"
     ),
     routing_hint="financial analysis, budgeting, investment, markets, money",
+    group="money",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

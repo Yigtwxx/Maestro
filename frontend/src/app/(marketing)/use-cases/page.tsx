@@ -8,13 +8,17 @@ import { MarketingPage, PageHeader } from '@/components/landing/MarketingSection
 import { domainColor } from '@/lib/agent-colors';
 import { AGENT_LOCALE } from '@/lib/agent-locale';
 import { USE_CASES } from '@/lib/marketing-content';
+import { AGENT_DOMAINS, DOMAIN_GROUPS } from '@/lib/constants';
 import { cn } from '@/lib/cn';
 import { buildPageMetadata } from '@/lib/seo/metadata';
 
 export const metadata = buildPageMetadata({
-  title: 'Use Cases',
+  // Counted from the catalog rather than written out: the previous copy said
+  // "ten" and stayed wrong through two rounds of new squads.
   description:
-    'Ten expert domains, each with its own fixed team of specialist subagents. See what they are for.',
+    `${AGENT_DOMAINS.length} expert domains in ${DOMAIN_GROUPS.length} families, ` +
+    'each with its own fixed team of specialist subagents. See what they are for.',
+  title: 'Use Cases',
   path: '/use-cases',
 });
 
@@ -23,9 +27,9 @@ export default function UseCasesPage() {
     <MarketingPage>
       <PageHeader
         eyebrow="[ USE CASES ]"
-        title="Ten domains, one"
+        title={`${AGENT_DOMAINS.length} domains, one`}
         titleAccent="orchestrator"
-        description="Each domain is a main agent with a fixed team of specialist subagents. The orchestrator picks the right one from your prompt — you never have to."
+        description={`Each domain is a main agent with a fixed team of specialist subagents, grouped into ${DOMAIN_GROUPS.length} families. The orchestrator narrows to a family and then to the expert — you never have to. A sample of them:`}
       />
 
       <div className="mt-16 grid gap-4 sm:grid-cols-2">

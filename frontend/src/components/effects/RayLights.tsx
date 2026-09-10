@@ -3,15 +3,16 @@
 import { useSyncExternalStore } from 'react';
 import LightRays from '@/components/effects/reactbits/LightRays';
 import SideRays from '@/components/effects/reactbits/SideRays';
-import { DOMAIN_COLOR } from '@/lib/agent-colors';
 import { BRAND } from '@/lib/seo/config';
 
-// Four distinct neon hues, one per light source. Three are pulled from the
-// domain color source of truth; the center-right beam carries the brand.
-const CYAN = DOMAIN_COLOR.searching.accentHex; //  #22d3ee — top-left corner
-const MAGENTA = DOMAIN_COLOR.content.accentHex; // #e879f9 — center-left beam
-const BRAND_BEAM = BRAND.primary; //               #d3cbc0 — center-right beam (champagne brand)
-const ORANGE = DOMAIN_COLOR.data.accentHex; //     #ff7a45 — top-right corner
+// Four distinct neon hues, one per light source. Three used to be borrowed from
+// the per-domain color map; they are literals now that hues are allocated per
+// domain *group* and these three are decorative rather than identity-bearing —
+// pinning them keeps the landing chrome stable when a group hue is retuned.
+const CYAN = '#22d3ee'; //         top-left corner
+const MAGENTA = '#e879f9'; //      center-left beam
+const BRAND_BEAM = BRAND.primary; // #d3cbc0 — center-right beam (champagne brand)
+const ORANGE = '#ff7a45'; //       top-right corner
 
 const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
 

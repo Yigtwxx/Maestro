@@ -1,9 +1,8 @@
 import { cn } from '@/lib/cn';
-import type { AgentDomain } from '@/lib/agent-colors';
-import { CARD_MOTIFS, PLACEMENT_CLASS } from './registry';
+import { motifFor, PLACEMENT_CLASS } from './registry';
 
 interface CardMotifProps {
-  /** The squad's domain id; resolves the motif and falls back to `general`. */
+  /** The squad's domain id; resolves its own motif, else its group's. */
   domain: string;
   /** The domain's bright neon (`dc.accentHex`), applied via `currentColor`. */
   accentHex: string;
@@ -21,7 +20,7 @@ interface CardMotifProps {
  * bloom. No hooks — safe to render anywhere.
  */
 export function CardMotif({ domain, accentHex }: CardMotifProps) {
-  const entry = CARD_MOTIFS[domain as AgentDomain] ?? CARD_MOTIFS.general;
+  const entry = motifFor(domain);
   const Motif = entry.Motif;
   return (
     <span

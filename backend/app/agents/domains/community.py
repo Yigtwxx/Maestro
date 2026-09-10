@@ -281,6 +281,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "recurring complaints, feature requests and support themes, and turn "
         "them into a backlog; NOT public social media monitoring"
     ),
+    group="operate",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

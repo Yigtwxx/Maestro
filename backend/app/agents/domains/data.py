@@ -242,6 +242,7 @@ DOMAIN: DomainInfo = DomainInfo(
     tools=("web_search", "data_fetch", "code_execution", "file_read"),
     expertise=("data: data analysis, statistics, visualization, and data pipelines"),
     routing_hint="data analysis, statistics, visualization, datasets, pipelines",
+    group="build",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

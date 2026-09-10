@@ -6,11 +6,18 @@
 // nodes carry `data-play` so the wrapper's `group-hover` rule can pause/resume
 // them without any React state. No hooks here — these render server-side too.
 //
-// A full `Record<AgentDomain, MotifEntry>` gives compile-time exhaustiveness:
-// add a domain to `AGENT_DOMAINS` and forget its motif and the build fails.
+// Motifs resolve in two layers. `GROUP_MOTIFS` is exhaustive over the domain
+// *groups* and is what a new squad gets for free; `DOMAIN_MOTIF_OVERRIDES` is
+// the escape hatch for a domain that has earned a drawing of its own. Hand-
+// drawing one per domain stopped being realistic at forty-three of them, and an
+// exhaustive per-domain record would have made every new squad wait on an SVG.
+// The group record is still exhaustive, so a new *group* without a motif fails
+// the build.
 
 import type { ComponentType } from 'react';
-import type { AgentDomain } from '@/lib/agent-colors';
+import { AGENT_DOMAINS, DOMAIN_GROUP_OF } from '@/lib/constants';
+import { groupOf } from '@/lib/agent-colors';
+import type { AgentDomain, AgentDomainGroup } from '@/lib/agent-colors';
 
 /**
  * Where a motif sits on the card. Placement is intentionally varied per domain
@@ -402,10 +409,47 @@ function GeneralMotif() {
 }
 
 /**
- * Full domain → motif map. Placements are deliberately mixed so adjacent cards
- * in the grid animate in different regions (corner / edge / frame / behind).
+ * The two motifs a group hands out, alternating by a domain's position within
+ * the group so a row of cards from one family never animates in unison. Both
+ * entries are existing drawings rather than new ones: kinship inside a family
+ * is the signal here, and each pair differs in placement as well as in shape.
  */
-export const CARD_MOTIFS: Record<AgentDomain, MotifEntry> = {
+export const GROUP_MOTIFS: Record<
+  AgentDomainGroup,
+  readonly [MotifEntry, MotifEntry]
+> = {
+  build: [
+    { Motif: SoftwareMotif, placement: 'behind' },
+    { Motif: OpensourceMotif, placement: 'frame' },
+  ],
+  market: [
+    { Motif: MarketingMotif, placement: 'corner-tr' },
+    { Motif: ContentMotif, placement: 'frame' },
+  ],
+  money: [
+    { Motif: FinanceMotif, placement: 'corner-br' },
+    { Motif: DataMotif, placement: 'edge-bottom' },
+  ],
+  operate: [
+    { Motif: LegalMotif, placement: 'corner-bl' },
+    { Motif: CommunityMotif, placement: 'behind' },
+  ],
+  life: [
+    { Motif: LocalMotif, placement: 'corner-tr' },
+    { Motif: SeoMotif, placement: 'corner-br' },
+  ],
+  knowledge: [
+    { Motif: ResearchMotif, placement: 'corner-tr' },
+    { Motif: SearchingMotif, placement: 'behind' },
+  ],
+};
+
+/**
+ * Domains with a drawing of their own. Placements are deliberately mixed so
+ * adjacent cards in the grid animate in different regions (corner / edge /
+ * frame / behind).
+ */
+export const DOMAIN_MOTIF_OVERRIDES: Partial<Record<AgentDomain, MotifEntry>> = {
   software: { Motif: SoftwareMotif, placement: 'behind' },
   finance: { Motif: FinanceMotif, placement: 'corner-br' },
   marketing: { Motif: MarketingMotif, placement: 'corner-tr' },
@@ -422,3 +466,23 @@ export const CARD_MOTIFS: Record<AgentDomain, MotifEntry> = {
   local: { Motif: LocalMotif, placement: 'corner-tr' },
   general: { Motif: GeneralMotif, placement: 'behind' },
 };
+
+// A domain's index within its own group, so the alternation below is stable and
+// does not shift when an unrelated group grows.
+const INDEX_IN_GROUP: Record<string, number> = (() => {
+  const seen: Record<string, number> = {};
+  const index: Record<string, number> = {};
+  for (const domain of AGENT_DOMAINS) {
+    const group = DOMAIN_GROUP_OF[domain] ?? 'knowledge';
+    index[domain] = seen[group] = (seen[group] ?? -1) + 1;
+  }
+  return index;
+})();
+
+/** Resolve a domain's motif: its own drawing if it has one, else its group's. */
+export function motifFor(domain: string): MotifEntry {
+  const own = DOMAIN_MOTIF_OVERRIDES[domain as AgentDomain];
+  if (own) return own;
+  const pair = GROUP_MOTIFS[groupOf(domain)];
+  return pair[(INDEX_IN_GROUP[domain] ?? 0) % 2];
+}

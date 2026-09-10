@@ -261,6 +261,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "architecture or API, reviewing a codebase; NOT looking up a fact about "
         "a language, library, version or tool, which belongs to searching"
     ),
+    group="build",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

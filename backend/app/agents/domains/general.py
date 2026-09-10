@@ -109,6 +109,7 @@ DOMAIN: DomainInfo = DomainInfo(
     tools=("web_search", "document_search", "memory_recall", "summarize"),
     expertise="general-purpose assistance across any topic",
     routing_hint="anything that fits no other domain",
+    group="knowledge",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

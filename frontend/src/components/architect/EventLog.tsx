@@ -16,12 +16,15 @@ function describe(event: AgentEvent): string {
       const who = `${event.role ?? 'agent'}${
         event.index !== undefined ? ` #${event.index}` : ''
       }`;
-      // A failed node names its cause; every other transition is just a state.
+      // A failed node names its cause; routing names what it narrowed to at
+      // each of its two stages; every other transition is just a state.
       const detail = event.error
         ? `: ${event.error}`
         : event.domain
           ? ` (domain: ${event.domain})`
-          : '';
+          : event.group
+            ? ` (group: ${event.group})`
+            : '';
       return `${who} → ${event.state ?? ''}${detail}`;
     }
     case 'agent_warning':

@@ -294,6 +294,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "writing or editing blog posts, articles, scripts, stories, "
         "social media content (ad campaign copy belongs to marketing)"
     ),
+    group="market",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

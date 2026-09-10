@@ -194,6 +194,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "comprehensive report writing"
     ),
     routing_hint=("in-depth multi-source analysis and synthesis of a topic, reports"),
+    group="knowledge",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

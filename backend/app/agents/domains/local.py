@@ -235,6 +235,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "local competitors, their ratings and reviews, where to open, foot "
         "traffic; NOT online-only markets or campaign planning"
     ),
+    group="life",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

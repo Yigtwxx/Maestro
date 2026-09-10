@@ -40,6 +40,7 @@ import { useAuthStore } from '@/stores/auth';
 import { isTaskRunning, useTaskStore } from '@/stores/tasks';
 import type {
   AgentEvent,
+  AgentGroup,
   AssignmentBrief,
   BuiltinAgent,
   LLMProvider,
@@ -140,6 +141,7 @@ export default function ArchitectPage() {
   // Pre-select the user's default brain until they change it manually.
   const providerTouched = useRef(false);
   const [agents, setAgents] = useState<BuiltinAgent[]>([]);
+  const [agentGroups, setAgentGroups] = useState<AgentGroup[]>([]);
   const [connectedProviders, setConnectedProviders] = useState<Set<string>>(
     new Set(),
   );
@@ -254,8 +256,14 @@ export default function ArchitectPage() {
     // Best-effort: without the catalog, automatic mode still works.
     api
       .listAgents()
-      .then((list) => setAgents(list.builtin.map(localizeBuiltinAgent)))
-      .catch(() => setAgents([]));
+      .then((list) => {
+        setAgents(list.builtin.map(localizeBuiltinAgent));
+        setAgentGroups(list.groups ?? []);
+      })
+      .catch(() => {
+        setAgents([]);
+        setAgentGroups([]);
+      });
     // Which BYOK services this account has connected — only the provider name
     // ever leaves the backend, never the key. Drives the connected rail's
     // "connect this" state, so a lane a squad could have used but could not is
@@ -609,6 +617,7 @@ export default function ArchitectPage() {
             <div data-onboarding="agent-catalog">
               <AgentCatalog
                 agents={agents}
+                groups={agentGroups}
                 selected={selectedDomain}
                 onSelect={handleSelectDomain}
                 connectedProviders={connectedProviders}

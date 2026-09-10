@@ -13,7 +13,7 @@ import json
 
 from app.agents import main_agent
 from app.agents.base import AgentContext
-from app.agents.prompts import ORCHESTRATOR_SYSTEM
+from app.agents.prompts import ORCHESTRATOR_GROUP_SYSTEM
 from app.agents.registry import DOMAIN_CATALOG, get_domain_info
 from app.core.config import settings
 from app.core.constants import (
@@ -74,10 +74,14 @@ def test_orchestrator_prompt_demonstrates_every_complexity_tier() -> None:
     The prompt listed all three tiers in its contract but showed only two in
     its examples, and the unshown one was ``complex`` — so the full-team tier
     was unreachable from routing however large the teams grew.
+
+    Complexity is judged in stage one only, so that is the prompt that has to
+    carry the examples; stage two never sees the whole catalog and is not asked
+    for a tier.
     """
     for tier in MAX_SUBTASKS_BY_COMPLEXITY:
         marker = f'"complexity": "{tier}"'
-        assert marker in ORCHESTRATOR_SYSTEM, f"no worked example emits {tier}"
+        assert marker in ORCHESTRATOR_GROUP_SYSTEM, f"no worked example emits {tier}"
 
 
 # --- fallback ranking ------------------------------------------------------

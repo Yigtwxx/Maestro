@@ -274,6 +274,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "contracts, terms of service, GDPR/KVKK compliance, software "
         "licenses, legal risk"
     ),
+    group="operate",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

@@ -204,6 +204,7 @@ DOMAIN: DomainInfo = DomainInfo(
     routing_hint=(
         "search rankings, keywords, on/off-page SEO, site audits, organic traffic"
     ),
+    group="market",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

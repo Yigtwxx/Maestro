@@ -1,50 +1,226 @@
 """Built-in domain agent definitions, one module per domain.
 
 Adding a new domain = add a new module exposing a ``DOMAIN: DomainInfo``
-constant and append it to ``DOMAIN_CATALOG`` below. Catalog order is
-meaningful: ``GET /agents`` serializes agents in this order.
+constant and append it to ``DOMAIN_CATALOG`` below, inside its group's block.
+Catalog order is meaningful twice over: ``GET /agents`` serializes agents in
+this order, and the frontend's ``AGENT_DOMAINS`` must list the same ids in the
+same order (``tests/test_domain_frontend_parity.py``).
+
+Domains are partitioned into ``DOMAIN_GROUP_CATALOG`` families. The grouping is
+load-bearing rather than cosmetic — see ``DomainGroup`` in ``base.py`` for the
+three things (routing, colour, motifs) that stopped scaling one-per-domain.
 """
 
 from __future__ import annotations
 
 from app.agents.domains import (
+    ads,
+    apidesign,
+    brand,
+    career,
+    climate,
+    cloud,
     community,
     content,
+    crypto,
     data,
+    devops,
+    ecommerce,
+    econ,
     education,
     finance,
+    food,
+    gamedev,
     general,
+    health,
+    hr,
+    journalism,
     legal,
     local,
     marketing,
+    mobile,
     opensource,
+    personalfinance,
+    procurement,
+    product,
+    project,
+    qa,
     research,
+    sales,
+    scholar,
     searching,
+    security,
     seo,
     social,
     software,
+    support,
+    tax,
+    translation,
+    travel,
 )
-from app.agents.domains.base import DomainInfo, ReviewCriterion, SubagentSpec
+from app.agents.domains.base import (
+    DomainGroup,
+    DomainInfo,
+    ReviewCriterion,
+    SubagentSpec,
+)
+
+# Stage-one routing options. Order is the order the catalog and the Architect
+# catalog tabs are rendered in; ``knowledge`` sits last because it holds the
+# `general` fallback.
+DOMAIN_GROUP_CATALOG: tuple[DomainGroup, ...] = (
+    DomainGroup(
+        id="build",
+        name="Engineering & Build",
+        description=(
+            "Writing, running, testing, shipping and operating software, and "
+            "judging software someone else wrote."
+        ),
+        routing_hint=(
+            "building or operating software: writing and debugging code, "
+            "testing, infrastructure and deployment, cloud and API design, "
+            "security review, analysing data with code, evaluating a library "
+            "or repository; NOT looking up a fact about a tool"
+        ),
+        default_domain="software",
+    ),
+    DomainGroup(
+        id="market",
+        name="Growth & Market",
+        description=(
+            "Reaching an audience and getting it to act: positioning, "
+            "channels, content, advertising and what people are saying."
+        ),
+        routing_hint=(
+            "reaching or persuading an audience: campaigns, positioning, "
+            "search visibility, written and published content, paid "
+            "advertising, brand and press, selling, what a product should be, "
+            "online store operations, measuring public reaction; NOT the "
+            "financial modelling behind a decision"
+        ),
+        default_domain="marketing",
+    ),
+    DomainGroup(
+        id="money",
+        name="Finance & Markets",
+        description=(
+            "Money: markets and instruments, macroeconomic data, personal "
+            "planning and tax."
+        ),
+        routing_hint=(
+            "money and markets: instruments and valuations, crypto and "
+            "on-chain assets, macroeconomic and public statistics, personal "
+            "budgeting and saving, tax and accounting treatment; NOT pricing a "
+            "product for a campaign"
+        ),
+        default_domain="finance",
+    ),
+    DomainGroup(
+        id="operate",
+        name="Business Operations",
+        description=(
+            "Running the organisation: contracts and compliance, people, "
+            "customers, delivery and suppliers."
+        ),
+        routing_hint=(
+            "running an organisation: contracts, licensing and regulatory "
+            "compliance, hiring and people policy, customer support and what "
+            "users are reporting, project planning and delivery, choosing and "
+            "negotiating with vendors; NOT building the product itself"
+        ),
+        default_domain="legal",
+    ),
+    DomainGroup(
+        id="life",
+        name="Life & Local",
+        description=(
+            "Decisions a person makes for themselves, and anything anchored to "
+            "a physical place."
+        ),
+        routing_hint=(
+            "personal and place-anchored decisions: a physical neighbourhood "
+            "and the businesses in it, trips and itineraries, someone's career "
+            "and CV, health and medical information, food and nutrition; NOT "
+            "company strategy"
+        ),
+        default_domain="local",
+    ),
+    DomainGroup(
+        id="knowledge",
+        name="Research & Knowledge",
+        description=(
+            "Finding out what is true and explaining it: lookups, deep "
+            "research, academic literature, teaching, reporting and language."
+        ),
+        routing_hint=(
+            "finding out and explaining: looking up a current fact, "
+            "multi-source research, academic and scientific literature, "
+            "teaching materials, verifying a claim or reporting a story, "
+            "translation and localisation, climate and sustainability "
+            "assessment, and anything no other group fits"
+        ),
+        default_domain="general",
+    ),
+)
 
 DOMAIN_CATALOG: tuple[DomainInfo, ...] = (
+    # --- build -------------------------------------------------------------
     software.DOMAIN,
-    finance.DOMAIN,
+    devops.DOMAIN,
+    security.DOMAIN,
+    qa.DOMAIN,
+    cloud.DOMAIN,
+    apidesign.DOMAIN,
+    mobile.DOMAIN,
+    gamedev.DOMAIN,
+    data.DOMAIN,
+    opensource.DOMAIN,
+    # --- market ------------------------------------------------------------
     marketing.DOMAIN,
     seo.DOMAIN,
+    content.DOMAIN,
+    product.DOMAIN,
+    sales.DOMAIN,
+    ads.DOMAIN,
+    brand.DOMAIN,
+    ecommerce.DOMAIN,
+    social.DOMAIN,
+    # --- money -------------------------------------------------------------
+    finance.DOMAIN,
+    crypto.DOMAIN,
+    econ.DOMAIN,
+    personalfinance.DOMAIN,
+    tax.DOMAIN,
+    # --- operate -----------------------------------------------------------
+    legal.DOMAIN,
+    hr.DOMAIN,
+    project.DOMAIN,
+    procurement.DOMAIN,
+    support.DOMAIN,
+    community.DOMAIN,
+    # --- life --------------------------------------------------------------
+    local.DOMAIN,
+    travel.DOMAIN,
+    career.DOMAIN,
+    health.DOMAIN,
+    food.DOMAIN,
+    # --- knowledge ---------------------------------------------------------
     searching.DOMAIN,
     research.DOMAIN,
-    data.DOMAIN,
-    content.DOMAIN,
-    legal.DOMAIN,
+    scholar.DOMAIN,
     education.DOMAIN,
-    # Connected-API squads: each is powered by a BYOK service key and degrades
-    # to web_search without one. Placed before `general`, which must stay last
-    # as the routing fallback.
-    social.DOMAIN,
-    community.DOMAIN,
-    opensource.DOMAIN,
-    local.DOMAIN,
+    journalism.DOMAIN,
+    translation.DOMAIN,
+    climate.DOMAIN,
+    # `general` must stay last: it is the routing fallback.
     general.DOMAIN,
 )
 
-__all__ = ["DOMAIN_CATALOG", "DomainInfo", "ReviewCriterion", "SubagentSpec"]
+__all__ = [
+    "DOMAIN_CATALOG",
+    "DOMAIN_GROUP_CATALOG",
+    "DomainGroup",
+    "DomainInfo",
+    "ReviewCriterion",
+    "SubagentSpec",
+]

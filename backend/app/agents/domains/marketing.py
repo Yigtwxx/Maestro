@@ -221,6 +221,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "marketing: campaign planning, brand strategy, copywriting, and growth tactics"
     ),
     routing_hint="campaigns, branding, copywriting, growth, advertising",
+    group="market",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

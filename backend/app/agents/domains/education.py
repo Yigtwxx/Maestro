@@ -232,6 +232,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "NOT simply answering a factual or how-does-this-work question, which "
         "belongs to general, searching or research"
     ),
+    group="knowledge",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

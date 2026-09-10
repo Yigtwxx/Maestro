@@ -199,27 +199,127 @@ export const MODEL_SUGGESTIONS = [
   'gemini-2.5-flash',
 ] as const;
 
+// Families of related domains (mirrors backend DOMAIN_GROUP_CATALOG). Order
+// must match the backend exactly. Groups drive three things: the two-stage
+// orchestrator routing, the Architect catalog's tabs, and the hue every domain
+// in the family renders in (see lib/agent-colors.ts).
+export const DOMAIN_GROUPS = [
+  'build',
+  'market',
+  'money',
+  'operate',
+  'life',
+  'knowledge',
+] as const;
+
 // Domains the orchestrator can route to (mirrors backend registry.DOMAINS).
+// Order must match backend DOMAIN_CATALOG exactly, group block by group block
+// (backend/tests/test_domain_frontend_parity.py compares the lists). Connected-
+// API squads are scattered through the groups rather than gathered at the end:
+// each is a member of its family first and a BYOK squad second, and every one
+// of them degrades to web search without its key. `general` stays last — it is
+// the routing fallback.
 export const AGENT_DOMAINS = [
+  // build
   'software',
-  'finance',
+  'devops',
+  'security',
+  'qa',
+  'cloud',
+  'apidesign',
+  'mobile',
+  'gamedev',
+  'data',
+  'opensource',
+  // market
   'marketing',
   'seo',
+  'content',
+  'product',
+  'sales',
+  'ads',
+  'brand',
+  'ecommerce',
+  'social',
+  // money
+  'finance',
+  'crypto',
+  'econ',
+  'personalfinance',
+  'tax',
+  // operate
+  'legal',
+  'hr',
+  'project',
+  'procurement',
+  'support',
+  'community',
+  // life
+  'local',
+  'travel',
+  'career',
+  'health',
+  'food',
+  // knowledge
   'searching',
   'research',
-  'data',
-  'content',
-  'legal',
+  'scholar',
   'education',
-  // Connected-API squads — powered by a BYOK service key, degrading to web
-  // search without one. Order must match backend DOMAIN_CATALOG exactly
-  // (backend/tests/test_domain_frontend_parity.py compares the lists).
-  'social',
-  'community',
-  'opensource',
-  'local',
+  'journalism',
+  'translation',
+  'climate',
   'general',
 ] as const;
+
+// Which group each domain belongs to (mirrors backend DomainInfo.group). The
+// backend serves the same mapping on `GET /agents`, but colour resolution runs
+// before that response lands and Tailwind class names have to be static
+// literals, so the mapping is duplicated here and parity-tested.
+export const DOMAIN_GROUP_OF: Record<string, string> = {
+  software: 'build',
+  devops: 'build',
+  security: 'build',
+  qa: 'build',
+  cloud: 'build',
+  apidesign: 'build',
+  mobile: 'build',
+  gamedev: 'build',
+  data: 'build',
+  opensource: 'build',
+  marketing: 'market',
+  seo: 'market',
+  content: 'market',
+  product: 'market',
+  sales: 'market',
+  ads: 'market',
+  brand: 'market',
+  ecommerce: 'market',
+  social: 'market',
+  finance: 'money',
+  crypto: 'money',
+  econ: 'money',
+  personalfinance: 'money',
+  tax: 'money',
+  legal: 'operate',
+  hr: 'operate',
+  project: 'operate',
+  procurement: 'operate',
+  support: 'operate',
+  community: 'operate',
+  local: 'life',
+  travel: 'life',
+  career: 'life',
+  health: 'life',
+  food: 'life',
+  searching: 'knowledge',
+  research: 'knowledge',
+  scholar: 'knowledge',
+  education: 'knowledge',
+  journalism: 'knowledge',
+  translation: 'knowledge',
+  climate: 'knowledge',
+  general: 'knowledge',
+};
 
 // Field limits for a custom agent, mirroring backend schemas/agent.py
 // AgentConfigCreate. Kept here so the wizard can validate a step before the
@@ -267,8 +367,12 @@ export const KEYLESS_CONNECTED_TOOLS: readonly string[] = ['repo_intel'];
 // DOMAIN_CATALOG. `opensource` is listed but never reads as required, because
 // `repo_intel` is keyless.
 export const SQUAD_CORE_CONNECTED_TOOL: Record<string, string> = {
-  social: 'social_search',
-  community: 'community_read',
+  security: 'repo_intel',
   opensource: 'repo_intel',
+  social: 'social_search',
+  journalism: 'social_search',
+  support: 'community_read',
+  community: 'community_read',
   local: 'places_intel',
+  travel: 'places_intel',
 };

@@ -17,7 +17,13 @@ import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from app.agents.domains import DOMAIN_CATALOG, DomainInfo, SubagentSpec
+from app.agents.domains import (
+    DOMAIN_CATALOG,
+    DOMAIN_GROUP_CATALOG,
+    DomainGroup,
+    DomainInfo,
+    SubagentSpec,
+)
 from app.core.constants import EXECUTABLE_TOOL_IDS
 
 if TYPE_CHECKING:  # type-only: keeps this early-imported module light
@@ -26,12 +32,18 @@ if TYPE_CHECKING:  # type-only: keeps this early-imported module light
 __all__ = [
     "CUSTOM_DOMAIN_PREFIX",
     "DEFAULT_DOMAIN",
+    "DEFAULT_GROUP",
     "DOMAIN_CATALOG",
+    "DOMAIN_GROUP_CATALOG",
+    "DOMAIN_GROUPS",
     "DOMAINS",
     "CustomAgentUnavailable",
+    "DomainGroup",
     "DomainInfo",
     "SubagentSpec",
+    "domains_in_group",
     "get_domain_info",
+    "get_group_info",
     "is_custom_domain",
     "normalize_domain",
     "resolve_domain_info",
@@ -41,12 +53,25 @@ __all__ = [
 # Supported domains the orchestrator can route to (derived from the catalog).
 DOMAINS: tuple[str, ...] = tuple(entry.id for entry in DOMAIN_CATALOG)
 
+# Stage-one routing options (derived from the group catalog).
+DOMAIN_GROUPS: tuple[str, ...] = tuple(group.id for group in DOMAIN_GROUP_CATALOG)
+
 DEFAULT_DOMAIN = "general"
+
+# The group holding DEFAULT_DOMAIN. Stage-one routing falls back here, so the
+# fallback path is identical to the one a correct classification of an
+# unclassifiable prompt would take.
+DEFAULT_GROUP = "knowledge"
 
 # A user's custom/marketplace agent is selected as ``custom:{agent_id}``.
 CUSTOM_DOMAIN_PREFIX = "custom:"
 
 _CATALOG_BY_ID: dict[str, DomainInfo] = {entry.id: entry for entry in DOMAIN_CATALOG}
+_GROUPS_BY_ID: dict[str, DomainGroup] = {g.id: g for g in DOMAIN_GROUP_CATALOG}
+_DOMAINS_BY_GROUP: dict[str, tuple[DomainInfo, ...]] = {
+    group.id: tuple(e for e in DOMAIN_CATALOG if e.group == group.id)
+    for group in DOMAIN_GROUP_CATALOG
+}
 
 # Fixed, non-overridable preamble around a user's custom system prompt: the
 # persona customizes expertise/style only, it cannot change tools, budgets or
@@ -83,6 +108,22 @@ def normalize_domain(candidate: str) -> str:
 def is_custom_domain(candidate: str) -> bool:
     """Whether a domain selector names a user's custom agent."""
     return (candidate or "").startswith(CUSTOM_DOMAIN_PREFIX)
+
+
+def get_group_info(group_id: str) -> DomainGroup:
+    """Return a group definition, falling back to the group holding ``general``."""
+    key = (group_id or "").strip().lower()
+    return _GROUPS_BY_ID.get(key, _GROUPS_BY_ID[DEFAULT_GROUP])
+
+
+def domains_in_group(group_id: str) -> tuple[DomainInfo, ...]:
+    """Return the catalog entries belonging to a group, in catalog order.
+
+    Empty for an unknown group id. Callers resolve the group through
+    :func:`get_group_info` first, so by this point an unknown id has already
+    become the default.
+    """
+    return _DOMAINS_BY_GROUP.get((group_id or "").strip().lower(), ())
 
 
 def _persona_block(system_prompt: str) -> str:
@@ -138,6 +179,9 @@ def to_domain_info(
         tools=exec_tools,
         expertise=base.expertise,
         routing_hint=doc.get("routing_hint", ""),
+        # Inherited so the frontend can resolve a custom agent's colour and
+        # motif the same way it resolves a built-in one.
+        group=base.group,
         methodology=base.methodology,
         output_format=output_format,
         planning_example=base.planning_example,

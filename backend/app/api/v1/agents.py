@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.agents.registry import DOMAIN_CATALOG
+from app.agents.registry import DOMAIN_CATALOG, DOMAIN_GROUP_CATALOG
 from app.core.constants import RATE_LIMIT_READ, RATE_LIMIT_WRITE
 from app.core.deps import ActiveUser
 from app.schemas.agent import (
@@ -32,12 +32,19 @@ _write_rate_limit = rate_limit(RATE_LIMIT_WRITE, scope="agents")
 
 @router.get("", dependencies=[_read_rate_limit])
 async def list_agents(user: ActiveUser) -> dict:
-    """List built-in domain agents and the user's custom agents."""
+    """List built-in domain agents, their groups, and the user's custom agents.
+
+    ``groups`` is the Architect catalog's tab list. It is served rather than
+    hardcoded in the frontend so the tabs cannot drift from the catalog they
+    filter; the *colours* keyed off the same ids still live in the frontend,
+    because Tailwind class names have to be static literals.
+    """
     builtin = [
         {
             "id": entry.id,
             "name": entry.name,
             "domain": entry.id,
+            "group": entry.group,
             "type": "builtin",
             "description": entry.description,
             "capabilities": list(entry.capabilities),
@@ -53,8 +60,16 @@ async def list_agents(user: ActiveUser) -> dict:
         }
         for entry in DOMAIN_CATALOG
     ]
+    groups = [
+        {
+            "id": group.id,
+            "name": group.name,
+            "description": group.description,
+        }
+        for group in DOMAIN_GROUP_CATALOG
+    ]
     custom = await agent_service.list_agents(user.id)
-    return {"builtin": builtin, "custom": custom}
+    return {"builtin": builtin, "groups": groups, "custom": custom}
 
 
 @router.get(

@@ -269,6 +269,7 @@ DOMAIN: DomainInfo = DomainInfo(
         "topic — social media monitoring, sentiment, buzz, trending reaction; "
         "NOT planning a campaign, and NOT reading your own private channels"
     ),
+    group="market",
     methodology=_METHODOLOGY,
     output_format=_OUTPUT_FORMAT,
     planning_example=_PLANNING_EXAMPLE,

@@ -29,7 +29,10 @@ class RecordingAdapter(LLMAdapter):
     ) -> LLMResponse:
         system = messages[0].content
         self.system_prompts.append(system)
-        if "Orchestrator" in system:
+        if "single group" in system:
+            # Routing is two-stage: the group first, then the expert inside it.
+            content = '{"group": "build", "reason": "coding task"}'
+        elif "single best expert" in system:
             content = '{"domain": "software", "reason": "coding task"}'
         elif "Main Agent, the manager" in system:
             content = json.dumps(
