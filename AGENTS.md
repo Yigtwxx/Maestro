@@ -710,6 +710,17 @@ Keep it spread in: `tsc --noEmit` accepts `any` by definition, so lint is the *o
 gate that sees one — before this config was added, four hand-written `any`s sat in the
 tree with every check green. `no-unused-vars` stays at `warn` (Next's own override).
 
+**Prettier config.** `frontend/.prettierrc` sets one option, `singleQuote`, and exists
+because the tree was written in that style while carrying no config at all. Prettier's
+default is double quotes, so any editor, hook or `npx prettier` run reformatted whatever
+file it touched into the opposite style and produced a diff of pure churn. The single
+option is the whole fix: with it, 149 of the 210 frontend sources are already
+prettier-clean, and the ones that are not differ by a line or two of `printWidth` reflow.
+
+There is deliberately no prettier gate in CI and no `format` script, because a gate would
+fail on that reflow across most of the tree — a formatting-only commit nobody asked for.
+The config makes an incidental format harmless; it does not claim the tree is formatted.
+
 ### Dependency locking
 
 `requirements.in` / `requirements-dev.in` are hand-edited intent; the `.txt` files are
