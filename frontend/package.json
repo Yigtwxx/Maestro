@@ -41,7 +41,7 @@
     "postcss": "8.5.28",
     "tailwindcss": "3.4.17",
     "typescript": "5.7.3",
-    "vitest": "4.1.11"
+    "vitest": "5.0.0"
   },
   "//overrides": "Transitive advisories that no direct dependency has released a fix for yet. Each entry is the lowest patched version inside the same major, so the parent's declared range still holds. Drop an entry once the parent ships a version that pulls the fix on its own -- `npm ls <name>` shows whether it is still needed. Pinned exactly, like every other version here (.npmrc sets save-exact).",
   "overrides": {
