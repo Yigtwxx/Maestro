@@ -13,7 +13,7 @@
     "clean": "node -e \"const fs=require('fs');for(const p of ['.next','tsconfig.tsbuildinfo'])fs.rmSync(p,{recursive:true,force:true})\""
   },
   "dependencies": {
-    "@sentry/nextjs": "10.75.2",
+    "@sentry/nextjs": "11.1.0",
     "animejs": "4.5.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
