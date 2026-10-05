@@ -1,6 +1,6 @@
 name: Dependabot
 
-# Turns the weekly Dependabot batch into a self-merging one. Two jobs, both
+# Turns the monthly Dependabot batch into a self-merging one. Two jobs, both
 # gated on the PR *author* being dependabot[bot] (github.actor is spoofable by
 # a re-run; the author is not) and on this exact repository, so a fork never
 # auto-merges anything.
