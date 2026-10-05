@@ -5,7 +5,7 @@ updates:
   - package-ecosystem: pip
     directory: /backend
     schedule:
-      interval: weekly
+      interval: monthly
     # Wait a few days after a release before bumping — dodges a freshly
     # published compromised version. Security updates ignore the cooldown.
     cooldown:
@@ -14,7 +14,7 @@ updates:
     commit-message:
       prefix: "chore(backend)"
     groups:
-      # One PR per week for routine bumps; security fixes still open on their own.
+      # One PR per month for routine bumps; security fixes still open on their own.
       backend-dependencies:
         patterns: ["*"]
         update-types: ["minor", "patch"]
@@ -22,7 +22,7 @@ updates:
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     open-pull-requests-limit: 5
@@ -38,7 +38,7 @@ updates:
   - package-ecosystem: docker
     directory: /backend
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     commit-message:
@@ -47,7 +47,7 @@ updates:
   - package-ecosystem: docker
     directory: /frontend
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     commit-message:
@@ -56,7 +56,7 @@ updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
     cooldown:
       default-days: 7
     commit-message:

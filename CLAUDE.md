@@ -957,7 +957,7 @@ the dev lock's `# via -c requirements.txt` annotations. The gate compares byte-f
 all three read as drift.
 
 `.github/workflows/dependabot.yml` runs that script for Dependabot's pip PRs and pushes the
-result, so the weekly batch merges itself; the local script remains for hand-edited `.in`
+result, so the monthly batch merges itself; the local script remains for hand-edited `.in`
 files. Two facts shape that job. A push made with `GITHUB_TOKEN` does not start new workflow
 runs, so a bot that fixed the lock with it would leave the PR permanently unchecked — the
 push therefore uses `RELOCK_TOKEN`, a fine-grained PAT (Contents: read and write, this repo
