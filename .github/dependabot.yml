@@ -2,9 +2,9 @@ version: 2
 
 # PAUSED (2026-11-02): the repo is on a break. `open-pull-requests-limit: 0`
 # is GitHub's documented way to stop version-update PRs while keeping this
-# config intact. Security-update PRs are switched off separately in the repo
-# settings (Code security > Dependabot security updates). To resume, revert
-# this commit and re-enable security updates.
+# config intact. Dependabot alerts and security-update PRs are switched off
+# separately in the repo settings (Code security). To resume, revert this
+# commit and re-enable both there.
 
 updates:
   # Backend — picks up both requirements.txt and requirements-dev.txt.
