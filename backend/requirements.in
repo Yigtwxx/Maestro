@@ -8,44 +8,44 @@
 # =========================================================================
 
 # --- Web framework ---
-fastapi>=0.141.1,<1.0
+fastapi>=0.162.0,<1.0
 uvicorn[standard]>=0.54.0,<1.0
 python-multipart>=0.0.32
 
 # --- Validation / settings ---
-pydantic>=2.13.5,<3.0
-pydantic-settings>=2.15.0,<3.0
+pydantic>=2.14.1,<3.0
+pydantic-settings>=2.16.1,<3.0
 email-validator>=2.2
 # Already pulled in by email-validator; named explicitly because
 # app/utils/mx_check.py imports dns.asyncresolver directly.
-dnspython>=2.7
+dnspython>=2.9.0
 # IANA timezone database so zoneinfo resolves names on any OS (Windows ships none).
-tzdata>=2026.4
+tzdata>=2026.5
 
 # --- Relational DB (async) ---
-sqlalchemy[asyncio]>=2.1.1,<2.2
-asyncpg>=0.30
-alembic>=1.20.0
+sqlalchemy[asyncio]>=2.1.6,<2.2
+asyncpg>=0.32.0
+alembic>=1.20.1
 
 # --- NoSQL / Vector DB ---
 motor>=3.6
 # >=1.15: memory_service calls `query_points`, which replaced the `search` this
 # floor used to allow. Resolving below it would compile a lock whose client has
 # no `query_points` at all, and RAG degrades silently rather than failing loudly.
-qdrant-client>=1.19.1
+qdrant-client>=1.20.0
 
 # --- Rate limiting (shared buckets across workers/instances) ---
 redis>=8.1.0
 
 # --- LLM / HTTP ---
 httpx>=0.28.1
-tenacity>=9.0
+tenacity>=9.2.1
 
 # --- Observability (error tracking; no-op when SENTRY_DSN is unset) ---
-sentry-sdk[fastapi]>=2.70.0,<3.0
+sentry-sdk[fastapi]>=2.73.0,<3.0
 
 # --- Web search (DuckDuckGo, free, no API key) ---
-ddgs>=9.16.0,<10
+ddgs>=9.16.1,<10
 
 # --- Data fetch (Scrapling: TLS-fingerprint HTTP via curl_cffi, lxml/CSS
 # extraction). The [fetchers] extra is required even for the browser-free
@@ -53,12 +53,12 @@ ddgs>=9.16.0,<10
 # (engines/toolbelt/convertor.py). Browser BINARIES are never downloaded
 # here; a self-hoster opts in with `scrapling install`. The <0.5 ceiling is
 # deliberate — 0.3 -> 0.4 swapped the stealth engine and renamed classes. ---
-scrapling[fetchers]>=0.4.15,<0.5
+scrapling[fetchers]>=0.5,<0.6
 
 # --- Security ---
 argon2-cffi>=23.1
-pyjwt>=2.15.0
-cryptography>=50.0.1
+pyjwt>=2.15.1
+cryptography>=50.0.2
 
 # --- Two-factor auth (TOTP + QR). qrcode renders SVG without Pillow. ---
 pyotp>=2.9
